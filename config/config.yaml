@@ -1,0 +1,224 @@
+# Literature Review Service Configuration
+#
+# This file contains default configuration values. Values can be overridden
+# using environment variables with the LITREVIEW_ prefix.
+#
+# Example: LITREVIEW_DATABASE_HOST=db.example.com
+#          LITREVIEW_SERVER_HTTP_PORT=8888
+
+# Server configuration
+server:
+  # Host address to bind the server to
+  host: "0.0.0.0"
+  # HTTP server port
+  http_port: 8080
+  # gRPC server port
+  grpc_port: 9090
+  # Metrics server port (Prometheus)
+  metrics_port: 9091
+  # Maximum duration for reading request body
+  read_timeout: 30s
+  # Maximum duration for writing response
+  write_timeout: 30s
+  # Maximum duration to wait for graceful shutdown
+  shutdown_timeout: 30s
+
+# Database configuration (PostgreSQL)
+database:
+  # PostgreSQL server hostname
+  host: localhost
+  # PostgreSQL server port
+  port: 5432
+  # Database username
+  user: litreview
+  # Database password (use LITREVIEW_DATABASE_PASSWORD env var in production)
+  password: ""
+  # Database name
+  name: literature_review_service
+  # SSL mode: disable, require, verify-ca, verify-full
+  # Default is "require" for production security
+  # Use LITREVIEW_DATABASE_SSL_MODE=disable for local development
+  ssl_mode: require
+  # Maximum number of connections in the pool
+  max_conns: 50
+  # Minimum number of connections to keep open
+  min_conns: 10
+  # Maximum lifetime of a connection
+  max_conn_lifetime: 1h
+  # Maximum idle time for a connection
+  max_conn_idle_time: 30m
+  # Interval between health checks of idle connections
+  health_check_period: 30s
+  # Maximum time to wait for a connection
+  connect_timeout: 10s
+  # Path to migration files
+  migration_path: migrations
+  # Enable automatic migration on startup
+  migration_auto_run: false
+  # Size of prepared statement cache
+  statement_cache_capacity: 512
+
+# Temporal workflow orchestration
+temporal:
+  # Temporal server address
+  host_port: localhost:7233
+  # Temporal namespace
+  namespace: literature-review
+  # Task queue name for literature review workflows
+  task_queue: literature-review-tasks
+
+# Logging configuration
+logging:
+  # Log level: trace, debug, info, warn, error, fatal, panic
+  level: info
+  # Log format: json, console
+  format: json
+  # Log output: stdout, stderr, or file path
+  output: stdout
+  # Add source file and line to log output
+  add_source: false
+  # Timestamp format
+  time_format: "2006-01-02T15:04:05Z07:00"
+
+# Prometheus metrics
+metrics:
+  # Enable metrics collection and exposure
+  enabled: true
+  # HTTP path for metrics endpoint
+  path: /metrics
+
+# OpenTelemetry distributed tracing
+tracing:
+  # Enable distributed tracing
+  enabled: false
+  # OTLP collector endpoint (required when enabled)
+  endpoint: ""
+  # Service name for traces
+  service_name: literature-review-service
+  # Sampling rate (0.0 to 1.0)
+  sample_rate: 0.1
+
+# LLM configuration for keyword extraction
+llm:
+  # LLM provider: openai, anthropic
+  provider: openai
+  # Maximum number of keywords to extract
+  max_keywords: 10
+  # Minimum number of keywords to extract
+  min_keywords: 5
+  # Number of recursive expansion levels
+  expansion_depth: 2
+  # Timeout for LLM API calls
+  timeout: 60s
+  # Maximum retries for failed calls
+  max_retries: 3
+  # LLM temperature setting
+  temperature: 0.7
+
+  # OpenAI settings
+  openai:
+    # API key (use LITREVIEW_LLM_OPENAI_API_KEY env var)
+    api_key: ""
+    # Model to use
+    model: gpt-4-turbo
+    # API base URL (for custom endpoints)
+    base_url: https://api.openai.com/v1
+
+  # Anthropic settings
+  anthropic:
+    # API key (use LITREVIEW_LLM_ANTHROPIC_API_KEY env var)
+    api_key: ""
+    # Model to use
+    model: claude-3-sonnet-20240229
+    # API base URL (for custom endpoints)
+    base_url: https://api.anthropic.com
+
+# Kafka configuration for outbox pattern
+kafka:
+  # Enable Kafka publishing
+  enabled: false
+  # Kafka broker addresses
+  brokers:
+    - localhost:9092
+  # Topic for outbox events
+  topic: events.outbox.literature_review_service
+  # Maximum messages to batch before sending
+  batch_size: 100
+  # Maximum time to wait for a batch to fill
+  batch_timeout: 10ms
+
+# Outbox processor configuration
+outbox:
+  # How often to poll for pending events
+  poll_interval: 1s
+  # Number of events to process per batch
+  batch_size: 100
+  # Number of concurrent publish workers
+  workers: 4
+  # Maximum retry attempts before dead-lettering
+  max_retries: 5
+  # How long a worker holds a lease on claimed events
+  lease_duration: 30s
+
+# Paper source API configurations
+paper_sources:
+  # Semantic Scholar API
+  semantic_scholar:
+    enabled: true
+    api_key: ""
+    base_url: https://api.semanticscholar.org/graph/v1
+    timeout: 30s
+    rate_limit: 10.0  # requests per second
+    max_results: 100
+
+  # OpenAlex API
+  openalex:
+    enabled: true
+    api_key: ""
+    base_url: https://api.openalex.org
+    timeout: 30s
+    rate_limit: 10.0
+    max_results: 200
+
+  # Scopus API (disabled by default - requires API key)
+  scopus:
+    enabled: false
+    api_key: ""  # Required - use LITREVIEW_PAPER_SOURCES_SCOPUS_API_KEY
+    base_url: https://api.elsevier.com/content
+    timeout: 30s
+    rate_limit: 5.0
+    max_results: 100
+
+  # PubMed API (E-utilities)
+  pubmed:
+    enabled: true
+    api_key: ""  # Optional - increases rate limit if provided
+    base_url: https://eutils.ncbi.nlm.nih.gov/entrez/eutils
+    timeout: 30s
+    rate_limit: 3.0  # NCBI recommends max 3 req/sec without API key
+    max_results: 100
+
+  # bioRxiv API
+  biorxiv:
+    enabled: true
+    api_key: ""
+    base_url: https://api.biorxiv.org
+    timeout: 30s
+    rate_limit: 5.0
+    max_results: 100
+
+  # arXiv API
+  arxiv:
+    enabled: true
+    api_key: ""
+    base_url: https://export.arxiv.org/api
+    timeout: 30s
+    rate_limit: 3.0  # arXiv recommends max 3 req/sec
+    max_results: 100
+
+# Ingestion Service client configuration
+ingestion_service:
+  # gRPC address of the ingestion service
+  address: localhost:9095
+  # Timeout for gRPC calls
+  timeout: 30s

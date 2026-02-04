@@ -21,23 +21,30 @@ import (
 func newTestReview() *domain.LiteratureReviewRequest {
 	now := time.Now().UTC()
 	return &domain.LiteratureReviewRequest{
-		ID:             uuid.New(),
-		OrgID:          "org-123",
-		ProjectID:      "proj-456",
-		UserID:         "user-789",
-		OriginalQuery:  "CRISPR gene editing",
-		Status:         domain.ReviewStatusPending,
-		ExpansionDepth: 2,
-		ConfigSnapshot: map[string]interface{}{
-			"maxPapersPerKeyword": 100,
-			"maxExpansionDepth":   3,
-			"sourcePriorities": map[string]interface{}{
-				"semantic_scholar": 1,
-				"pubmed":           2,
+		ID:            uuid.New(),
+		OrgID:         "org-123",
+		ProjectID:     "proj-456",
+		UserID:        "user-789",
+		OriginalQuery: "CRISPR gene editing",
+		Status:        domain.ReviewStatusPending,
+		Configuration: domain.ReviewConfiguration{
+			MaxPapers:           100,
+			MaxExpansionDepth:   3,
+			MaxKeywordsPerRound: 10,
+			Sources: []domain.SourceType{
+				domain.SourceTypeSemanticScholar,
+				domain.SourceTypePubMed,
 			},
+			IncludePreprints:  true,
+			RequireOpenAccess: false,
 		},
-		SourceFilters: map[string]interface{}{
-			"sources": []string{"semantic_scholar", "pubmed"},
+		SourceFilters: &domain.SourceFilters{
+			SemanticScholar: &domain.SemanticScholarFilters{
+				FieldsOfStudy: []string{"Computer Science", "Biology"},
+			},
+			PubMed: &domain.PubMedFilters{
+				MeshTerms: []string{"CRISPR"},
+			},
 		},
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -318,7 +325,7 @@ func TestPgReviewRepository_Create(t *testing.T) {
 				review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 				pgxmock.AnyArg(), pgxmock.AnyArg(), review.Status,
 				review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
-				review.ExpansionDepth, pgxmock.AnyArg(), pgxmock.AnyArg(), review.DateFrom, review.DateTo,
+				pgxmock.AnyArg(), pgxmock.AnyArg(),
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 			).
 			WillReturnResult(pgxmock.NewResult("INSERT", 1))
@@ -419,7 +426,7 @@ func TestPgReviewRepository_Create(t *testing.T) {
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
-				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+				pgxmock.AnyArg(), pgxmock.AnyArg(),
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnError(pgErr)
 
@@ -441,20 +448,20 @@ func TestPgReviewRepository_Get(t *testing.T) {
 		repo := NewPgReviewRepository(mock)
 		review := newTestReview()
 
-		configJSON, _ := json.Marshal(review.ConfigSnapshot)
+		configJSON, _ := json.Marshal(review.Configuration)
 		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
 
 		rows := pgxmock.NewRows([]string{
 			"id", "org_id", "project_id", "user_id", "original_query",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+			"configuration", "source_filters",
 			"created_at", "updated_at", "started_at", "completed_at",
 		}).AddRow(
 			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
-			review.ExpansionDepth, configJSON, sourceFiltersJSON, review.DateFrom, review.DateTo,
+			configJSON, sourceFiltersJSON,
 			review.CreatedAt, review.UpdatedAt, nil, nil,
 		)
 
@@ -516,20 +523,20 @@ func TestPgReviewRepository_GetByWorkflowID(t *testing.T) {
 		review := newTestReview()
 		review.TemporalWorkflowID = "workflow-123"
 
-		configJSON, _ := json.Marshal(review.ConfigSnapshot)
+		configJSON, _ := json.Marshal(review.Configuration)
 		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
 
 		rows := pgxmock.NewRows([]string{
 			"id", "org_id", "project_id", "user_id", "original_query",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+			"configuration", "source_filters",
 			"created_at", "updated_at", "started_at", "completed_at",
 		}).AddRow(
 			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 			&review.TemporalWorkflowID, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
-			review.ExpansionDepth, configJSON, sourceFiltersJSON, review.DateFrom, review.DateTo,
+			configJSON, sourceFiltersJSON,
 			review.CreatedAt, review.UpdatedAt, nil, nil,
 		)
 
@@ -605,20 +612,20 @@ func TestPgReviewRepository_Update(t *testing.T) {
 
 	// Helper to create mock rows for SELECT FOR UPDATE
 	createSelectRows := func(review *domain.LiteratureReviewRequest) *pgxmock.Rows {
-		configJSON, _ := json.Marshal(review.ConfigSnapshot)
+		configJSON, _ := json.Marshal(review.Configuration)
 		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
 
 		return pgxmock.NewRows([]string{
 			"id", "org_id", "project_id", "user_id", "original_query",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+			"configuration", "source_filters",
 			"created_at", "updated_at", "started_at", "completed_at",
 		}).AddRow(
 			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
-			review.ExpansionDepth, configJSON, sourceFiltersJSON, review.DateFrom, review.DateTo,
+			configJSON, sourceFiltersJSON,
 			review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
 		)
 	}
@@ -636,13 +643,13 @@ func TestPgReviewRepository_Update(t *testing.T) {
 			WithArgs(review.ID, review.OrgID, review.ProjectID).
 			WillReturnRows(createSelectRows(review))
 
-		// Expect UPDATE with 19 arguments (16 SET values + 3 WHERE conditions)
+		// Expect UPDATE with 16 arguments (13 SET values + 3 WHERE conditions)
 		mock.ExpectExec("UPDATE literature_review_requests SET").
 			WithArgs(
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // original_query, temporal_workflow_id, temporal_run_id, status
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count
-				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // expansion_depth, config_snapshot, source_filters, date_from
-				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // date_to, updated_at, started_at, completed_at
+				pgxmock.AnyArg(), pgxmock.AnyArg(),                                     // configuration, source_filters
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),                   // updated_at, started_at, completed_at
 				review.ID, review.OrgID, review.ProjectID, // WHERE conditions
 			).
 			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
@@ -671,7 +678,7 @@ func TestPgReviewRepository_Update(t *testing.T) {
 				"id", "org_id", "project_id", "user_id", "original_query",
 				"temporal_workflow_id", "temporal_run_id", "status",
 				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-				"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+				"configuration", "source_filters",
 				"created_at", "updated_at", "started_at", "completed_at",
 			})) // Empty rows
 
@@ -733,20 +740,20 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 
 	// Helper to create mock rows for SELECT FOR UPDATE
 	createSelectRows := func(review *domain.LiteratureReviewRequest) *pgxmock.Rows {
-		configJSON, _ := json.Marshal(review.ConfigSnapshot)
+		configJSON, _ := json.Marshal(review.Configuration)
 		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
 
 		return pgxmock.NewRows([]string{
 			"id", "org_id", "project_id", "user_id", "original_query",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+			"configuration", "source_filters",
 			"created_at", "updated_at", "started_at", "completed_at",
 		}).AddRow(
 			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
-			review.ExpansionDepth, configJSON, sourceFiltersJSON, review.DateFrom, review.DateTo,
+			configJSON, sourceFiltersJSON,
 			review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
 		)
 	}
@@ -765,13 +772,13 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 			WithArgs(review.ID, review.OrgID, review.ProjectID).
 			WillReturnRows(createSelectRows(review))
 
-		// Expect UPDATE with 19 arguments (16 SET values + 3 WHERE conditions)
+		// Expect UPDATE with 16 arguments (13 SET values + 3 WHERE conditions)
 		mock.ExpectExec("UPDATE literature_review_requests SET").
 			WithArgs(
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // original_query, temporal_workflow_id, temporal_run_id, status
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count
-				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // expansion_depth, config_snapshot, source_filters, date_from
-				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // date_to, updated_at, started_at, completed_at
+				pgxmock.AnyArg(), pgxmock.AnyArg(),                                     // configuration, source_filters
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),                   // updated_at, started_at, completed_at
 				review.ID, review.OrgID, review.ProjectID, // WHERE conditions
 			).
 			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
@@ -845,7 +852,7 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 				"id", "org_id", "project_id", "user_id", "original_query",
 				"temporal_workflow_id", "temporal_run_id", "status",
 				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-				"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+				"configuration", "source_filters",
 				"created_at", "updated_at", "started_at", "completed_at",
 			})) // Empty rows
 
@@ -885,7 +892,7 @@ func TestPgReviewRepository_List(t *testing.T) {
 		repo := NewPgReviewRepository(mock)
 		review := newTestReview()
 
-		configJSON, _ := json.Marshal(review.ConfigSnapshot)
+		configJSON, _ := json.Marshal(review.Configuration)
 		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
 
 		// Expect count query
@@ -898,13 +905,13 @@ func TestPgReviewRepository_List(t *testing.T) {
 			"id", "org_id", "project_id", "user_id", "original_query",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+			"configuration", "source_filters",
 			"created_at", "updated_at", "started_at", "completed_at",
 		}).AddRow(
 			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
-			review.ExpansionDepth, configJSON, sourceFiltersJSON, review.DateFrom, review.DateTo,
+			configJSON, sourceFiltersJSON,
 			review.CreatedAt, review.UpdatedAt, nil, nil,
 		)
 
@@ -945,7 +952,7 @@ func TestPgReviewRepository_List(t *testing.T) {
 				"id", "org_id", "project_id", "user_id", "original_query",
 				"temporal_workflow_id", "temporal_run_id", "status",
 				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-				"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+				"configuration", "source_filters",
 				"created_at", "updated_at", "started_at", "completed_at",
 			}))
 
@@ -968,8 +975,8 @@ func TestReviewScanDest(t *testing.T) {
 	t.Run("destinations returns correct number of pointers", func(t *testing.T) {
 		var dest reviewScanDest
 		dests := dest.destinations()
-		// Should have exactly 21 destination pointers matching the SELECT columns
-		assert.Len(t, dests, 21)
+		// Should have exactly 18 destination pointers matching the SELECT columns
+		assert.Len(t, dests, 18)
 	})
 
 	t.Run("finalize handles nullable fields", func(t *testing.T) {
@@ -983,16 +990,19 @@ func TestReviewScanDest(t *testing.T) {
 			},
 			temporalWorkflowID: &workflowID,
 			temporalRunID:      &runID,
-			configJSON:         []byte(`{"maxPapersPerKeyword":100}`),
-			sourceFiltersJSON:  []byte(`{"sources":["pubmed","arxiv"]}`),
+			configJSON:         []byte(`{"max_papers":100,"max_expansion_depth":3}`),
+			sourceFiltersJSON:  []byte(`{"semantic_scholar":{"fields_of_study":["Biology"]}}`),
 		}
 
 		result, err := dest.finalize()
 		require.NoError(t, err)
 		assert.Equal(t, "wf-123", result.TemporalWorkflowID)
 		assert.Equal(t, "run-456", result.TemporalRunID)
-		assert.Equal(t, float64(100), result.ConfigSnapshot["maxPapersPerKeyword"])
-		assert.Equal(t, []interface{}{"pubmed", "arxiv"}, result.SourceFilters["sources"])
+		assert.Equal(t, 100, result.Configuration.MaxPapers)
+		assert.Equal(t, 3, result.Configuration.MaxExpansionDepth)
+		require.NotNil(t, result.SourceFilters)
+		require.NotNil(t, result.SourceFilters.SemanticScholar)
+		assert.Equal(t, []string{"Biology"}, result.SourceFilters.SemanticScholar.FieldsOfStudy)
 	})
 
 	t.Run("finalize handles nil nullable fields", func(t *testing.T) {
@@ -1019,7 +1029,7 @@ func TestReviewScanDest(t *testing.T) {
 		result, err := dest.finalize()
 		assert.Nil(t, result)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "failed to unmarshal config snapshot")
+		assert.Contains(t, err.Error(), "failed to unmarshal configuration")
 	})
 
 	t.Run("finalize returns error for invalid source filters JSON", func(t *testing.T) {

@@ -46,9 +46,9 @@ func (r *PgReviewRepository) Create(ctx context.Context, review *domain.Literatu
 		return domain.NewValidationError("user_id", "user ID is required")
 	}
 
-	configJSON, err := json.Marshal(review.ConfigSnapshot)
+	configJSON, err := json.Marshal(review.Configuration)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config snapshot: %w", err)
+		return fmt.Errorf("failed to marshal configuration: %w", err)
 	}
 
 	sourceFiltersJSON, err := json.Marshal(review.SourceFilters)
@@ -61,21 +61,21 @@ func (r *PgReviewRepository) Create(ctx context.Context, review *domain.Literatu
 			id, org_id, project_id, user_id, original_query,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
-			expansion_depth, config_snapshot, source_filters, date_from, date_to,
+			configuration, source_filters,
 			created_at, updated_at, started_at, completed_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
 			$6, $7, $8,
 			$9, $10, $11, $12,
-			$13, $14, $15, $16, $17,
-			$18, $19, $20, $21
+			$13, $14,
+			$15, $16, $17, $18
 		)`
 
 	_, err = r.db.Exec(ctx, query,
 		review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 		nullString(review.TemporalWorkflowID), nullString(review.TemporalRunID), review.Status,
 		review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
-		review.ExpansionDepth, configJSON, sourceFiltersJSON, review.DateFrom, review.DateTo,
+		configJSON, sourceFiltersJSON,
 		review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
 	)
 
@@ -95,7 +95,7 @@ func (r *PgReviewRepository) Get(ctx context.Context, orgID, projectID string, i
 		SELECT id, org_id, project_id, user_id, original_query,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
-			expansion_depth, config_snapshot, source_filters, date_from, date_to,
+			configuration, source_filters,
 			created_at, updated_at, started_at, completed_at
 		FROM literature_review_requests
 		WHERE id = $1 AND org_id = $2 AND project_id = $3`
@@ -146,7 +146,7 @@ func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string
 		SELECT id, org_id, project_id, user_id, original_query,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
-			expansion_depth, config_snapshot, source_filters, date_from, date_to,
+			configuration, source_filters,
 			created_at, updated_at, started_at, completed_at
 		FROM literature_review_requests
 		WHERE id = $1 AND org_id = $2 AND project_id = $3
@@ -174,9 +174,9 @@ func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string
 	review.UpdatedAt = time.Now().UTC()
 
 	// Persist the updated review
-	configJSON, err := json.Marshal(review.ConfigSnapshot)
+	configJSON, err := json.Marshal(review.Configuration)
 	if err != nil {
-		return fmt.Errorf("failed to marshal config snapshot: %w", err)
+		return fmt.Errorf("failed to marshal configuration: %w", err)
 	}
 
 	sourceFiltersJSON, err := json.Marshal(review.SourceFilters)
@@ -194,15 +194,12 @@ func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string
 			papers_found_count = $6,
 			papers_ingested_count = $7,
 			papers_failed_count = $8,
-			expansion_depth = $9,
-			config_snapshot = $10,
-			source_filters = $11,
-			date_from = $12,
-			date_to = $13,
-			updated_at = $14,
-			started_at = $15,
-			completed_at = $16
-		WHERE id = $17 AND org_id = $18 AND project_id = $19`
+			configuration = $9,
+			source_filters = $10,
+			updated_at = $11,
+			started_at = $12,
+			completed_at = $13
+		WHERE id = $14 AND org_id = $15 AND project_id = $16`
 
 	_, err = r.db.Exec(ctx, updateQuery,
 		review.OriginalQuery,
@@ -213,11 +210,8 @@ func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string
 		review.PapersFoundCount,
 		review.PapersIngestedCount,
 		review.PapersFailedCount,
-		review.ExpansionDepth,
 		configJSON,
 		sourceFiltersJSON,
-		review.DateFrom,
-		review.DateTo,
 		review.UpdatedAt,
 		review.StartedAt,
 		review.CompletedAt,
@@ -308,7 +302,7 @@ func (r *PgReviewRepository) List(ctx context.Context, filter ReviewFilter) ([]*
 		SELECT id, org_id, project_id, user_id, original_query,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
-			expansion_depth, config_snapshot, source_filters, date_from, date_to,
+			configuration, source_filters,
 			created_at, updated_at, started_at, completed_at
 		FROM literature_review_requests
 		WHERE %s
@@ -377,7 +371,7 @@ func (r *PgReviewRepository) GetByWorkflowID(ctx context.Context, workflowID str
 		SELECT id, org_id, project_id, user_id, original_query,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
-			expansion_depth, config_snapshot, source_filters, date_from, date_to,
+			configuration, source_filters,
 			created_at, updated_at, started_at, completed_at
 		FROM literature_review_requests
 		WHERE temporal_workflow_id = $1`
@@ -474,7 +468,7 @@ func (d *reviewScanDest) destinations() []interface{} {
 		&d.review.ID, &d.review.OrgID, &d.review.ProjectID, &d.review.UserID, &d.review.OriginalQuery,
 		&d.temporalWorkflowID, &d.temporalRunID, &d.review.Status,
 		&d.review.KeywordsFoundCount, &d.review.PapersFoundCount, &d.review.PapersIngestedCount, &d.review.PapersFailedCount,
-		&d.review.ExpansionDepth, &d.configJSON, &d.sourceFiltersJSON, &d.review.DateFrom, &d.review.DateTo,
+		&d.configJSON, &d.sourceFiltersJSON,
 		&d.review.CreatedAt, &d.review.UpdatedAt, &d.review.StartedAt, &d.review.CompletedAt,
 	}
 }
@@ -489,15 +483,17 @@ func (d *reviewScanDest) finalize() (*domain.LiteratureReviewRequest, error) {
 	}
 
 	if len(d.configJSON) > 0 {
-		if err := json.Unmarshal(d.configJSON, &d.review.ConfigSnapshot); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal config snapshot: %w", err)
+		if err := json.Unmarshal(d.configJSON, &d.review.Configuration); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal configuration: %w", err)
 		}
 	}
 
 	if len(d.sourceFiltersJSON) > 0 {
-		if err := json.Unmarshal(d.sourceFiltersJSON, &d.review.SourceFilters); err != nil {
+		var sourceFilters domain.SourceFilters
+		if err := json.Unmarshal(d.sourceFiltersJSON, &sourceFilters); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal source filters: %w", err)
 		}
+		d.review.SourceFilters = &sourceFilters
 	}
 
 	return &d.review, nil

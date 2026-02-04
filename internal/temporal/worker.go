@@ -56,8 +56,7 @@ type ActivityDependencies struct {
 	StatusActivities *activities.StatusActivities
 
 	// IngestionActivities contains paper ingestion request activities.
-	// Placeholder until Phase 3E implementation.
-	IngestionActivities interface{}
+	IngestionActivities *activities.IngestionActivities
 }
 
 // WorkflowRegistry holds workflow functions to be registered with the worker.

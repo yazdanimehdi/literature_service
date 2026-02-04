@@ -113,10 +113,34 @@ func (r *PgReviewRepository) Get(ctx context.Context, orgID, projectID string, i
 }
 
 // Update performs an optimistic update on a literature review request using SELECT FOR UPDATE.
+//
+// IMPORTANT: Transaction Requirements
+// This method uses SELECT FOR UPDATE which REQUIRES being called within an explicit transaction
+// to provide the intended row-level locking and isolation guarantees.
+//
+// When DBTX is a pool (not a transaction), SELECT FOR UPDATE will execute in autocommit mode,
+// meaning the lock is released immediately after the SELECT, before the UPDATE runs.
+// This can lead to lost updates under concurrent access.
+//
+// Correct usage:
+//
+//	tx, err := pool.Begin(ctx)
+//	if err != nil { return err }
+//	defer tx.Rollback(ctx)
+//
+//	repo := NewPgReviewRepository(tx)
+//	err = repo.Update(ctx, orgID, projectID, id, func(r *domain.LiteratureReviewRequest) error {
+//	    r.Status = domain.ReviewStatusSearching
+//	    return nil
+//	})
+//	if err != nil { return err }
+//
+//	return tx.Commit(ctx)
+//
+// The caller is responsible for transaction management (Begin/Commit/Rollback).
 func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string, id uuid.UUID, fn func(*domain.LiteratureReviewRequest) error) error {
-	// Use a transaction with SELECT FOR UPDATE to acquire a row lock.
-	// If the caller passes a transaction via DBTX, we use that directly.
-	// This approach requires the caller to manage the transaction when using DBTX.
+	// Use SELECT FOR UPDATE to acquire a row lock.
+	// This method requires the caller to wrap calls in an explicit transaction.
 
 	selectQuery := `
 		SELECT id, org_id, project_id, user_id, original_query,
@@ -434,43 +458,58 @@ func isPgUniqueViolation(err error) bool {
 	return false
 }
 
-// scanReview scans a single row into a LiteratureReviewRequest.
-func scanReview(row pgx.Row) (*domain.LiteratureReviewRequest, error) {
-	var review domain.LiteratureReviewRequest
-	var configJSON, sourceFiltersJSON []byte
-	var temporalWorkflowID, temporalRunID *string
+// reviewScanDest holds the destination pointers for scanning a LiteratureReviewRequest row.
+// This eliminates code duplication between pgx.Row and pgx.Rows scanning.
+type reviewScanDest struct {
+	review             domain.LiteratureReviewRequest
+	configJSON         []byte
+	sourceFiltersJSON  []byte
+	temporalWorkflowID *string
+	temporalRunID      *string
+}
 
-	err := row.Scan(
-		&review.ID, &review.OrgID, &review.ProjectID, &review.UserID, &review.OriginalQuery,
-		&temporalWorkflowID, &temporalRunID, &review.Status,
-		&review.KeywordsFoundCount, &review.PapersFoundCount, &review.PapersIngestedCount, &review.PapersFailedCount,
-		&review.ExpansionDepth, &configJSON, &sourceFiltersJSON, &review.DateFrom, &review.DateTo,
-		&review.CreatedAt, &review.UpdatedAt, &review.StartedAt, &review.CompletedAt,
-	)
-	if err != nil {
-		return nil, err
+// destinations returns the slice of pointers for Scan operations.
+func (d *reviewScanDest) destinations() []interface{} {
+	return []interface{}{
+		&d.review.ID, &d.review.OrgID, &d.review.ProjectID, &d.review.UserID, &d.review.OriginalQuery,
+		&d.temporalWorkflowID, &d.temporalRunID, &d.review.Status,
+		&d.review.KeywordsFoundCount, &d.review.PapersFoundCount, &d.review.PapersIngestedCount, &d.review.PapersFailedCount,
+		&d.review.ExpansionDepth, &d.configJSON, &d.sourceFiltersJSON, &d.review.DateFrom, &d.review.DateTo,
+		&d.review.CreatedAt, &d.review.UpdatedAt, &d.review.StartedAt, &d.review.CompletedAt,
+	}
+}
+
+// finalize performs post-scan processing: sets nullable string fields and unmarshals JSON.
+func (d *reviewScanDest) finalize() (*domain.LiteratureReviewRequest, error) {
+	if d.temporalWorkflowID != nil {
+		d.review.TemporalWorkflowID = *d.temporalWorkflowID
+	}
+	if d.temporalRunID != nil {
+		d.review.TemporalRunID = *d.temporalRunID
 	}
 
-	if temporalWorkflowID != nil {
-		review.TemporalWorkflowID = *temporalWorkflowID
-	}
-	if temporalRunID != nil {
-		review.TemporalRunID = *temporalRunID
-	}
-
-	if len(configJSON) > 0 {
-		if err := json.Unmarshal(configJSON, &review.ConfigSnapshot); err != nil {
+	if len(d.configJSON) > 0 {
+		if err := json.Unmarshal(d.configJSON, &d.review.ConfigSnapshot); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal config snapshot: %w", err)
 		}
 	}
 
-	if len(sourceFiltersJSON) > 0 {
-		if err := json.Unmarshal(sourceFiltersJSON, &review.SourceFilters); err != nil {
+	if len(d.sourceFiltersJSON) > 0 {
+		if err := json.Unmarshal(d.sourceFiltersJSON, &d.review.SourceFilters); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal source filters: %w", err)
 		}
 	}
 
-	return &review, nil
+	return &d.review, nil
+}
+
+// scanReview scans a single row into a LiteratureReviewRequest.
+func scanReview(row pgx.Row) (*domain.LiteratureReviewRequest, error) {
+	var dest reviewScanDest
+	if err := row.Scan(dest.destinations()...); err != nil {
+		return nil, err
+	}
+	return dest.finalize()
 }
 
 // scanReviewRows scans a single row from pgx.Rows into a LiteratureReviewRequest.
@@ -490,41 +529,11 @@ func scanReviewRows(rows pgx.Rows) (*domain.LiteratureReviewRequest, error) {
 
 // scanReviewFromRows scans the current row from pgx.Rows into a LiteratureReviewRequest.
 func scanReviewFromRows(rows pgx.Rows) (*domain.LiteratureReviewRequest, error) {
-	var review domain.LiteratureReviewRequest
-	var configJSON, sourceFiltersJSON []byte
-	var temporalWorkflowID, temporalRunID *string
-
-	err := rows.Scan(
-		&review.ID, &review.OrgID, &review.ProjectID, &review.UserID, &review.OriginalQuery,
-		&temporalWorkflowID, &temporalRunID, &review.Status,
-		&review.KeywordsFoundCount, &review.PapersFoundCount, &review.PapersIngestedCount, &review.PapersFailedCount,
-		&review.ExpansionDepth, &configJSON, &sourceFiltersJSON, &review.DateFrom, &review.DateTo,
-		&review.CreatedAt, &review.UpdatedAt, &review.StartedAt, &review.CompletedAt,
-	)
-	if err != nil {
+	var dest reviewScanDest
+	if err := rows.Scan(dest.destinations()...); err != nil {
 		return nil, err
 	}
-
-	if temporalWorkflowID != nil {
-		review.TemporalWorkflowID = *temporalWorkflowID
-	}
-	if temporalRunID != nil {
-		review.TemporalRunID = *temporalRunID
-	}
-
-	if len(configJSON) > 0 {
-		if err := json.Unmarshal(configJSON, &review.ConfigSnapshot); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal config snapshot: %w", err)
-		}
-	}
-
-	if len(sourceFiltersJSON) > 0 {
-		if err := json.Unmarshal(sourceFiltersJSON, &review.SourceFilters); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal source filters: %w", err)
-		}
-	}
-
-	return &review, nil
+	return dest.finalize()
 }
 
 // nullString returns a pointer to the string if non-empty, otherwise nil.

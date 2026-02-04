@@ -57,8 +57,14 @@ type PaperRepository interface {
 
 	// BulkUpsert creates or updates multiple papers in a single transaction.
 	// Papers are matched by canonical_id for upsert behavior.
-	// Returns the created or updated papers with their assigned IDs.
 	// Returns domain.ErrInvalidInput if any paper has no valid canonical ID.
+	//
+	// Return contract:
+	//   - Returned papers are in the same order as the input slice.
+	//   - Database-generated fields (ID, CreatedAt, UpdatedAt) are populated on all returned papers.
+	//   - For newly created papers, the returned paper contains the generated ID and timestamps.
+	//   - For existing papers (matched by canonical_id), the returned paper contains the merged/updated
+	//     data reflecting the final database state after the upsert.
 	BulkUpsert(ctx context.Context, papers []*domain.Paper) ([]*domain.Paper, error)
 }
 

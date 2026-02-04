@@ -68,9 +68,19 @@ type KeywordRepository interface {
 	// Papers are returned in order of association creation time (most recent first).
 	// Returns the matching papers and total count for pagination.
 	GetPapersForKeyword(ctx context.Context, keywordID uuid.UUID, limit, offset int) ([]*domain.Paper, int64, error)
+
+	// List retrieves keywords matching the filter criteria.
+	// Returns the matching keywords and total count for pagination.
+	// The total count reflects all matching records regardless of limit/offset.
+	List(ctx context.Context, filter KeywordFilter) ([]*domain.Keyword, int64, error)
 }
 
-// KeywordFilter specifies criteria for listing keywords.
+// KeywordFilter specifies criteria for listing keywords via KeywordRepository.List.
+// This filter operates on the keyword registry itself, allowing discovery of keywords
+// based on their properties and search history.
+//
+// For filtering keyword search records (the history of searches performed for keywords),
+// use SearchFilter with KeywordRepository.ListSearches instead.
 type KeywordFilter struct {
 	// NormalizedContains filters to keywords containing this substring (optional).
 	// The search is performed on the normalized keyword form.
@@ -110,7 +120,12 @@ func (f *KeywordFilter) Validate() error {
 	return nil
 }
 
-// SearchFilter specifies criteria for listing keyword searches.
+// SearchFilter specifies criteria for listing keyword search records via KeywordRepository.ListSearches.
+// This filter operates on the search history, allowing queries about when and how keywords
+// were searched across different source APIs.
+//
+// For filtering keywords themselves (the keyword registry), use KeywordFilter with
+// KeywordRepository.List instead.
 type SearchFilter struct {
 	// KeywordID filters to searches for a specific keyword (optional).
 	KeywordID *uuid.UUID

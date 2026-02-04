@@ -50,4 +50,30 @@ import (
 
 // DBTX is the database interface supporting both pool and transaction contexts.
 // This allows repositories to work with both direct pool connections and transactions.
+//
+// # Constructor Pattern
+//
+// Repository implementations follow a constructor pattern that accepts DBTX:
+//
+//	type PgReviewRepository struct {
+//	    db DBTX
+//	}
+//
+//	func NewPgReviewRepository(db DBTX) *PgReviewRepository {
+//	    return &PgReviewRepository{db: db}
+//	}
+//
+// This design enables:
+//   - Direct usage with a connection pool for standard operations
+//   - Transaction support by passing a transaction (pgx.Tx) instead
+//   - Easy testing with mock implementations of DBTX
+//
+// # Transaction Usage Example
+//
+//	err := db.WithTransaction(ctx, func(tx pgx.Tx) error {
+//	    // Create a transactional repository instance
+//	    txRepo := repository.NewPgReviewRepository(tx)
+//	    // All operations within this function use the same transaction
+//	    return txRepo.Create(ctx, review)
+//	})
 type DBTX = database.DBTX

@@ -43,13 +43,13 @@ func TestActivityDependencies(t *testing.T) {
 			LLMActivities:       nil,
 			SearchActivities:    nil,
 			StatusActivities:    nil,
-			IngestionActivities: "ingestion",
+			IngestionActivities: nil,
 		}
 
 		assert.Nil(t, deps.LLMActivities)
 		assert.Nil(t, deps.SearchActivities)
 		assert.Nil(t, deps.StatusActivities)
-		assert.Equal(t, "ingestion", deps.IngestionActivities)
+		assert.Nil(t, deps.IngestionActivities)
 	})
 }
 

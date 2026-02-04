@@ -600,6 +600,263 @@ func TestPgReviewRepository_IncrementCounters(t *testing.T) {
 	})
 }
 
+func TestPgReviewRepository_Update(t *testing.T) {
+	ctx := context.Background()
+
+	// Helper to create mock rows for SELECT FOR UPDATE
+	createSelectRows := func(review *domain.LiteratureReviewRequest) *pgxmock.Rows {
+		configJSON, _ := json.Marshal(review.ConfigSnapshot)
+		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
+
+		return pgxmock.NewRows([]string{
+			"id", "org_id", "project_id", "user_id", "original_query",
+			"temporal_workflow_id", "temporal_run_id", "status",
+			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
+			"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+			"created_at", "updated_at", "started_at", "completed_at",
+		}).AddRow(
+			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+			nil, nil, review.Status,
+			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
+			review.ExpansionDepth, configJSON, sourceFiltersJSON, review.DateFrom, review.DateTo,
+			review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
+		)
+	}
+
+	t.Run("updates review successfully", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		review := newTestReview()
+
+		// Expect SELECT FOR UPDATE
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
+			WithArgs(review.ID, review.OrgID, review.ProjectID).
+			WillReturnRows(createSelectRows(review))
+
+		// Expect UPDATE with 19 arguments (16 SET values + 3 WHERE conditions)
+		mock.ExpectExec("UPDATE literature_review_requests SET").
+			WithArgs(
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // original_query, temporal_workflow_id, temporal_run_id, status
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // expansion_depth, config_snapshot, source_filters, date_from
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // date_to, updated_at, started_at, completed_at
+				review.ID, review.OrgID, review.ProjectID, // WHERE conditions
+			).
+			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+		err = repo.Update(ctx, review.OrgID, review.ProjectID, review.ID, func(r *domain.LiteratureReviewRequest) error {
+			r.OriginalQuery = "updated query"
+			return nil
+		})
+
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns not found error when review does not exist", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		id := uuid.New()
+
+		// Expect SELECT FOR UPDATE returns no rows
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
+			WithArgs(id, "org-123", "proj-456").
+			WillReturnRows(pgxmock.NewRows([]string{
+				"id", "org_id", "project_id", "user_id", "original_query",
+				"temporal_workflow_id", "temporal_run_id", "status",
+				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
+				"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+				"created_at", "updated_at", "started_at", "completed_at",
+			})) // Empty rows
+
+		err = repo.Update(ctx, "org-123", "proj-456", id, func(r *domain.LiteratureReviewRequest) error {
+			return nil
+		})
+
+		assert.True(t, errors.Is(err, domain.ErrNotFound))
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns error when update function fails", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		review := newTestReview()
+
+		// Expect SELECT FOR UPDATE
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
+			WithArgs(review.ID, review.OrgID, review.ProjectID).
+			WillReturnRows(createSelectRows(review))
+
+		updateErr := errors.New("update function error")
+		err = repo.Update(ctx, review.OrgID, review.ProjectID, review.ID, func(r *domain.LiteratureReviewRequest) error {
+			return updateErr
+		})
+
+		assert.Equal(t, updateErr, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns error when query fails", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		id := uuid.New()
+
+		// Expect SELECT FOR UPDATE to fail
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
+			WithArgs(id, "org-123", "proj-456").
+			WillReturnError(errors.New("database error"))
+
+		err = repo.Update(ctx, "org-123", "proj-456", id, func(r *domain.LiteratureReviewRequest) error {
+			return nil
+		})
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to query review for update")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
+func TestPgReviewRepository_UpdateStatus(t *testing.T) {
+	ctx := context.Background()
+
+	// Helper to create mock rows for SELECT FOR UPDATE
+	createSelectRows := func(review *domain.LiteratureReviewRequest) *pgxmock.Rows {
+		configJSON, _ := json.Marshal(review.ConfigSnapshot)
+		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
+
+		return pgxmock.NewRows([]string{
+			"id", "org_id", "project_id", "user_id", "original_query",
+			"temporal_workflow_id", "temporal_run_id", "status",
+			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
+			"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+			"created_at", "updated_at", "started_at", "completed_at",
+		}).AddRow(
+			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+			nil, nil, review.Status,
+			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
+			review.ExpansionDepth, configJSON, sourceFiltersJSON, review.DateFrom, review.DateTo,
+			review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
+		)
+	}
+
+	t.Run("updates status with valid transition", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		review := newTestReview()
+		review.Status = domain.ReviewStatusPending
+
+		// Expect SELECT FOR UPDATE
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
+			WithArgs(review.ID, review.OrgID, review.ProjectID).
+			WillReturnRows(createSelectRows(review))
+
+		// Expect UPDATE with 19 arguments (16 SET values + 3 WHERE conditions)
+		mock.ExpectExec("UPDATE literature_review_requests SET").
+			WithArgs(
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // original_query, temporal_workflow_id, temporal_run_id, status
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // expansion_depth, config_snapshot, source_filters, date_from
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // date_to, updated_at, started_at, completed_at
+				review.ID, review.OrgID, review.ProjectID, // WHERE conditions
+			).
+			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+		err = repo.UpdateStatus(ctx, review.OrgID, review.ProjectID, review.ID,
+			domain.ReviewStatusExtractingKeywords, "")
+
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns error for invalid status transition", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		review := newTestReview()
+		review.Status = domain.ReviewStatusPending
+
+		// Expect SELECT FOR UPDATE
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
+			WithArgs(review.ID, review.OrgID, review.ProjectID).
+			WillReturnRows(createSelectRows(review))
+
+		// Try invalid transition: pending -> completed
+		err = repo.UpdateStatus(ctx, review.OrgID, review.ProjectID, review.ID,
+			domain.ReviewStatusCompleted, "")
+
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, domain.ErrInvalidInput))
+		assert.Contains(t, err.Error(), "invalid status transition")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns error when transitioning from terminal state", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		review := newTestReview()
+		review.Status = domain.ReviewStatusCompleted // Terminal state
+
+		// Expect SELECT FOR UPDATE
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
+			WithArgs(review.ID, review.OrgID, review.ProjectID).
+			WillReturnRows(createSelectRows(review))
+
+		// Try transition from terminal state
+		err = repo.UpdateStatus(ctx, review.OrgID, review.ProjectID, review.ID,
+			domain.ReviewStatusSearching, "")
+
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, domain.ErrInvalidInput))
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns not found error when review does not exist", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		id := uuid.New()
+
+		// Expect SELECT FOR UPDATE returns no rows
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
+			WithArgs(id, "org-123", "proj-456").
+			WillReturnRows(pgxmock.NewRows([]string{
+				"id", "org_id", "project_id", "user_id", "original_query",
+				"temporal_workflow_id", "temporal_run_id", "status",
+				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
+				"expansion_depth", "config_snapshot", "source_filters", "date_from", "date_to",
+				"created_at", "updated_at", "started_at", "completed_at",
+			})) // Empty rows
+
+		err = repo.UpdateStatus(ctx, "org-123", "proj-456", id,
+			domain.ReviewStatusExtractingKeywords, "")
+
+		assert.True(t, errors.Is(err, domain.ErrNotFound))
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestPgReviewRepository_List(t *testing.T) {
 	ctx := context.Background()
 

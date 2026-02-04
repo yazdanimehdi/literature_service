@@ -6,6 +6,8 @@ import (
 
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
+
+	"github.com/helixir/literature-review-service/internal/temporal/activities"
 )
 
 // WorkerConfig contains configuration for the Temporal worker.
@@ -42,18 +44,19 @@ func DefaultWorkerConfig(taskQueue string) WorkerConfig {
 }
 
 // ActivityDependencies contains all dependencies needed by activities.
-// These will be populated as activities are implemented.
+// Each field holds a typed activity struct that is registered with the Temporal worker.
 type ActivityDependencies struct {
 	// LLMActivities contains keyword extraction and query parsing activities.
-	LLMActivities interface{}
+	LLMActivities *activities.LLMActivities
 
 	// SearchActivities contains paper source search activities.
-	SearchActivities interface{}
+	SearchActivities *activities.SearchActivities
 
 	// StatusActivities contains review status and event emission activities.
-	StatusActivities interface{}
+	StatusActivities *activities.StatusActivities
 
 	// IngestionActivities contains paper ingestion request activities.
+	// Placeholder until Phase 3E implementation.
 	IngestionActivities interface{}
 }
 

@@ -40,15 +40,15 @@ func TestWorkerConfig(t *testing.T) {
 func TestActivityDependencies(t *testing.T) {
 	t.Run("can hold dependencies", func(t *testing.T) {
 		deps := ActivityDependencies{
-			LLMActivities:       "llm",
-			SearchActivities:    "search",
-			StatusActivities:    "status",
+			LLMActivities:       nil,
+			SearchActivities:    nil,
+			StatusActivities:    nil,
 			IngestionActivities: "ingestion",
 		}
 
-		assert.Equal(t, "llm", deps.LLMActivities)
-		assert.Equal(t, "search", deps.SearchActivities)
-		assert.Equal(t, "status", deps.StatusActivities)
+		assert.Nil(t, deps.LLMActivities)
+		assert.Nil(t, deps.SearchActivities)
+		assert.Nil(t, deps.StatusActivities)
 		assert.Equal(t, "ingestion", deps.IngestionActivities)
 	})
 }

@@ -1,0 +1,166 @@
+package activities
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/testsuite"
+
+	"github.com/helixir/literature-review-service/internal/llm"
+)
+
+// mockKeywordExtractor implements llm.KeywordExtractor for testing.
+type mockKeywordExtractor struct {
+	mock.Mock
+}
+
+func (m *mockKeywordExtractor) ExtractKeywords(ctx context.Context, req llm.ExtractionRequest) (*llm.ExtractionResult, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*llm.ExtractionResult), args.Error(1)
+}
+
+func (m *mockKeywordExtractor) Provider() string {
+	args := m.Called()
+	return args.String(0)
+}
+
+func (m *mockKeywordExtractor) Model() string {
+	args := m.Called()
+	return args.String(0)
+}
+
+func TestExtractKeywords_Success(t *testing.T) {
+	// Set up Temporal test environment.
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	// Set up mock extractor.
+	extractor := &mockKeywordExtractor{}
+	extractor.On("ExtractKeywords", mock.Anything, llm.ExtractionRequest{
+		Text:             "What are the latest advances in CRISPR gene editing?",
+		Mode:             llm.ExtractionModeQuery,
+		MaxKeywords:      10,
+		MinKeywords:      3,
+		ExistingKeywords: nil,
+		Context:          "",
+	}).Return(&llm.ExtractionResult{
+		Keywords:     []string{"CRISPR", "gene editing", "Cas9", "genome engineering"},
+		Reasoning:    "Extracted core CRISPR-related terms and common synonyms",
+		Model:        "gpt-4o",
+		InputTokens:  150,
+		OutputTokens: 50,
+	}, nil)
+	// Create activity with nil metrics (testing without metrics).
+	activities := NewLLMActivities(extractor, nil)
+	env.RegisterActivity(activities.ExtractKeywords)
+
+	// Execute the activity.
+	input := ExtractKeywordsInput{
+		Text:        "What are the latest advances in CRISPR gene editing?",
+		Mode:        "query",
+		MaxKeywords: 10,
+		MinKeywords: 3,
+	}
+
+	result, err := env.ExecuteActivity(activities.ExtractKeywords, input)
+	require.NoError(t, err)
+
+	var output ExtractKeywordsOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.Equal(t, []string{"CRISPR", "gene editing", "Cas9", "genome engineering"}, output.Keywords)
+	assert.Equal(t, "Extracted core CRISPR-related terms and common synonyms", output.Reasoning)
+	assert.Equal(t, "gpt-4o", output.Model)
+	assert.Equal(t, 150, output.InputTokens)
+	assert.Equal(t, 50, output.OutputTokens)
+
+	extractor.AssertExpectations(t)
+}
+
+func TestExtractKeywords_Error(t *testing.T) {
+	// Set up Temporal test environment.
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	// Set up mock extractor that returns an error.
+	extractor := &mockKeywordExtractor{}
+	extractor.On("ExtractKeywords", mock.Anything, mock.Anything).
+		Return(nil, fmt.Errorf("LLM provider unavailable"))
+
+	// Create activity with nil metrics.
+	activities := NewLLMActivities(extractor, nil)
+	env.RegisterActivity(activities.ExtractKeywords)
+
+	// Execute the activity.
+	input := ExtractKeywordsInput{
+		Text:        "Some research query",
+		Mode:        "query",
+		MaxKeywords: 10,
+		MinKeywords: 3,
+	}
+
+	_, err := env.ExecuteActivity(activities.ExtractKeywords, input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "keyword extraction failed")
+
+	extractor.AssertExpectations(t)
+}
+
+func TestExtractKeywords_WithExistingKeywords(t *testing.T) {
+	// Set up Temporal test environment.
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	existingKeywords := []string{"CRISPR", "gene editing"}
+
+	// Set up mock extractor and verify ExistingKeywords are passed through.
+	extractor := &mockKeywordExtractor{}
+	extractor.On("ExtractKeywords", mock.Anything, mock.MatchedBy(func(req llm.ExtractionRequest) bool {
+		return len(req.ExistingKeywords) == 2 &&
+			req.ExistingKeywords[0] == "CRISPR" &&
+			req.ExistingKeywords[1] == "gene editing" &&
+			req.Mode == llm.ExtractionModeAbstract
+	})).Return(&llm.ExtractionResult{
+		Keywords:     []string{"Cas9", "guide RNA", "PAM sequence"},
+		Reasoning:    "Found complementary terms not in existing set",
+		Model:        "claude-sonnet-4-20250514",
+		InputTokens:  200,
+		OutputTokens: 60,
+	}, nil)
+
+	// Create activity with nil metrics.
+	activities := NewLLMActivities(extractor, nil)
+	env.RegisterActivity(activities.ExtractKeywords)
+
+	// Execute the activity with existing keywords.
+	input := ExtractKeywordsInput{
+		Text:             "This paper describes a novel application of CRISPR-Cas9 with modified guide RNA targeting PAM sequences...",
+		Mode:             "abstract",
+		MaxKeywords:      10,
+		MinKeywords:      3,
+		ExistingKeywords: existingKeywords,
+		Context:          "molecular biology",
+	}
+
+	result, err := env.ExecuteActivity(activities.ExtractKeywords, input)
+	require.NoError(t, err)
+
+	var output ExtractKeywordsOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.Equal(t, []string{"Cas9", "guide RNA", "PAM sequence"}, output.Keywords)
+	assert.Equal(t, "Found complementary terms not in existing set", output.Reasoning)
+	assert.Equal(t, "claude-sonnet-4-20250514", output.Model)
+	assert.Equal(t, 200, output.InputTokens)
+	assert.Equal(t, 60, output.OutputTokens)
+
+	// Verify the mock was called with the correct existing keywords.
+	extractor.AssertExpectations(t)
+}

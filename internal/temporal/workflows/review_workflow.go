@@ -28,6 +28,10 @@ const (
 	llmActivityTimeout    = 2 * time.Minute
 	searchActivityTimeout = 5 * time.Minute
 	statusActivityTimeout = 30 * time.Second
+
+	ingestionSubmitTimeout = 5 * time.Minute
+	ingestionPollInterval  = 30 * time.Second
+	ingestionMaxPollTime   = 30 * time.Minute
 )
 
 // maxPapersForExpansion is the maximum number of papers to use for keyword
@@ -86,6 +90,8 @@ type workflowProgress struct {
 	Phase             string
 	KeywordsFound     int
 	PapersFound       int
+	PapersIngested    int
+	PapersFailed      int
 	ExpansionRound    int
 	MaxExpansionDepth int
 }
@@ -133,6 +139,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	var llmAct *activities.LLMActivities
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
+	var ingestionAct *activities.IngestionActivities
 
 	// Build activity option contexts with retry policies.
 	llmCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
@@ -162,6 +169,17 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			BackoffCoefficient: 2.0,
 			MaximumInterval:    10 * time.Second,
 			MaximumAttempts:    5,
+		},
+	})
+
+	ingestionCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
+		StartToCloseTimeout: ingestionSubmitTimeout,
+		HeartbeatTimeout:    2 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    2 * time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    1 * time.Minute,
+			MaximumAttempts:    3,
 		},
 	})
 
@@ -436,7 +454,56 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	}
 
 	// =========================================================================
-	// Phase 4: Complete
+	// Phase 4: Ingestion — Submit papers with PDFs to the ingestion service
+	// =========================================================================
+
+	// Collect papers with PDF URLs for ingestion.
+	var papersForIngestion []activities.PaperForIngestion
+	for _, p := range allPapers {
+		if p != nil && p.PDFURL != "" {
+			papersForIngestion = append(papersForIngestion, activities.PaperForIngestion{
+				PaperID:     p.ID,
+				PDFURL:      p.PDFURL,
+				CanonicalID: p.CanonicalID,
+			})
+		}
+	}
+
+	if len(papersForIngestion) > 0 {
+		logger.Info("starting paper ingestion", "paperCount", len(papersForIngestion))
+		if err := updateStatus(domain.ReviewStatusIngesting, "ingesting", ""); err != nil {
+			return handleFailure(fmt.Errorf("update status to ingesting: %w", err))
+		}
+
+		var submitOutput activities.SubmitPapersForIngestionOutput
+		err = workflow.ExecuteActivity(ingestionCtx, ingestionAct.SubmitPapersForIngestion, activities.SubmitPapersForIngestionInput{
+			OrgID:     input.OrgID,
+			ProjectID: input.ProjectID,
+			RequestID: input.RequestID,
+			Papers:    papersForIngestion,
+		}).Get(cancelCtx, &submitOutput)
+		if err != nil {
+			// Ingestion failure is non-fatal: log it and continue to completion.
+			logger.Warn("paper ingestion submission failed, completing with partial results",
+				"error", err,
+			)
+		} else {
+			totalPapersSaved += submitOutput.Submitted
+			progress.PapersIngested = submitOutput.Submitted
+			progress.PapersFailed = submitOutput.Failed
+
+			logger.Info("paper ingestion completed",
+				"submitted", submitOutput.Submitted,
+				"skipped", submitOutput.Skipped,
+				"failed", submitOutput.Failed,
+			)
+		}
+	} else {
+		logger.Info("no papers with PDF URLs found, skipping ingestion phase")
+	}
+
+	// =========================================================================
+	// Phase 5: Complete
 	// =========================================================================
 
 	if err := updateStatus(domain.ReviewStatusCompleted, "completed", ""); err != nil {

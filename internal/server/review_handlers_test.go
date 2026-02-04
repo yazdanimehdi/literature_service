@@ -15,7 +15,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Mock ReviewRepository
+// mockReviewRepo is a mock ReviewRepository used by review and stream handler tests.
 // ---------------------------------------------------------------------------
 
 type mockReviewRepo struct {
@@ -78,103 +78,19 @@ func (m *mockReviewRepo) GetByWorkflowID(ctx context.Context, workflowID string)
 }
 
 // ---------------------------------------------------------------------------
-// Mock PaperRepository
+// mockPaperRepo is a no-op PaperRepository mock used by review and stream handler tests.
 // ---------------------------------------------------------------------------
 
-type mockPaperRepo struct{}
-
-func (m *mockPaperRepo) Create(ctx context.Context, paper *domain.Paper) (*domain.Paper, error) {
-	return paper, nil
-}
-
-func (m *mockPaperRepo) GetByCanonicalID(ctx context.Context, canonicalID string) (*domain.Paper, error) {
-	return nil, domain.ErrNotFound
-}
-
-func (m *mockPaperRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Paper, error) {
-	return nil, domain.ErrNotFound
-}
-
-func (m *mockPaperRepo) FindByIdentifier(ctx context.Context, idType domain.IdentifierType, value string) (*domain.Paper, error) {
-	return nil, domain.ErrNotFound
-}
-
-func (m *mockPaperRepo) UpsertIdentifier(ctx context.Context, paperID uuid.UUID, idType domain.IdentifierType, value string, sourceAPI domain.SourceType) error {
-	return nil
-}
-
-func (m *mockPaperRepo) AddSource(ctx context.Context, paperID uuid.UUID, sourceAPI domain.SourceType, metadata map[string]interface{}) error {
-	return nil
-}
-
-func (m *mockPaperRepo) List(ctx context.Context, filter repository.PaperFilter) ([]*domain.Paper, int64, error) {
-	return nil, 0, nil
-}
-
-func (m *mockPaperRepo) MarkKeywordsExtracted(ctx context.Context, id uuid.UUID) error {
-	return nil
-}
-
-func (m *mockPaperRepo) BulkUpsert(ctx context.Context, papers []*domain.Paper) ([]*domain.Paper, error) {
-	return papers, nil
+type mockPaperRepo struct {
+	paperTestPaperRepo
 }
 
 // ---------------------------------------------------------------------------
-// Mock KeywordRepository
+// mockKeywordRepo is a no-op KeywordRepository mock used by review and stream handler tests.
 // ---------------------------------------------------------------------------
 
-type mockKeywordRepo struct{}
-
-func (m *mockKeywordRepo) GetOrCreate(ctx context.Context, keyword string) (*domain.Keyword, error) {
-	return &domain.Keyword{ID: uuid.New(), Keyword: keyword}, nil
-}
-
-func (m *mockKeywordRepo) GetByID(ctx context.Context, id uuid.UUID) (*domain.Keyword, error) {
-	return nil, domain.ErrNotFound
-}
-
-func (m *mockKeywordRepo) GetByNormalized(ctx context.Context, normalized string) (*domain.Keyword, error) {
-	return nil, domain.ErrNotFound
-}
-
-func (m *mockKeywordRepo) BulkGetOrCreate(ctx context.Context, keywords []string) ([]*domain.Keyword, error) {
-	result := make([]*domain.Keyword, len(keywords))
-	for i, kw := range keywords {
-		result[i] = &domain.Keyword{ID: uuid.New(), Keyword: kw}
-	}
-	return result, nil
-}
-
-func (m *mockKeywordRepo) RecordSearch(ctx context.Context, search *domain.KeywordSearch) error {
-	return nil
-}
-
-func (m *mockKeywordRepo) GetLastSearch(ctx context.Context, keywordID uuid.UUID, sourceAPI domain.SourceType) (*domain.KeywordSearch, error) {
-	return nil, domain.ErrNotFound
-}
-
-func (m *mockKeywordRepo) NeedsSearch(ctx context.Context, keywordID uuid.UUID, sourceAPI domain.SourceType, maxAge time.Duration) (bool, error) {
-	return true, nil
-}
-
-func (m *mockKeywordRepo) ListSearches(ctx context.Context, filter repository.SearchFilter) ([]*domain.KeywordSearch, int64, error) {
-	return nil, 0, nil
-}
-
-func (m *mockKeywordRepo) AddPaperMapping(ctx context.Context, mapping *domain.KeywordPaperMapping) error {
-	return nil
-}
-
-func (m *mockKeywordRepo) BulkAddPaperMappings(ctx context.Context, mappings []*domain.KeywordPaperMapping) error {
-	return nil
-}
-
-func (m *mockKeywordRepo) GetPapersForKeyword(ctx context.Context, keywordID uuid.UUID, limit, offset int) ([]*domain.Paper, int64, error) {
-	return nil, 0, nil
-}
-
-func (m *mockKeywordRepo) List(ctx context.Context, filter repository.KeywordFilter) ([]*domain.Keyword, int64, error) {
-	return nil, 0, nil
+type mockKeywordRepo struct {
+	paperTestKeywordRepo
 }
 
 // ---------------------------------------------------------------------------
@@ -224,7 +140,7 @@ func TestGetLiteratureReviewStatus_Success(t *testing.T) {
 	now := time.Now()
 
 	repo := &mockReviewRepo{
-		getFn: func(ctx context.Context, orgID, projectID string, id uuid.UUID) (*domain.LiteratureReviewRequest, error) {
+		getFn: func(_ context.Context, orgID, projectID string, _ uuid.UUID) (*domain.LiteratureReviewRequest, error) {
 			return &domain.LiteratureReviewRequest{
 				ID:            reviewID,
 				OrgID:         orgID,
@@ -263,7 +179,7 @@ func TestGetLiteratureReviewStatus_Success(t *testing.T) {
 
 func TestGetLiteratureReviewStatus_NotFound(t *testing.T) {
 	repo := &mockReviewRepo{
-		getFn: func(ctx context.Context, orgID, projectID string, id uuid.UUID) (*domain.LiteratureReviewRequest, error) {
+		getFn: func(_ context.Context, _ string, _ string, id uuid.UUID) (*domain.LiteratureReviewRequest, error) {
 			return nil, domain.NewNotFoundError("review", id.String())
 		},
 	}
@@ -296,7 +212,7 @@ func TestCancelLiteratureReview_AlreadyCompleted(t *testing.T) {
 	now := time.Now()
 
 	repo := &mockReviewRepo{
-		getFn: func(ctx context.Context, orgID, projectID string, id uuid.UUID) (*domain.LiteratureReviewRequest, error) {
+		getFn: func(_ context.Context, orgID, projectID string, _ uuid.UUID) (*domain.LiteratureReviewRequest, error) {
 			return &domain.LiteratureReviewRequest{
 				ID:        reviewID,
 				OrgID:     orgID,
@@ -336,35 +252,35 @@ func TestListLiteratureReviews_Success(t *testing.T) {
 	now := time.Now()
 	reviews := []*domain.LiteratureReviewRequest{
 		{
-			ID:                 uuid.New(),
-			OrgID:              "org-1",
-			ProjectID:          "proj-1",
-			OriginalQuery:      "CRISPR",
-			Status:             domain.ReviewStatusCompleted,
-			PapersFoundCount:   42,
+			ID:                  uuid.New(),
+			OrgID:               "org-1",
+			ProjectID:           "proj-1",
+			OriginalQuery:       "CRISPR",
+			Status:              domain.ReviewStatusCompleted,
+			PapersFoundCount:    42,
 			PapersIngestedCount: 38,
-			KeywordsFoundCount: 10,
-			Configuration:      domain.DefaultReviewConfiguration(),
-			CreatedAt:          now.Add(-2 * time.Hour),
-			UpdatedAt:          now,
+			KeywordsFoundCount:  10,
+			Configuration:       domain.DefaultReviewConfiguration(),
+			CreatedAt:           now.Add(-2 * time.Hour),
+			UpdatedAt:           now,
 		},
 		{
-			ID:                 uuid.New(),
-			OrgID:              "org-1",
-			ProjectID:          "proj-1",
-			OriginalQuery:      "mRNA vaccines",
-			Status:             domain.ReviewStatusSearching,
-			PapersFoundCount:   15,
+			ID:                  uuid.New(),
+			OrgID:               "org-1",
+			ProjectID:           "proj-1",
+			OriginalQuery:       "mRNA vaccines",
+			Status:              domain.ReviewStatusSearching,
+			PapersFoundCount:    15,
 			PapersIngestedCount: 0,
-			KeywordsFoundCount: 5,
-			Configuration:      domain.DefaultReviewConfiguration(),
-			CreatedAt:          now.Add(-1 * time.Hour),
-			UpdatedAt:          now,
+			KeywordsFoundCount:  5,
+			Configuration:       domain.DefaultReviewConfiguration(),
+			CreatedAt:           now.Add(-1 * time.Hour),
+			UpdatedAt:           now,
 		},
 	}
 
 	repo := &mockReviewRepo{
-		listFn: func(ctx context.Context, filter repository.ReviewFilter) ([]*domain.LiteratureReviewRequest, int64, error) {
+		listFn: func(_ context.Context, filter repository.ReviewFilter) ([]*domain.LiteratureReviewRequest, int64, error) {
 			if filter.OrgID != "org-1" || filter.ProjectID != "proj-1" {
 				t.Errorf("unexpected filter org/project: %s/%s", filter.OrgID, filter.ProjectID)
 			}
@@ -427,8 +343,7 @@ func TestListLiteratureReviews_Pagination(t *testing.T) {
 	}
 
 	repo := &mockReviewRepo{
-		listFn: func(ctx context.Context, filter repository.ReviewFilter) ([]*domain.LiteratureReviewRequest, int64, error) {
-			// Return a slice based on offset/limit, total is always 3.
+		listFn: func(_ context.Context, filter repository.ReviewFilter) ([]*domain.LiteratureReviewRequest, int64, error) {
 			end := filter.Offset + filter.Limit
 			if end > len(allReviews) {
 				end = len(allReviews)
@@ -463,7 +378,7 @@ func TestListLiteratureReviews_Pagination(t *testing.T) {
 
 func TestListLiteratureReviews_Empty(t *testing.T) {
 	repo := &mockReviewRepo{
-		listFn: func(ctx context.Context, filter repository.ReviewFilter) ([]*domain.LiteratureReviewRequest, int64, error) {
+		listFn: func(_ context.Context, _ repository.ReviewFilter) ([]*domain.LiteratureReviewRequest, int64, error) {
 			return nil, 0, nil
 		},
 	}

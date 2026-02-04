@@ -53,6 +53,11 @@ func (e *ValidationError) Error() string {
 	return fmt.Sprintf("validation error: %s: %s", e.Field, e.Message)
 }
 
+// Unwrap returns the underlying sentinel error for use with errors.Is.
+func (e *ValidationError) Unwrap() error {
+	return ErrInvalidInput
+}
+
 // NotFoundError provides details about a not found entity.
 type NotFoundError struct {
 	Entity string

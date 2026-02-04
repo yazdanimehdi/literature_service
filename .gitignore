@@ -62,4 +62,3 @@ debug
 *.pprof
 .claude/
 Claude_Prompts/
-CLAUDE.md

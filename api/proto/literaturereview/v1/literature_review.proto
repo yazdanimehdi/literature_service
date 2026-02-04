@@ -1,0 +1,318 @@
+syntax = "proto3";
+
+package literaturereview.v1;
+
+option go_package = "github.com/helixir/literature-review-service/gen/proto/literaturereview/v1;literaturereviewv1";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+
+// LiteratureReviewService provides literature review capabilities.
+service LiteratureReviewService {
+  // StartLiteratureReview starts a new literature review from a query.
+  rpc StartLiteratureReview(StartLiteratureReviewRequest) returns (StartLiteratureReviewResponse);
+
+  // GetLiteratureReviewStatus gets the current status of a literature review.
+  rpc GetLiteratureReviewStatus(GetLiteratureReviewStatusRequest) returns (GetLiteratureReviewStatusResponse);
+
+  // CancelLiteratureReview cancels a running literature review.
+  rpc CancelLiteratureReview(CancelLiteratureReviewRequest) returns (CancelLiteratureReviewResponse);
+
+  // ListLiteratureReviews lists literature reviews for a project.
+  rpc ListLiteratureReviews(ListLiteratureReviewsRequest) returns (ListLiteratureReviewsResponse);
+
+  // GetLiteratureReviewPapers gets papers discovered in a review.
+  rpc GetLiteratureReviewPapers(GetLiteratureReviewPapersRequest) returns (GetLiteratureReviewPapersResponse);
+
+  // GetLiteratureReviewKeywords gets keywords used in a review.
+  rpc GetLiteratureReviewKeywords(GetLiteratureReviewKeywordsRequest) returns (GetLiteratureReviewKeywordsResponse);
+
+  // StreamLiteratureReviewProgress streams real-time progress updates.
+  rpc StreamLiteratureReviewProgress(StreamLiteratureReviewProgressRequest) returns (stream LiteratureReviewProgressEvent);
+}
+
+// Enums
+
+enum ReviewStatus {
+  REVIEW_STATUS_UNSPECIFIED = 0;
+  REVIEW_STATUS_PENDING = 1;
+  REVIEW_STATUS_EXTRACTING_KEYWORDS = 2;
+  REVIEW_STATUS_SEARCHING = 3;
+  REVIEW_STATUS_EXPANDING = 4;
+  REVIEW_STATUS_INGESTING = 5;
+  REVIEW_STATUS_COMPLETED = 6;
+  REVIEW_STATUS_FAILED = 7;
+  REVIEW_STATUS_CANCELLED = 8;
+}
+
+enum IngestionStatus {
+  INGESTION_STATUS_UNSPECIFIED = 0;
+  INGESTION_STATUS_PENDING = 1;
+  INGESTION_STATUS_QUEUED = 2;
+  INGESTION_STATUS_INGESTING = 3;
+  INGESTION_STATUS_COMPLETED = 4;
+  INGESTION_STATUS_FAILED = 5;
+  INGESTION_STATUS_SKIPPED = 6;
+}
+
+enum KeywordSourceType {
+  KEYWORD_SOURCE_TYPE_UNSPECIFIED = 0;
+  KEYWORD_SOURCE_TYPE_USER_QUERY = 1;
+  KEYWORD_SOURCE_TYPE_PAPER_EXTRACTION = 2;
+}
+
+enum SortOrder {
+  SORT_ORDER_UNSPECIFIED = 0;
+  SORT_ORDER_ASC = 1;
+  SORT_ORDER_DESC = 2;
+}
+
+// Request/Response messages
+
+message StartLiteratureReviewRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string query = 3;
+  google.protobuf.Int32Value initial_keyword_count = 4;
+  google.protobuf.Int32Value paper_keyword_count = 5;
+  google.protobuf.Int32Value max_expansion_depth = 6;
+  repeated string source_filters = 7;
+  google.protobuf.Timestamp date_from = 8;
+  google.protobuf.Timestamp date_to = 9;
+}
+
+message StartLiteratureReviewResponse {
+  string review_id = 1;
+  string workflow_id = 2;
+  ReviewStatus status = 3;
+  repeated string initial_keywords = 4;
+  google.protobuf.Timestamp created_at = 5;
+  string message = 6;
+}
+
+message GetLiteratureReviewStatusRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string review_id = 3;
+}
+
+message GetLiteratureReviewStatusResponse {
+  string review_id = 1;
+  ReviewStatus status = 2;
+  ReviewProgress progress = 3;
+  string error_message = 4;
+  google.protobuf.Timestamp created_at = 5;
+  google.protobuf.Timestamp started_at = 6;
+  google.protobuf.Timestamp completed_at = 7;
+  google.protobuf.Duration duration = 8;
+  ReviewConfiguration configuration = 9;
+}
+
+message CancelLiteratureReviewRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string review_id = 3;
+  string reason = 4;
+}
+
+message CancelLiteratureReviewResponse {
+  bool success = 1;
+  string message = 2;
+  ReviewStatus final_status = 3;
+}
+
+message ListLiteratureReviewsRequest {
+  string org_id = 1;
+  string project_id = 2;
+  int32 page_size = 3;
+  string page_token = 4;
+  ReviewStatus status_filter = 5;
+  google.protobuf.Timestamp created_after = 6;
+  google.protobuf.Timestamp created_before = 7;
+}
+
+message ListLiteratureReviewsResponse {
+  repeated LiteratureReviewSummary reviews = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message GetLiteratureReviewPapersRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string review_id = 3;
+  int32 page_size = 4;
+  string page_token = 5;
+  IngestionStatus ingestion_status_filter = 6;
+  string source_filter = 7;
+}
+
+message GetLiteratureReviewPapersResponse {
+  repeated Paper papers = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message GetLiteratureReviewKeywordsRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string review_id = 3;
+  int32 page_size = 4;
+  string page_token = 5;
+  google.protobuf.Int32Value extraction_round_filter = 6;
+  KeywordSourceType source_type_filter = 7;
+}
+
+message GetLiteratureReviewKeywordsResponse {
+  repeated ReviewKeyword keywords = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}
+
+message StreamLiteratureReviewProgressRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string review_id = 3;
+}
+
+message LiteratureReviewProgressEvent {
+  string review_id = 1;
+  string event_type = 2;
+  ReviewStatus status = 3;
+  ReviewProgress progress = 4;
+  string message = 5;
+  google.protobuf.Timestamp timestamp = 6;
+
+  oneof event_data {
+    KeywordsExtractedEvent keywords_extracted = 10;
+    PapersFoundEvent papers_found = 11;
+    ExpansionStartedEvent expansion_started = 12;
+    IngestionProgressEvent ingestion_progress = 13;
+    ErrorEvent error = 14;
+  }
+}
+
+// Domain messages
+
+message ReviewProgress {
+  int32 initial_keywords_count = 1;
+  int32 total_keywords_processed = 2;
+  int32 papers_found = 3;
+  int32 papers_new = 4;
+  int32 papers_ingested = 5;
+  int32 papers_failed = 6;
+  int32 current_expansion_depth = 7;
+  int32 max_expansion_depth = 8;
+  map<string, SourceProgress> source_progress = 9;
+  google.protobuf.Duration elapsed_time = 10;
+  google.protobuf.Duration estimated_remaining = 11;
+}
+
+message SourceProgress {
+  string source_name = 1;
+  int32 queries_completed = 2;
+  int32 queries_total = 3;
+  int32 papers_found = 4;
+  int32 errors = 5;
+  bool rate_limited = 6;
+}
+
+message ReviewConfiguration {
+  int32 initial_keyword_count = 1;
+  int32 paper_keyword_count = 2;
+  int32 max_expansion_depth = 3;
+  repeated string enabled_sources = 4;
+  google.protobuf.Timestamp date_from = 5;
+  google.protobuf.Timestamp date_to = 6;
+}
+
+message LiteratureReviewSummary {
+  string review_id = 1;
+  string original_query = 2;
+  ReviewStatus status = 3;
+  int32 papers_found = 4;
+  int32 papers_ingested = 5;
+  int32 keywords_used = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp completed_at = 8;
+  google.protobuf.Duration duration = 9;
+  string user_id = 10;
+}
+
+message Paper {
+  string id = 1;
+  string doi = 2;
+  string arxiv_id = 3;
+  string pubmed_id = 4;
+  string semantic_scholar_id = 5;
+  string openalex_id = 6;
+  string title = 7;
+  string abstract = 8;
+  repeated Author authors = 9;
+  google.protobuf.Timestamp publication_date = 10;
+  int32 publication_year = 11;
+  string venue = 12;
+  string journal = 13;
+  int32 citation_count = 14;
+  string pdf_url = 15;
+  bool open_access = 16;
+  string discovered_via_source = 17;
+  string discovered_via_keyword = 18;
+  int32 expansion_depth = 19;
+  IngestionStatus ingestion_status = 20;
+  string ingestion_job_id = 21;
+  repeated string extracted_keywords = 22;
+}
+
+message Author {
+  string name = 1;
+  string affiliation = 2;
+  string orcid = 3;
+}
+
+message ReviewKeyword {
+  string id = 1;
+  string keyword = 2;
+  string normalized_keyword = 3;
+  KeywordSourceType source_type = 4;
+  int32 extraction_round = 5;
+  string source_paper_id = 6;
+  string source_paper_title = 7;
+  int32 papers_found = 8;
+  float confidence_score = 9;
+}
+
+// Event messages
+
+message KeywordsExtractedEvent {
+  repeated string keywords = 1;
+  int32 extraction_round = 2;
+  string source_paper_id = 3;
+}
+
+message PapersFoundEvent {
+  string source = 1;
+  string keyword = 2;
+  int32 count = 3;
+  int32 new_count = 4;
+}
+
+message ExpansionStartedEvent {
+  int32 depth = 1;
+  int32 new_keywords = 2;
+  int32 papers_to_process = 3;
+}
+
+message IngestionProgressEvent {
+  int32 queued = 1;
+  int32 completed = 2;
+  int32 failed = 3;
+}
+
+message ErrorEvent {
+  string error_code = 1;
+  string error_message = 2;
+  string phase = 3;
+  bool recoverable = 4;
+}

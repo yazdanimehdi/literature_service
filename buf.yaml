@@ -1,0 +1,14 @@
+version: v2
+modules:
+  - path: api/proto
+    name: buf.build/helixir/literature-review-service
+lint:
+  use:
+    - STANDARD
+  except:
+    - PACKAGE_VERSION_SUFFIX
+breaking:
+  use:
+    - FILE
+deps:
+  - buf.build/googleapis/googleapis

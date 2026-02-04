@@ -230,15 +230,16 @@ func (r *PgKeywordRepository) RecordSearch(ctx context.Context, search *domain.K
 
 	if err != nil {
 		var pgErr *pgconn.PgError
+		// Foreign key violation indicates the keyword doesn't exist
 		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
 			return domain.NewNotFoundError("keyword", search.KeywordID.String())
 		}
 		return fmt.Errorf("failed to record search: %w", err)
 	}
 
-	if result.RowsAffected() == 0 {
-		return domain.NewNotFoundError("keyword", search.KeywordID.String())
-	}
+	// Note: ON CONFLICT DO UPDATE always affects at least one row (insert or update),
+	// so RowsAffected check is not needed here. FK constraint handles missing keywords.
+	_ = result // Explicitly ignore result to avoid unused variable warning
 
 	return nil
 }

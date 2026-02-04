@@ -847,6 +847,42 @@ func TestPgKeywordRepository_List(t *testing.T) {
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
+	t.Run("returns keywords with NeedsSearchInSource filter", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgKeywordRepository(mock)
+		ctx := context.Background()
+
+		keywordID := uuid.New()
+		now := time.Now().UTC()
+		maxAge := 24 * time.Hour
+
+		filter := KeywordFilter{
+			NeedsSearchInSource: ptrSourceType(domain.SourceTypeSemanticScholar),
+			MaxSearchAge:        &maxAge,
+			Limit:               10,
+		}
+
+		// The query uses NOT EXISTS OR EXISTS subquery pattern
+		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM keywords k WHERE \(`).
+			WithArgs(domain.SourceTypeSemanticScholar, pgxmock.AnyArg()).
+			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(1)))
+
+		mock.ExpectQuery(`SELECT k.id, k.keyword, k.normalized_keyword, k.created_at FROM keywords k WHERE \(`).
+			WithArgs(domain.SourceTypeSemanticScholar, pgxmock.AnyArg(), 10, 0).
+			WillReturnRows(pgxmock.NewRows([]string{"id", "keyword", "normalized_keyword", "created_at"}).
+				AddRow(keywordID, "Deep Learning", "deep learning", now))
+
+		results, total, err := repo.List(ctx, filter)
+		require.NoError(t, err)
+		assert.Len(t, results, 1)
+		assert.Equal(t, int64(1), total)
+		assert.Equal(t, "deep learning", results[0].NormalizedKeyword)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
 	t.Run("returns empty list when no matches", func(t *testing.T) {
 		mock, err := pgxmock.NewPool()
 		require.NoError(t, err)

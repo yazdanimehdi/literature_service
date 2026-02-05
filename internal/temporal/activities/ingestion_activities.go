@@ -8,6 +8,7 @@ import (
 
 	"github.com/helixir/literature-review-service/internal/ingestion"
 	"github.com/helixir/literature-review-service/internal/observability"
+	"github.com/helixir/literature-review-service/internal/pdf"
 )
 
 const (
@@ -26,19 +27,40 @@ type IngestionClient interface {
 	GetRunStatus(ctx context.Context, runID string) (*ingestion.RunStatus, error)
 }
 
+// PDFDownloader defines the interface for downloading PDFs.
+type PDFDownloader interface {
+	Download(ctx context.Context, url string) (*pdf.DownloadResult, error)
+}
+
+// StreamingIngestionClient defines the interface for streaming PDF content to ingestion.
+type StreamingIngestionClient interface {
+	StartIngestionWithContent(ctx context.Context, req ingestion.StartIngestionWithContentRequest) (*ingestion.StartIngestionWithContentResult, error)
+}
+
 // IngestionActivities provides Temporal activities for paper ingestion operations.
 // Methods on this struct are registered as Temporal activities via the worker.
 type IngestionActivities struct {
-	client  IngestionClient
-	metrics *observability.Metrics
+	client          IngestionClient
+	downloader      PDFDownloader
+	streamingClient StreamingIngestionClient
+	metrics         *observability.Metrics
 }
 
 // NewIngestionActivities creates a new IngestionActivities instance.
 // The metrics parameter may be nil (metrics recording will be skipped).
-func NewIngestionActivities(client IngestionClient, metrics *observability.Metrics) *IngestionActivities {
+// The downloader and streamingClient parameters may be nil if DownloadAndIngestPapers
+// activity will not be used.
+func NewIngestionActivities(
+	client IngestionClient,
+	downloader PDFDownloader,
+	streamingClient StreamingIngestionClient,
+	metrics *observability.Metrics,
+) *IngestionActivities {
 	return &IngestionActivities{
-		client:  client,
-		metrics: metrics,
+		client:          client,
+		downloader:      downloader,
+		streamingClient: streamingClient,
+		metrics:         metrics,
 	}
 }
 
@@ -151,4 +173,116 @@ func (a *IngestionActivities) SubmitPapersForIngestion(ctx context.Context, inpu
 	)
 
 	return result, nil
+}
+
+// DownloadAndIngestPapers downloads PDFs for papers and streams them to the ingestion service.
+// This activity processes papers one at a time to bound memory usage.
+// Papers without PDF URLs are skipped. Failures are non-fatal (processing continues).
+func (a *IngestionActivities) DownloadAndIngestPapers(ctx context.Context, input DownloadAndIngestInput) (*DownloadAndIngestOutput, error) {
+	logger := activity.GetLogger(ctx)
+	logger.Info("starting download and ingest",
+		"requestID", input.RequestID,
+		"paperCount", len(input.Papers),
+	)
+
+	if a.downloader == nil {
+		return nil, fmt.Errorf("downloader is not configured")
+	}
+	if a.streamingClient == nil {
+		return nil, fmt.Errorf("streaming client is not configured")
+	}
+
+	output := &DownloadAndIngestOutput{
+		Results: make([]PaperIngestionResult, 0, len(input.Papers)),
+	}
+
+	for i, paper := range input.Papers {
+		// Record heartbeat for long-running activity
+		activity.RecordHeartbeat(ctx, fmt.Sprintf("processing paper %d/%d: %s", i+1, len(input.Papers), paper.PaperID))
+
+		// Check if context was cancelled
+		if ctx.Err() != nil {
+			logger.Info("activity cancelled", "processed", i, "total", len(input.Papers))
+			return output, ctx.Err()
+		}
+
+		result := PaperIngestionResult{
+			PaperID: paper.PaperID,
+		}
+
+		// Skip papers without PDF URL
+		if paper.PDFURL == "" {
+			output.Skipped++
+			result.Error = "no PDF URL"
+			output.Results = append(output.Results, result)
+			continue
+		}
+
+		// Download the PDF
+		downloadResult, err := a.downloader.Download(ctx, paper.PDFURL)
+		if err != nil {
+			logger.Warn("failed to download PDF",
+				"paperID", paper.PaperID,
+				"url", paper.PDFURL,
+				"error", err,
+			)
+			output.Failed++
+			result.Error = fmt.Sprintf("download failed: %v", err)
+			output.Results = append(output.Results, result)
+			continue
+		}
+
+		// Build idempotency key
+		idempotencyKey := fmt.Sprintf("%s/%s/%s", idempotencyKeyPrefix, input.RequestID, paper.PaperID)
+
+		// Derive filename from canonical ID or paper ID
+		filename := paper.CanonicalID
+		if filename == "" {
+			filename = paper.PaperID.String()
+		}
+		filename = filename + ".pdf"
+
+		// Stream to ingestion service
+		ingestionResult, err := a.streamingClient.StartIngestionWithContent(ctx, ingestion.StartIngestionWithContentRequest{
+			OrgID:          input.OrgID,
+			ProjectID:      input.ProjectID,
+			IdempotencyKey: idempotencyKey,
+			MimeType:       mimeTypePDF,
+			ContentHash:    downloadResult.ContentHash,
+			FileSize:       downloadResult.SizeBytes,
+			SourceKind:     "literature_review",
+			Filename:       filename,
+			Content:        downloadResult.Content,
+		})
+		if err != nil {
+			logger.Warn("failed to submit to ingestion",
+				"paperID", paper.PaperID,
+				"error", err,
+			)
+			output.Failed++
+			result.Error = fmt.Sprintf("ingestion failed: %v", err)
+			output.Results = append(output.Results, result)
+			continue
+		}
+
+		result.FileID = ingestionResult.FileID
+		result.IngestionRunID = ingestionResult.RunID
+		result.Status = ingestionResult.Status
+		output.Successful++
+		output.Results = append(output.Results, result)
+
+		logger.Info("paper downloaded and ingested",
+			"paperID", paper.PaperID,
+			"fileID", ingestionResult.FileID,
+			"runID", ingestionResult.RunID,
+		)
+	}
+
+	logger.Info("download and ingest completed",
+		"successful", output.Successful,
+		"failed", output.Failed,
+		"skipped", output.Skipped,
+	)
+
+	return output, nil
 }

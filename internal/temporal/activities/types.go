@@ -315,3 +315,51 @@ type DedupPapersOutput struct {
 	// SkippedCount is papers skipped (no abstract).
 	SkippedCount int
 }
+
+// DownloadAndIngestInput contains the parameters for the download and ingest activity.
+type DownloadAndIngestInput struct {
+	// OrgID is the organization identifier.
+	OrgID string
+
+	// ProjectID is the project identifier.
+	ProjectID string
+
+	// RequestID is the literature review request identifier.
+	RequestID uuid.UUID
+
+	// Papers contains the papers to download and ingest.
+	Papers []PaperForIngestion
+}
+
+// DownloadAndIngestOutput contains the results of the download and ingest activity.
+type DownloadAndIngestOutput struct {
+	// Successful is the count of successfully processed papers.
+	Successful int
+
+	// Failed is the count of papers that failed processing.
+	Failed int
+
+	// Skipped is the count of papers without PDF URLs.
+	Skipped int
+
+	// Results contains per-paper results.
+	Results []PaperIngestionResult
+}
+
+// PaperIngestionResult contains the result of downloading and ingesting a single paper.
+type PaperIngestionResult struct {
+	// PaperID is the paper's internal UUID.
+	PaperID uuid.UUID
+
+	// FileID is the file_service UUID (empty if failed).
+	FileID string
+
+	// IngestionRunID is the ingestion service run ID (empty if failed).
+	IngestionRunID string
+
+	// Status is the ingestion run status.
+	Status string
+
+	// Error contains the error message if processing failed.
+	Error string
+}

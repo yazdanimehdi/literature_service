@@ -46,6 +46,7 @@ func TestLiteratureReviewWorkflow_Success(t *testing.T) {
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
 	var eventAct *activities.EventActivities
+	var dedupAct *activities.DedupActivities
 
 	// Mock UpdateStatus - accept any input.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
@@ -71,11 +72,12 @@ func TestLiteratureReviewWorkflow_Success(t *testing.T) {
 	)
 
 	// Mock SearchPapers - return some papers.
+	paperID := uuid.New()
 	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
 		&activities.SearchPapersOutput{
 			Papers: []*domain.Paper{
 				{
-					ID:          uuid.New(),
+					ID:          paperID,
 					CanonicalID: "doi:10.1234/test",
 					Title:       "Test Paper",
 					Abstract:    "Test abstract about CRISPR",
@@ -91,6 +93,15 @@ func TestLiteratureReviewWorkflow_Success(t *testing.T) {
 		&activities.SavePapersOutput{
 			SavedCount:     1,
 			DuplicateCount: 0,
+		}, nil,
+	)
+
+	// Mock DedupPapers - all papers are non-duplicates.
+	env.OnActivity(dedupAct.DedupPapers, mock.Anything, mock.Anything).Return(
+		&activities.DedupPapersOutput{
+			NonDuplicateIDs: []uuid.UUID{paperID},
+			DuplicateCount:  0,
+			SkippedCount:    0,
 		}, nil,
 	)
 
@@ -154,6 +165,7 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
 	var eventAct *activities.EventActivities
+	var dedupAct *activities.DedupActivities
 
 	// Mock UpdateStatus.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
@@ -180,11 +192,12 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 	)
 
 	// Mock SearchPapers - return papers with abstracts for expansion.
+	paperID := uuid.New()
 	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
 		&activities.SearchPapersOutput{
 			Papers: []*domain.Paper{
 				{
-					ID:          uuid.New(),
+					ID:          paperID,
 					CanonicalID: "doi:10.1234/test1",
 					Title:       "CRISPR Paper 1",
 					Abstract:    "This paper discusses CRISPR-Cas9 nuclease systems.",
@@ -200,6 +213,17 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 		&activities.SavePapersOutput{
 			SavedCount:     1,
 			DuplicateCount: 0,
+		}, nil,
+	)
+
+	// Mock DedupPapers - treat all papers as non-duplicates.
+	// The search mock returns the same paperID for every keyword search, so dedup
+	// receives that same paper multiple times. Return all as non-duplicate.
+	env.OnActivity(dedupAct.DedupPapers, mock.Anything, mock.Anything).Return(
+		&activities.DedupPapersOutput{
+			NonDuplicateIDs: []uuid.UUID{paperID},
+			DuplicateCount:  0,
+			SkippedCount:    0,
 		}, nil,
 	)
 
@@ -492,6 +516,118 @@ func TestLiteratureReviewWorkflow_SearchActivityFails(t *testing.T) {
 	env.AssertExpectations(t)
 }
 
+func TestLiteratureReviewWorkflow_DedupFiltersDuplicates(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	input := newTestInput()
+
+	// Activity nil-pointer references matching the workflow pattern.
+	var llmAct *activities.LLMActivities
+	var searchAct *activities.SearchActivities
+	var statusAct *activities.StatusActivities
+	var ingestionAct *activities.IngestionActivities
+	var eventAct *activities.EventActivities
+	var dedupAct *activities.DedupActivities
+
+	// Mock UpdateStatus - accept any input.
+	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock PublishEvent - fire-and-forget.
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock ExtractKeywords - return a single keyword so search runs once.
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
+		&activities.ExtractKeywordsOutput{
+			Keywords:  []string{"CRISPR"},
+			Reasoning: "test",
+			Model:     "test-model",
+		}, nil,
+	)
+
+	// Mock SaveKeywords.
+	env.OnActivity(statusAct.SaveKeywords, mock.Anything, mock.Anything).Return(
+		&activities.SaveKeywordsOutput{
+			KeywordIDs: []uuid.UUID{uuid.New()},
+			NewCount:   1,
+		}, nil,
+	)
+
+	// Two papers returned from search: one will be a duplicate, one will not.
+	nonDupID := uuid.New()
+	dupID := uuid.New()
+
+	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
+		&activities.SearchPapersOutput{
+			Papers: []*domain.Paper{
+				{
+					ID:          nonDupID,
+					CanonicalID: "doi:10.1234/original",
+					Title:       "Original Paper",
+					Abstract:    "Unique research about CRISPR",
+					PDFURL:      "https://example.com/original.pdf",
+				},
+				{
+					ID:          dupID,
+					CanonicalID: "doi:10.1234/duplicate",
+					Title:       "Duplicate Paper",
+					Abstract:    "Near-duplicate research about CRISPR",
+					PDFURL:      "https://example.com/duplicate.pdf",
+				},
+			},
+			TotalFound: 2,
+			BySource:   map[domain.SourceType]int{domain.SourceTypeSemanticScholar: 2},
+		}, nil,
+	)
+
+	// Mock SavePapers.
+	env.OnActivity(statusAct.SavePapers, mock.Anything, mock.Anything).Return(
+		&activities.SavePapersOutput{
+			SavedCount:     2,
+			DuplicateCount: 0,
+		}, nil,
+	)
+
+	// Mock DedupPapers - mark dupID as duplicate, only nonDupID is non-duplicate.
+	env.OnActivity(dedupAct.DedupPapers, mock.Anything, mock.Anything).Return(
+		&activities.DedupPapersOutput{
+			NonDuplicateIDs: []uuid.UUID{nonDupID},
+			DuplicateCount:  1,
+			SkippedCount:    0,
+		}, nil,
+	)
+
+	// Mock SubmitPapersForIngestion - expect only 1 paper (the non-duplicate).
+	env.OnActivity(ingestionAct.SubmitPapersForIngestion, mock.Anything, mock.MatchedBy(func(input activities.SubmitPapersForIngestionInput) bool {
+		// Verify only 1 paper is submitted and it is the non-duplicate.
+		return len(input.Papers) == 1 && input.Papers[0].PaperID == nonDupID
+	})).Return(
+		&activities.SubmitPapersForIngestionOutput{
+			Submitted: 1,
+			Skipped:   0,
+			Failed:    0,
+		}, nil,
+	)
+
+	env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	var result ReviewWorkflowResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+
+	assert.Equal(t, input.RequestID, result.RequestID)
+	assert.Equal(t, string(domain.ReviewStatusCompleted), result.Status)
+	assert.Equal(t, 1, result.KeywordsFound)
+	assert.Equal(t, 2, result.PapersFound)
+	// Only the non-duplicate paper was ingested.
+	assert.Equal(t, 3, result.PapersIngested) // 2 from SavePapers + 1 from ingestion submit
+	assert.Equal(t, 0, result.ExpansionRounds)
+
+	env.AssertExpectations(t)
+}
+
 func TestSelectPapersForExpansion(t *testing.T) {
 	t.Run("returns papers with abstracts up to max", func(t *testing.T) {
 		papers := []*domain.Paper{
@@ -556,6 +692,7 @@ func TestLiteratureReviewWorkflow_ConcurrentStarts(t *testing.T) {
 			var searchAct *activities.SearchActivities
 			var statusAct *activities.StatusActivities
 			var eventAct *activities.EventActivities
+			var dedupAct *activities.DedupActivities
 
 			// Mock UpdateStatus - accept any input.
 			env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
@@ -581,11 +718,12 @@ func TestLiteratureReviewWorkflow_ConcurrentStarts(t *testing.T) {
 			)
 
 			// Mock SearchPapers - return some papers.
+			paperID := uuid.New()
 			env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
 				&activities.SearchPapersOutput{
 					Papers: []*domain.Paper{
 						{
-							ID:          uuid.New(),
+							ID:          paperID,
 							CanonicalID: "doi:10.1234/test",
 							Title:       "Test Paper",
 							Abstract:    "Test abstract about CRISPR",
@@ -601,6 +739,15 @@ func TestLiteratureReviewWorkflow_ConcurrentStarts(t *testing.T) {
 				&activities.SavePapersOutput{
 					SavedCount:     1,
 					DuplicateCount: 0,
+				}, nil,
+			)
+
+			// Mock DedupPapers - all papers are non-duplicates.
+			env.OnActivity(dedupAct.DedupPapers, mock.Anything, mock.Anything).Return(
+				&activities.DedupPapersOutput{
+					NonDuplicateIDs: []uuid.UUID{paperID},
+					DuplicateCount:  0,
+					SkippedCount:    0,
 				}, nil,
 			)
 

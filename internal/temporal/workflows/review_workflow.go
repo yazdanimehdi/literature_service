@@ -140,6 +140,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	var statusAct *activities.StatusActivities
 	var ingestionAct *activities.IngestionActivities
 	var eventAct *activities.EventActivities
+	var dedupAct *activities.DedupActivities
 
 	// Build activity option contexts with retry policies.
 	llmCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
@@ -488,13 +489,68 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	}
 
 	// =========================================================================
+	// Phase 3.5: Semantic Deduplication
+	// =========================================================================
+
+	logger.Info("starting semantic deduplication", "paperCount", len(allPapers))
+
+	// Filter out papers without title (can't meaningfully dedup).
+	var papersToDedup []*domain.Paper
+	for _, p := range allPapers {
+		if p != nil && p.Title != "" {
+			papersToDedup = append(papersToDedup, p)
+		}
+	}
+
+	nonDuplicateIDs := make(map[uuid.UUID]bool)
+	if len(papersToDedup) > 0 {
+		dedupCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
+			StartToCloseTimeout: 10 * time.Minute,
+			HeartbeatTimeout:    2 * time.Minute,
+			RetryPolicy: &temporal.RetryPolicy{
+				MaximumAttempts: 3,
+			},
+		})
+
+		var dedupOutput activities.DedupPapersOutput
+		err = workflow.ExecuteActivity(dedupCtx, dedupAct.DedupPapers, activities.DedupPapersInput{
+			Papers: papersToDedup,
+		}).Get(cancelCtx, &dedupOutput)
+		if err != nil {
+			// Dedup failure is non-fatal: log and treat all papers as non-duplicate.
+			logger.Warn("semantic deduplication failed, proceeding without dedup",
+				"error", err,
+			)
+			for _, p := range papersToDedup {
+				nonDuplicateIDs[p.ID] = true
+			}
+		} else {
+			for _, id := range dedupOutput.NonDuplicateIDs {
+				nonDuplicateIDs[id] = true
+			}
+			logger.Info("semantic deduplication completed",
+				"duplicates", dedupOutput.DuplicateCount,
+				"nonDuplicates", len(dedupOutput.NonDuplicateIDs),
+				"skipped", dedupOutput.SkippedCount,
+			)
+		}
+	} else {
+		// No papers to dedup — all are "non-duplicate".
+		for _, p := range allPapers {
+			if p != nil {
+				nonDuplicateIDs[p.ID] = true
+			}
+		}
+	}
+
+	// =========================================================================
 	// Phase 4: Ingestion — Submit papers with PDFs to the ingestion service
 	// =========================================================================
 
-	// Collect papers with PDF URLs for ingestion.
+	// Collect papers with PDF URLs for ingestion, filtered by dedup results.
 	var papersForIngestion []activities.PaperForIngestion
 	for _, p := range allPapers {
-		if p != nil && p.PDFURL != "" {
+		if p != nil && p.PDFURL != "" && nonDuplicateIDs[p.ID] {
 			papersForIngestion = append(papersForIngestion, activities.PaperForIngestion{
 				PaperID:     p.ID,
 				PDFURL:      p.PDFURL,

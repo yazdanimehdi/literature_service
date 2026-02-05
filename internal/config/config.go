@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -47,6 +48,8 @@ type Config struct {
 	PaperSources PaperSourcesConfig `mapstructure:"paper_sources"`
 	// IngestionService contains Ingestion Service client settings.
 	IngestionService IngestionServiceConfig `mapstructure:"ingestion_service"`
+	// Qdrant contains Qdrant vector store settings for dedup.
+	Qdrant QdrantConfig `mapstructure:"qdrant"`
 }
 
 // ServerConfig holds server configuration.
@@ -164,6 +167,10 @@ type LLMConfig struct {
 	RetryDelay time.Duration `mapstructure:"retry_delay"`
 	// Temperature is the LLM temperature setting.
 	Temperature float64 `mapstructure:"temperature"`
+	// EmbeddingProvider is the provider for embeddings (default: same as Provider).
+	EmbeddingProvider string `mapstructure:"embedding_provider"`
+	// EmbeddingModel is the model for embeddings.
+	EmbeddingModel string `mapstructure:"embedding_model"`
 	// OpenAI contains OpenAI-specific settings.
 	OpenAI OpenAIConfig `mapstructure:"openai"`
 	// Anthropic contains Anthropic-specific settings.
@@ -322,6 +329,25 @@ type IngestionServiceConfig struct {
 	Address string `mapstructure:"address"`
 	// Timeout is the timeout for gRPC calls.
 	Timeout time.Duration `mapstructure:"timeout"`
+	// TLS enables TLS for the gRPC connection to the ingestion service.
+	// Defaults to false for backwards compatibility.
+	TLS bool `mapstructure:"tls"`
+}
+
+// QdrantConfig holds Qdrant vector store settings.
+type QdrantConfig struct {
+	// Address is the Qdrant gRPC address.
+	Address string `mapstructure:"address"`
+	// CollectionName is the name of the collection for paper embeddings.
+	CollectionName string `mapstructure:"collection_name"`
+	// VectorSize is the embedding dimension (must match the embedding model).
+	VectorSize uint64 `mapstructure:"vector_size"`
+	// SimilarityThreshold is the cosine similarity threshold for dedup (0.0-1.0).
+	SimilarityThreshold float64 `mapstructure:"similarity_threshold"`
+	// AuthorThreshold is the author overlap threshold for dedup (0.0-1.0).
+	AuthorThreshold float64 `mapstructure:"author_threshold"`
+	// TopK is the number of candidates to check.
+	TopK uint64 `mapstructure:"top_k"`
 }
 
 // DSN returns the PostgreSQL connection string.
@@ -375,7 +401,8 @@ func Load() (*Config, error) {
 	v.AddConfigPath("/etc/literature-review-service")
 
 	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		var configNotFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &configNotFound) {
 			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
 		// Config file not found is OK, we'll use env vars and defaults
@@ -475,6 +502,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.max_retries", 3)
 	v.SetDefault("llm.retry_delay", "2s")
 	v.SetDefault("llm.temperature", 0.7)
+	v.SetDefault("llm.embedding_provider", "openai")
+	v.SetDefault("llm.embedding_model", "text-embedding-3-small")
 	// API keys are loaded exclusively from environment variables (see loadSecrets).
 	v.SetDefault("llm.openai.model", "gpt-4-turbo")
 	v.SetDefault("llm.openai.base_url", "https://api.openai.com/v1")
@@ -562,6 +591,15 @@ func setDefaults(v *viper.Viper) {
 	// Ingestion service defaults
 	v.SetDefault("ingestion_service.address", "localhost:9095")
 	v.SetDefault("ingestion_service.timeout", "30s")
+	v.SetDefault("ingestion_service.tls", false)
+
+	// Qdrant defaults
+	v.SetDefault("qdrant.address", "localhost:6334")
+	v.SetDefault("qdrant.collection_name", "paper_embeddings")
+	v.SetDefault("qdrant.vector_size", 1536) // text-embedding-3-small
+	v.SetDefault("qdrant.similarity_threshold", 0.95)
+	v.SetDefault("qdrant.author_threshold", 0.5)
+	v.SetDefault("qdrant.top_k", 5)
 }
 
 // Validate validates the configuration.
@@ -614,6 +652,31 @@ func (c *Config) Validate() error {
 	}
 	if c.LLM.MinKeywords <= 0 {
 		return fmt.Errorf("LLM min_keywords must be positive")
+	}
+
+	// Validate that the configured LLM provider has its required API key set.
+	// Bedrock uses AWS credential chain and Vertex uses Application Default Credentials,
+	// so neither requires an explicit API key.
+	switch strings.ToLower(c.LLM.Provider) {
+	case "openai":
+		if c.LLM.OpenAI.APIKey == "" {
+			return fmt.Errorf("LLM provider %q requires LITREVIEW_LLM_OPENAI_API_KEY to be set", c.LLM.Provider)
+		}
+	case "anthropic":
+		if c.LLM.Anthropic.APIKey == "" {
+			return fmt.Errorf("LLM provider %q requires LITREVIEW_LLM_ANTHROPIC_API_KEY to be set", c.LLM.Provider)
+		}
+	case "azure":
+		if c.LLM.Azure.APIKey == "" {
+			return fmt.Errorf("LLM provider %q requires LITREVIEW_LLM_AZURE_API_KEY to be set", c.LLM.Provider)
+		}
+	case "gemini":
+		// When Gemini.Project is set, Vertex AI mode is used with Application Default Credentials.
+		if c.LLM.Gemini.APIKey == "" && c.LLM.Gemini.Project == "" {
+			return fmt.Errorf("LLM provider %q requires LITREVIEW_LLM_GEMINI_API_KEY to be set (or configure gemini.project for Vertex AI mode)", c.LLM.Provider)
+		}
+	case "bedrock", "vertex":
+		// These providers use cloud credential chains; no API key required.
 	}
 
 	return nil

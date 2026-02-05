@@ -13,6 +13,7 @@ import (
 
 	"github.com/helixir/literature-review-service/internal/config"
 	"github.com/helixir/literature-review-service/internal/database"
+	"github.com/helixir/literature-review-service/internal/dedup"
 	"github.com/helixir/literature-review-service/internal/ingestion"
 	"github.com/helixir/literature-review-service/internal/llm"
 	"github.com/helixir/literature-review-service/internal/observability"
@@ -21,6 +22,7 @@ import (
 	"github.com/helixir/literature-review-service/internal/papersources/openalex"
 	"github.com/helixir/literature-review-service/internal/papersources/pubmed"
 	"github.com/helixir/literature-review-service/internal/papersources/semanticscholar"
+	"github.com/helixir/literature-review-service/internal/qdrant"
 	"github.com/helixir/literature-review-service/internal/repository"
 	"github.com/helixir/literature-review-service/internal/temporal"
 	"github.com/helixir/literature-review-service/internal/temporal/activities"
@@ -87,7 +89,7 @@ func run() error {
 	}
 
 	// Create LLM keyword extractor.
-	extractor, err := llm.NewKeywordExtractor(llm.FactoryConfig{
+	extractor, err := llm.NewKeywordExtractor(ctx, llm.FactoryConfig{
 		Provider:    cfg.LLM.Provider,
 		Temperature: cfg.LLM.Temperature,
 		Timeout:     cfg.LLM.Timeout,
@@ -134,12 +136,54 @@ func run() error {
 	ingestionClient, err := ingestion.NewClient(ingestion.Config{
 		Address: cfg.IngestionService.Address,
 		Timeout: cfg.IngestionService.Timeout,
+		TLS:     cfg.IngestionService.TLS,
 	})
 	if err != nil {
 		return fmt.Errorf("create ingestion client: %w", err)
 	}
 	defer ingestionClient.Close()
 	logger.Info().Str("address", cfg.IngestionService.Address).Msg("ingestion service client created")
+
+	// Create Qdrant client for dedup.
+	qdrantClient, err := qdrant.NewClient(qdrant.Config{
+		Address:        cfg.Qdrant.Address,
+		CollectionName: cfg.Qdrant.CollectionName,
+		VectorSize:     cfg.Qdrant.VectorSize,
+	})
+	if err != nil {
+		return fmt.Errorf("create qdrant client: %w", err)
+	}
+	defer qdrantClient.Close()
+
+	if err := qdrantClient.EnsureCollection(ctx); err != nil {
+		return fmt.Errorf("ensure qdrant collection: %w", err)
+	}
+	logger.Info().Str("address", cfg.Qdrant.Address).Str("collection", cfg.Qdrant.CollectionName).Msg("qdrant client connected")
+
+	// Create LLM embedder.
+	embedder, err := llm.NewEmbedder(ctx, llm.EmbedderFactoryConfig{
+		Provider:   cfg.LLM.EmbeddingProvider,
+		Timeout:    cfg.LLM.Timeout,
+		MaxRetries: cfg.LLM.MaxRetries,
+		RetryDelay: cfg.LLM.RetryDelay,
+		OpenAI: llm.OpenAIConfig{
+			APIKey:  cfg.LLM.OpenAI.APIKey,
+			Model:   cfg.LLM.EmbeddingModel,
+			BaseURL: cfg.LLM.OpenAI.BaseURL,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("create embedder: %w", err)
+	}
+
+	// Create dedup checker.
+	dedupAdapter := dedup.NewQdrantAdapter(qdrantClient, paperRepo)
+	embedderAdapter := dedup.NewEmbedderAdapter(embedder)
+	dedupChecker := dedup.NewChecker(dedupAdapter, embedderAdapter, dedup.CheckerConfig{
+		SimilarityThreshold: cfg.Qdrant.SimilarityThreshold,
+		AuthorThreshold:     cfg.Qdrant.AuthorThreshold,
+		TopK:                cfg.Qdrant.TopK,
+	})
 
 	// Create outbox publisher for event activities.
 	outboxRepo := outboxpg.NewRepository(db.Pool(), nil)
@@ -156,7 +200,7 @@ func run() error {
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:  cfg.Temporal.HostPort,
 		Namespace: cfg.Temporal.Namespace,
-		Logger:    newTemporalLogger(logger),
+		Logger:    observability.NewTemporalLogger(logger),
 	})
 	if err != nil {
 		return fmt.Errorf("connect to temporal: %w", err)
@@ -186,12 +230,14 @@ func run() error {
 	statusActivities := activities.NewStatusActivities(reviewRepo, keywordRepo, paperRepo, metrics)
 	ingestionActivities := activities.NewIngestionActivities(ingestionClient, metrics)
 	eventActivities := activities.NewEventActivities(publisher)
+	dedupActivities := activities.NewDedupActivities(dedupChecker)
 
 	manager.RegisterActivity(llmActivities)
 	manager.RegisterActivity(searchActivities)
 	manager.RegisterActivity(statusActivities)
 	manager.RegisterActivity(ingestionActivities)
 	manager.RegisterActivity(eventActivities)
+	manager.RegisterActivity(dedupActivities)
 
 	logger.Info().
 		Str("task_queue", cfg.Temporal.TaskQueue).
@@ -254,42 +300,4 @@ func registerPaperSources(registry *papersources.Registry, cfg *config.Config, l
 		registry.Register(pmClient)
 		logger.Info().Msg("registered paper source: PubMed")
 	}
-}
-
-// temporalLogger adapts zerolog to Temporal's log interface.
-type temporalLogger struct {
-	logger zerolog.Logger
-}
-
-func newTemporalLogger(logger zerolog.Logger) *temporalLogger {
-	return &temporalLogger{logger: logger.With().Str("component", "temporal-sdk").Logger()}
-}
-
-func (l *temporalLogger) Debug(msg string, keyvals ...interface{}) {
-	l.logger.Debug().Fields(keyvalToMap(keyvals)).Msg(msg)
-}
-
-func (l *temporalLogger) Info(msg string, keyvals ...interface{}) {
-	l.logger.Info().Fields(keyvalToMap(keyvals)).Msg(msg)
-}
-
-func (l *temporalLogger) Warn(msg string, keyvals ...interface{}) {
-	l.logger.Warn().Fields(keyvalToMap(keyvals)).Msg(msg)
-}
-
-func (l *temporalLogger) Error(msg string, keyvals ...interface{}) {
-	l.logger.Error().Fields(keyvalToMap(keyvals)).Msg(msg)
-}
-
-// keyvalToMap converts key-value pairs to a map for zerolog fields.
-func keyvalToMap(keyvals []interface{}) map[string]interface{} {
-	m := make(map[string]interface{}, len(keyvals)/2)
-	for i := 0; i+1 < len(keyvals); i += 2 {
-		key, ok := keyvals[i].(string)
-		if !ok {
-			key = fmt.Sprintf("%v", keyvals[i])
-		}
-		m[key] = keyvals[i+1]
-	}
-	return m
 }

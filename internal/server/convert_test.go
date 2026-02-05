@@ -50,7 +50,7 @@ func TestDomainErrToGRPC(t *testing.T) {
 			name:         "NotFoundError (custom type) maps to NotFound",
 			err:          domain.NewNotFoundError("review", "123"),
 			wantCode:     codes.NotFound,
-			wantContains: "review not found: 123",
+			wantContains: "resource not found",
 		},
 		{
 			name:         "ErrInvalidInput maps to InvalidArgument",
@@ -74,7 +74,7 @@ func TestDomainErrToGRPC(t *testing.T) {
 			name:         "AlreadyExistsError (custom type) maps to AlreadyExists",
 			err:          domain.NewAlreadyExistsError("paper", "doi:10.1234"),
 			wantCode:     codes.AlreadyExists,
-			wantContains: "paper already exists",
+			wantContains: "resource already exists",
 		},
 		{
 			name:         "ErrUnauthorized maps to Unauthenticated",
@@ -98,19 +98,19 @@ func TestDomainErrToGRPC(t *testing.T) {
 			name:         "ErrRateLimited maps to ResourceExhausted",
 			err:          domain.ErrRateLimited,
 			wantCode:     codes.ResourceExhausted,
-			wantContains: "rate limited",
+			wantContains: "rate limit exceeded",
 		},
 		{
 			name:         "RateLimitError (custom type) maps to ResourceExhausted",
 			err:          domain.NewRateLimitError("semantic_scholar", 30*time.Second),
 			wantCode:     codes.ResourceExhausted,
-			wantContains: "rate limited",
+			wantContains: "rate limit exceeded",
 		},
 		{
 			name:         "ErrServiceUnavailable maps to Unavailable",
 			err:          domain.ErrServiceUnavailable,
 			wantCode:     codes.Unavailable,
-			wantContains: "service unavailable",
+			wantContains: "service temporarily unavailable",
 		},
 		{
 			name:         "ErrCancelled maps to Canceled",
@@ -122,19 +122,19 @@ func TestDomainErrToGRPC(t *testing.T) {
 			name:         "temporal ErrWorkflowNotFound maps to NotFound",
 			err:          temporal.ErrWorkflowNotFound,
 			wantCode:     codes.NotFound,
-			wantContains: "workflow not found",
+			wantContains: "resource not found",
 		},
 		{
 			name:         "wrapped temporal ErrWorkflowNotFound maps to NotFound",
 			err:          fmt.Errorf("lookup failed: %w", temporal.ErrWorkflowNotFound),
 			wantCode:     codes.NotFound,
-			wantContains: "workflow not found",
+			wantContains: "resource not found",
 		},
 		{
 			name:         "temporal ErrWorkflowAlreadyStarted maps to AlreadyExists",
 			err:          temporal.ErrWorkflowAlreadyStarted,
 			wantCode:     codes.AlreadyExists,
-			wantContains: "workflow already started",
+			wantContains: "resource already exists",
 		},
 		{
 			name:         "unknown error maps to Internal",

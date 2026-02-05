@@ -81,25 +81,25 @@ func domainErrToGRPC(err error) error {
 
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
-		return status.Error(codes.NotFound, err.Error())
+		return status.Error(codes.NotFound, "resource not found")
 	case errors.Is(err, domain.ErrInvalidInput):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, domain.ErrAlreadyExists):
-		return status.Error(codes.AlreadyExists, err.Error())
+		return status.Error(codes.AlreadyExists, "resource already exists")
 	case errors.Is(err, domain.ErrUnauthorized):
-		return status.Error(codes.Unauthenticated, err.Error())
+		return status.Error(codes.Unauthenticated, "unauthorized")
 	case errors.Is(err, domain.ErrForbidden):
-		return status.Error(codes.PermissionDenied, err.Error())
+		return status.Error(codes.PermissionDenied, "forbidden")
 	case errors.Is(err, domain.ErrRateLimited):
-		return status.Error(codes.ResourceExhausted, err.Error())
+		return status.Error(codes.ResourceExhausted, "rate limit exceeded")
 	case errors.Is(err, domain.ErrServiceUnavailable):
-		return status.Error(codes.Unavailable, err.Error())
+		return status.Error(codes.Unavailable, "service temporarily unavailable")
 	case errors.Is(err, domain.ErrCancelled):
-		return status.Error(codes.Canceled, err.Error())
+		return status.Error(codes.Canceled, "request cancelled")
 	case errors.Is(err, temporal.ErrWorkflowNotFound):
-		return status.Error(codes.NotFound, err.Error())
+		return status.Error(codes.NotFound, "resource not found")
 	case errors.Is(err, temporal.ErrWorkflowAlreadyStarted):
-		return status.Error(codes.AlreadyExists, err.Error())
+		return status.Error(codes.AlreadyExists, "resource already exists")
 	default:
 		// Do not leak internal error details to clients.
 		return status.Error(codes.Internal, "internal server error")

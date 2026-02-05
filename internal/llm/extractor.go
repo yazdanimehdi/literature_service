@@ -157,6 +157,10 @@ func NewKeywordExtractorFromClient(client sharedllm.Client) KeywordExtractor {
 }
 
 func (a *clientAdapter) ExtractKeywords(ctx context.Context, req ExtractionRequest) (*ExtractionResult, error) {
+	if strings.TrimSpace(req.Text) == "" {
+		return nil, fmt.Errorf("extraction text is required")
+	}
+
 	systemPrompt, userPrompt := BuildExtractionPrompt(req)
 
 	completionReq := sharedllm.Request{

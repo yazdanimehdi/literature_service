@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/helixir/literature-review-service/internal/domain"
 )
@@ -167,15 +168,16 @@ func (s *Server) listenForNotifications(ctx context.Context, reviewID string, ou
 	defer conn.Release()
 
 	channel := fmt.Sprintf("review_progress_%s", reviewID)
+	sanitizedChannel := pgx.Identifier{channel}.Sanitize()
 
 	// Use the underlying pgx connection for LISTEN (not the pooled wrapper).
 	pgConn := conn.Conn()
-	if _, execErr := pgConn.Exec(ctx, fmt.Sprintf("LISTEN %s", channel)); execErr != nil {
+	if _, execErr := pgConn.Exec(ctx, fmt.Sprintf("LISTEN %s", sanitizedChannel)); execErr != nil {
 		s.logger.Error().Err(execErr).Str("channel", channel).Msg("LISTEN failed")
 		return
 	}
 	defer func() {
-		_, _ = pgConn.Exec(context.Background(), fmt.Sprintf("UNLISTEN %s", channel))
+		_, _ = pgConn.Exec(context.Background(), fmt.Sprintf("UNLISTEN %s", sanitizedChannel))
 	}()
 
 	for {
@@ -198,7 +200,11 @@ func (s *Server) listenForNotifications(ctx context.Context, reviewID string, ou
 		case <-ctx.Done():
 			return
 		default:
-			// Channel full, drop event.
+			// Channel full, drop event to avoid blocking the notification listener.
+			s.logger.Warn().
+				Str("review_id", reviewID).
+				Str("event_type", event.EventType).
+				Msg("SSE notification channel full, dropping event")
 		}
 	}
 }

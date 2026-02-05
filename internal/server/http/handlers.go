@@ -21,9 +21,11 @@ import (
 
 // Pagination and validation constants.
 const (
-	defaultPageSize = 50
-	maxPageSize     = 100
-	maxQueryLength  = 10000
+	defaultPageSize    = 50
+	maxPageSize        = 100
+	minQueryLength     = 3
+	maxQueryLength     = 10000
+	maxRequestBodySize = 1 << 20 // 1 MB limit for request bodies
 )
 
 // startReviewRequest is the JSON request body for starting a literature review.
@@ -50,7 +52,7 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 	projectID := projectIDFromContext(ctx)
 
 	// Parse and validate the request body.
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1 MB limit
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodySize))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read request body")
 		return
@@ -67,6 +69,10 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 	req.Query = strings.TrimSpace(req.Query)
 	if req.Query == "" {
 		writeError(w, http.StatusBadRequest, "query is required")
+		return
+	}
+	if len(req.Query) < minQueryLength {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("query must be at least %d characters", minQueryLength))
 		return
 	}
 	if len(req.Query) > maxQueryLength {
@@ -142,7 +148,7 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 		OrgID:     orgID,
 		ProjectID: projectID,
 		Query:     req.Query,
-	}, nil, wfInput)
+	}, s.workflowFunc, wfInput)
 	if err != nil {
 		writeDomainError(w, err)
 		return
@@ -200,7 +206,7 @@ func (s *Server) cancelLiteratureReview(w http.ResponseWriter, r *http.Request) 
 	// Parse optional reason from the request body.
 	var cancelReq cancelReviewRequest
 	if r.Body != nil && r.ContentLength != 0 {
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodySize))
 		if err == nil && len(body) > 0 {
 			_ = json.Unmarshal(body, &cancelReq)
 		}

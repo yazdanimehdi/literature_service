@@ -51,18 +51,15 @@ func NewLogger(cfg LoggingConfig) zerolog.Logger {
 		output = os.Stdout
 	}
 
-	// Configure time format
-	if cfg.TimeFormat != "" {
-		zerolog.TimeFieldFormat = cfg.TimeFormat
-	} else {
-		zerolog.TimeFieldFormat = time.RFC3339
-	}
-
 	// Use console writer for pretty output in development
 	if strings.ToLower(cfg.Format) == "console" || strings.ToLower(cfg.Format) == "pretty" {
+		timeFormat := cfg.TimeFormat
+		if timeFormat == "" {
+			timeFormat = time.RFC3339
+		}
 		output = zerolog.ConsoleWriter{
 			Out:        output,
-			TimeFormat: zerolog.TimeFieldFormat,
+			TimeFormat: timeFormat,
 		}
 	}
 

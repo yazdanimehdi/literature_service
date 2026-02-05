@@ -555,13 +555,14 @@ func TestExternalAPIError(t *testing.T) {
 		assert.Equal(t, cause, err.Unwrap())
 	})
 
-	t.Run("unwrap returns nil when no cause", func(t *testing.T) {
+	t.Run("unwrap returns ErrServiceUnavailable when no cause", func(t *testing.T) {
 		err := &ExternalAPIError{
 			Source:     "biorxiv",
 			StatusCode: 404,
 			Message:    "not found",
 		}
-		assert.Nil(t, err.Unwrap())
+		assert.Equal(t, ErrServiceUnavailable, err.Unwrap())
+		assert.ErrorIs(t, err, ErrServiceUnavailable)
 	})
 }
 
@@ -1432,8 +1433,9 @@ func TestNewExternalAPIError(t *testing.T) {
 		// Verify Error() output format
 		assert.Equal(t, "arxiv API error (status 404): not found", err.Error())
 
-		// Verify Unwrap returns nil when no cause
-		assert.Nil(t, err.Unwrap())
+		// Verify Unwrap returns ErrServiceUnavailable when no cause
+		assert.Equal(t, ErrServiceUnavailable, err.Unwrap())
+		assert.ErrorIs(t, err, ErrServiceUnavailable)
 	})
 
 	t.Run("with wrapped sentinel cause", func(t *testing.T) {

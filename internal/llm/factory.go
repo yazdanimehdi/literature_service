@@ -101,9 +101,10 @@ type GeminiConfig struct {
 // NewKeywordExtractor creates a KeywordExtractor based on the configuration.
 // All providers use the shared llm package. If Resilience config is provided,
 // the client is wrapped with rate limiting and circuit breaking.
-func NewKeywordExtractor(cfg FactoryConfig) (KeywordExtractor, error) {
+// The context is used during client initialization (e.g. Bedrock, Gemini SDK setup).
+func NewKeywordExtractor(ctx context.Context, cfg FactoryConfig) (KeywordExtractor, error) {
 	// Step 1: Create the base shared client for the selected provider.
-	client, err := createClient(cfg)
+	client, err := createClient(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +118,7 @@ func NewKeywordExtractor(cfg FactoryConfig) (KeywordExtractor, error) {
 	return NewKeywordExtractorFromClient(client), nil
 }
 
+// sharedClientConfig adapts the FactoryConfig to the shared llm package ClientConfig.
 func sharedClientConfig(cfg FactoryConfig) sharedllm.ClientConfig {
 	retryDelay := cfg.RetryDelay
 	if retryDelay == 0 {
@@ -129,7 +131,8 @@ func sharedClientConfig(cfg FactoryConfig) sharedllm.ClientConfig {
 	}
 }
 
-func createClient(cfg FactoryConfig) (sharedllm.Client, error) {
+// createClient creates a base LLM client for the selected provider without resilience wrapping.
+func createClient(ctx context.Context, cfg FactoryConfig) (sharedllm.Client, error) {
 	cc := sharedClientConfig(cfg)
 	switch cfg.Provider {
 	case "openai":
@@ -153,20 +156,21 @@ func createClient(cfg FactoryConfig) (sharedllm.Client, error) {
 			Model:          cfg.Azure.Model,
 		}, cc)
 	case "bedrock":
-		return bedrock.New(context.Background(), bedrock.Config{
+		return bedrock.New(ctx, bedrock.Config{
 			Region: cfg.Bedrock.Region,
 			Model:  cfg.Bedrock.Model,
 		}, cc)
 	case "gemini":
-		return createGeminiClient(cfg, false)
+		return createGeminiClient(ctx, cfg, false)
 	case "vertex":
-		return createGeminiClient(cfg, true)
+		return createGeminiClient(ctx, cfg, true)
 	default:
 		return nil, fmt.Errorf("unsupported LLM provider: %q", cfg.Provider)
 	}
 }
 
-func createGeminiClient(cfg FactoryConfig, forceVertex bool) (sharedllm.Client, error) {
+// createGeminiClient creates a Gemini or Vertex AI client, auto-detecting mode based on configuration.
+func createGeminiClient(ctx context.Context, cfg FactoryConfig, forceVertex bool) (sharedllm.Client, error) {
 	geminiCfg := gemini.Config{Model: cfg.Gemini.Model}
 	if forceVertex || (cfg.Gemini.Project != "" && cfg.Gemini.APIKey == "") {
 		geminiCfg.Project = cfg.Gemini.Project
@@ -174,9 +178,10 @@ func createGeminiClient(cfg FactoryConfig, forceVertex bool) (sharedllm.Client, 
 	} else {
 		geminiCfg.APIKey = cfg.Gemini.APIKey
 	}
-	return gemini.New(context.Background(), geminiCfg, sharedClientConfig(cfg))
+	return gemini.New(ctx, geminiCfg, sharedClientConfig(cfg))
 }
 
+// wrapWithResilience wraps a client with rate limiter and circuit breaker middleware.
 func wrapWithResilience(client sharedllm.Client, cfg *ResilienceConfig) sharedllm.Client {
 	sharedCfg := &sharedllm.Config{
 		RateLimitRPS:           cfg.RateLimitRPS,

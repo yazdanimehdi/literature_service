@@ -13,6 +13,9 @@ func TestLoad_Defaults(t *testing.T) {
 	// Clear any existing env vars that might interfere
 	clearEnvVars(t)
 
+	// Set the required API key for the default provider (openai).
+	t.Setenv("LITREVIEW_LLM_OPENAI_API_KEY", "sk-test-default")
+
 	cfg, err := Load()
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
@@ -90,6 +93,7 @@ func TestLoad_EnvironmentOverride(t *testing.T) {
 	t.Setenv("LITREVIEW_DATABASE_SSL_MODE", "disable")
 	t.Setenv("LITREVIEW_LOGGING_LEVEL", "debug")
 	t.Setenv("LITREVIEW_LLM_PROVIDER", "anthropic")
+	t.Setenv("LITREVIEW_LLM_ANTHROPIC_API_KEY", "sk-ant-override")
 	t.Setenv("LITREVIEW_LLM_MAX_KEYWORDS", "15")
 
 	cfg, err := Load()
@@ -290,6 +294,10 @@ func TestLoad_APIKeysFromEnvOnly(t *testing.T) {
 func TestLoad_APIKeysEmptyByDefault(t *testing.T) {
 	clearEnvVars(t)
 
+	// Use bedrock provider which does not require an API key,
+	// so we can verify all API key fields remain empty.
+	t.Setenv("LITREVIEW_LLM_PROVIDER", "bedrock")
+
 	cfg, err := Load()
 	require.NoError(t, err)
 
@@ -318,6 +326,122 @@ func TestValidate_LLMConfig(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "LLM min_keywords must be positive")
 	})
+}
+
+func TestValidate_LLMProviderAPIKey(t *testing.T) {
+	tests := []struct {
+		name        string
+		modifyFunc  func(*Config)
+		expectError bool
+		errContains string
+	}{
+		{
+			name: "openai without key fails",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "openai"
+				c.LLM.OpenAI.APIKey = ""
+			},
+			expectError: true,
+			errContains: "LITREVIEW_LLM_OPENAI_API_KEY",
+		},
+		{
+			name: "openai with key passes",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "openai"
+				c.LLM.OpenAI.APIKey = "sk-test"
+			},
+			expectError: false,
+		},
+		{
+			name: "anthropic without key fails",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "anthropic"
+				c.LLM.Anthropic.APIKey = ""
+			},
+			expectError: true,
+			errContains: "LITREVIEW_LLM_ANTHROPIC_API_KEY",
+		},
+		{
+			name: "anthropic with key passes",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "anthropic"
+				c.LLM.Anthropic.APIKey = "sk-ant-test"
+			},
+			expectError: false,
+		},
+		{
+			name: "azure without key fails",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "azure"
+				c.LLM.Azure.APIKey = ""
+			},
+			expectError: true,
+			errContains: "LITREVIEW_LLM_AZURE_API_KEY",
+		},
+		{
+			name: "azure with key passes",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "azure"
+				c.LLM.Azure.APIKey = "azure-key"
+			},
+			expectError: false,
+		},
+		{
+			name: "gemini without key or project fails",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "gemini"
+				c.LLM.Gemini.APIKey = ""
+				c.LLM.Gemini.Project = ""
+			},
+			expectError: true,
+			errContains: "LITREVIEW_LLM_GEMINI_API_KEY",
+		},
+		{
+			name: "gemini with key passes",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "gemini"
+				c.LLM.Gemini.APIKey = "gemini-key"
+			},
+			expectError: false,
+		},
+		{
+			name: "gemini with project (vertex mode) passes without key",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "gemini"
+				c.LLM.Gemini.APIKey = ""
+				c.LLM.Gemini.Project = "my-gcp-project"
+			},
+			expectError: false,
+		},
+		{
+			name: "bedrock does not require key",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "bedrock"
+			},
+			expectError: false,
+		},
+		{
+			name: "vertex does not require key",
+			modifyFunc: func(c *Config) {
+				c.LLM.Provider = "vertex"
+			},
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validConfig()
+			tt.modifyFunc(cfg)
+			err := cfg.Validate()
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }
 
 func TestDatabaseConfig_DSN(t *testing.T) {

@@ -147,9 +147,9 @@ func (c *Client) Search(ctx context.Context, params papersources.SearchParams) (
 		return nil, err
 	}
 
-	// Parse the response
+	// Parse the response (limit body to 10MB to prevent resource exhaustion).
 	var searchResp SearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(&searchResp); err != nil {
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 
@@ -202,9 +202,9 @@ func (c *Client) GetByID(ctx context.Context, id string) (*domain.Paper, error) 
 		return nil, err
 	}
 
-	// Parse the response
+	// Parse the response (limit body to 10MB to prevent resource exhaustion).
 	var paperResult PaperResult
-	if err := json.NewDecoder(resp.Body).Decode(&paperResult); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(&paperResult); err != nil {
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 

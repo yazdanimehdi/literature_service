@@ -28,6 +28,7 @@ type Server struct {
 	router         chi.Router
 	httpServer     *http.Server
 	workflowClient WorkflowClient
+	workflowFunc   interface{} // The Temporal workflow function reference.
 	reviewRepo     repository.ReviewRepository
 	paperRepo      repository.PaperRepository
 	keywordRepo    repository.KeywordRepository
@@ -47,9 +48,12 @@ type Config struct {
 }
 
 // NewServer creates a new HTTP server with all dependencies.
+// workflowFunc is the Temporal workflow function reference (e.g., workflows.LiteratureReviewWorkflow)
+// that will be passed to StartReviewWorkflow.
 func NewServer(
 	cfg Config,
 	workflowClient WorkflowClient,
+	workflowFunc interface{},
 	reviewRepo repository.ReviewRepository,
 	paperRepo repository.PaperRepository,
 	keywordRepo repository.KeywordRepository,
@@ -59,6 +63,7 @@ func NewServer(
 ) *Server {
 	s := &Server{
 		workflowClient: workflowClient,
+		workflowFunc:   workflowFunc,
 		reviewRepo:     reviewRepo,
 		paperRepo:      paperRepo,
 		keywordRepo:    keywordRepo,

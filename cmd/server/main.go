@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/rs/zerolog"
 	"go.temporal.io/sdk/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
@@ -98,7 +97,7 @@ func run() error {
 	temporalClient, err := client.Dial(client.Options{
 		HostPort:  cfg.Temporal.HostPort,
 		Namespace: cfg.Temporal.Namespace,
-		Logger:    newTemporalLogger(logger),
+		Logger:    observability.NewTemporalLogger(logger),
 	})
 	if err != nil {
 		return fmt.Errorf("connect to temporal: %w", err)
@@ -198,6 +197,7 @@ func run() error {
 	httpSrv := httpserver.NewServer(
 		httpCfg,
 		workflowClient,
+		workflows.LiteratureReviewWorkflow,
 		reviewRepo,
 		paperRepo,
 		keywordRepo,
@@ -315,42 +315,4 @@ func run() error {
 
 	logger.Info().Msg("literature-review-service shutdown complete")
 	return nil
-}
-
-// temporalLogger adapts zerolog to Temporal's log interface.
-type temporalLogger struct {
-	logger zerolog.Logger
-}
-
-func newTemporalLogger(logger zerolog.Logger) *temporalLogger {
-	return &temporalLogger{logger: logger.With().Str("component", "temporal-sdk").Logger()}
-}
-
-func (l *temporalLogger) Debug(msg string, keyvals ...interface{}) {
-	l.logger.Debug().Fields(keyvalToMap(keyvals)).Msg(msg)
-}
-
-func (l *temporalLogger) Info(msg string, keyvals ...interface{}) {
-	l.logger.Info().Fields(keyvalToMap(keyvals)).Msg(msg)
-}
-
-func (l *temporalLogger) Warn(msg string, keyvals ...interface{}) {
-	l.logger.Warn().Fields(keyvalToMap(keyvals)).Msg(msg)
-}
-
-func (l *temporalLogger) Error(msg string, keyvals ...interface{}) {
-	l.logger.Error().Fields(keyvalToMap(keyvals)).Msg(msg)
-}
-
-// keyvalToMap converts key-value pairs to a map for zerolog fields.
-func keyvalToMap(keyvals []interface{}) map[string]interface{} {
-	m := make(map[string]interface{}, len(keyvals)/2)
-	for i := 0; i+1 < len(keyvals); i += 2 {
-		key, ok := keyvals[i].(string)
-		if !ok {
-			key = fmt.Sprintf("%v", keyvals[i])
-		}
-		m[key] = keyvals[i+1]
-	}
-	return m
 }

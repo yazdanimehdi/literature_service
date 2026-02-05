@@ -119,9 +119,12 @@ func (e *ExternalAPIError) Error() string {
 	return fmt.Sprintf("%s API error (status %d): %s", e.Source, e.StatusCode, e.Message)
 }
 
-// Unwrap returns the underlying cause error.
+// Unwrap returns the underlying cause error, or ErrServiceUnavailable if no cause is set.
 func (e *ExternalAPIError) Unwrap() error {
-	return e.Cause
+	if e.Cause != nil {
+		return e.Cause
+	}
+	return ErrServiceUnavailable
 }
 
 // NewNotFoundError creates a new NotFoundError.

@@ -161,9 +161,9 @@ func (c *Client) Search(ctx context.Context, params papersources.SearchParams) (
 		)
 	}
 
-	// Parse the response
+	// Parse the response (limit body to 10MB to prevent resource exhaustion).
 	var searchResp SearchResponse
-	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(&searchResp); err != nil {
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 
@@ -230,9 +230,10 @@ func (c *Client) GetByID(ctx context.Context, id string) (*domain.Paper, error) 
 		)
 	}
 
-	// Parse the response (single work, not a search response)
+	// Parse the response (single work, not a search response).
+	// Limit body to 10MB to prevent resource exhaustion.
 	var work Work
-	if err := json.NewDecoder(resp.Body).Decode(&work); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 10<<20)).Decode(&work); err != nil {
 		return nil, fmt.Errorf("decoding response: %w", err)
 	}
 

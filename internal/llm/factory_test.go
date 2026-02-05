@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -23,7 +24,7 @@ func TestNewKeywordExtractor_OpenAI(t *testing.T) {
 		},
 	}
 
-	extractor, err := NewKeywordExtractor(cfg)
+	extractor, err := NewKeywordExtractor(context.Background(), cfg)
 
 	require.NoError(t, err)
 	require.NotNil(t, extractor)
@@ -46,7 +47,7 @@ func TestNewKeywordExtractor_Anthropic(t *testing.T) {
 		},
 	}
 
-	extractor, err := NewKeywordExtractor(cfg)
+	extractor, err := NewKeywordExtractor(context.Background(), cfg)
 
 	require.NoError(t, err)
 	require.NotNil(t, extractor)
@@ -61,7 +62,7 @@ func TestNewKeywordExtractor_Unknown(t *testing.T) {
 		Provider: "unknown-provider",
 	}
 
-	extractor, err := NewKeywordExtractor(cfg)
+	extractor, err := NewKeywordExtractor(context.Background(), cfg)
 
 	require.Error(t, err)
 	assert.Nil(t, extractor)
@@ -76,7 +77,7 @@ func TestNewKeywordExtractor_EmptyProvider(t *testing.T) {
 		Provider: "",
 	}
 
-	extractor, err := NewKeywordExtractor(cfg)
+	extractor, err := NewKeywordExtractor(context.Background(), cfg)
 
 	require.Error(t, err)
 	assert.Nil(t, extractor)
@@ -103,7 +104,7 @@ func TestNewKeywordExtractor_WithResilience(t *testing.T) {
 		},
 	}
 
-	extractor, err := NewKeywordExtractor(cfg)
+	extractor, err := NewKeywordExtractor(context.Background(), cfg)
 
 	require.NoError(t, err)
 	require.NotNil(t, extractor)
@@ -124,7 +125,7 @@ func TestNewKeywordExtractor_WithoutResilience(t *testing.T) {
 		Resilience: nil,
 	}
 
-	extractor, err := NewKeywordExtractor(cfg)
+	extractor, err := NewKeywordExtractor(context.Background(), cfg)
 
 	require.NoError(t, err)
 	require.NotNil(t, extractor)

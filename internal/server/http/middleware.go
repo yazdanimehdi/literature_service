@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -60,8 +61,12 @@ func correlationIDMiddleware(next http.Handler) http.Handler {
 		}
 		if correlationID == "" {
 			buf := make([]byte, 8)
-			_, _ = rand.Read(buf)
-			correlationID = fmt.Sprintf("%x", buf)
+			if _, err := rand.Read(buf); err != nil {
+				// Fallback to timestamp-based ID if crypto/rand fails.
+				correlationID = fmt.Sprintf("%x", time.Now().UnixNano())
+			} else {
+				correlationID = fmt.Sprintf("%x", buf)
+			}
 		}
 
 		w.Header().Set("X-Correlation-ID", correlationID)

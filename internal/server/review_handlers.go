@@ -31,6 +31,10 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 	if req.Query == "" {
 		return nil, status.Error(codes.InvalidArgument, "query is required")
 	}
+	const minQueryLength = 3
+	if len(req.Query) < minQueryLength {
+		return nil, status.Errorf(codes.InvalidArgument, "query must be at least %d characters", minQueryLength)
+	}
 	if len(req.Query) > maxQueryLength {
 		return nil, status.Errorf(codes.InvalidArgument, "query must be at most %d characters", maxQueryLength)
 	}

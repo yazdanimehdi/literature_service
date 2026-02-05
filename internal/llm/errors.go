@@ -1,7 +1,6 @@
 package llm
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 )
@@ -37,12 +36,3 @@ func (e *APIError) IsTransient() bool {
 		e.StatusCode >= 500
 }
 
-// isTransientError checks whether an error is a transient API error that should be retried.
-// Uses errors.As to correctly unwrap wrapped errors.
-func isTransientError(err error) bool {
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		return apiErr.IsTransient()
-	}
-	return false
-}

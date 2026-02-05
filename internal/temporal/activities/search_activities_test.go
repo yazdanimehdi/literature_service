@@ -15,6 +15,15 @@ import (
 	"github.com/helixir/literature-review-service/internal/papersources"
 )
 
+// mockPaperSearcher implements the PaperSearcher interface for testing.
+type mockPaperSearcher struct {
+	results []papersources.SourceResult
+}
+
+func (m *mockPaperSearcher) SearchSources(_ context.Context, _ papersources.SearchParams, _ []domain.SourceType) []papersources.SourceResult {
+	return m.results
+}
+
 // mockPaperSource implements papersources.PaperSource for testing.
 type mockPaperSource struct {
 	sourceType domain.SourceType
@@ -255,4 +264,105 @@ func TestSearchPapers_EmptyResults(t *testing.T) {
 	assert.Equal(t, 0, output.TotalFound)
 	assert.Equal(t, 0, output.BySource[domain.SourceTypeOpenAlex])
 	assert.Empty(t, output.Errors)
+}
+
+func TestSearchSingleSource(t *testing.T) {
+	t.Run("searches single source successfully", func(t *testing.T) {
+		mockSearcher := &mockPaperSearcher{
+			results: []papersources.SourceResult{
+				{
+					Source: domain.SourceTypeSemanticScholar,
+					Result: &papersources.SearchResult{
+						Papers: []*domain.Paper{
+							{ID: uuid.New(), Title: "Paper 1"},
+							{ID: uuid.New(), Title: "Paper 2"},
+						},
+					},
+				},
+			},
+		}
+
+		activities := NewSearchActivities(mockSearcher, nil)
+
+		input := SearchSingleSourceInput{
+			Source:     domain.SourceTypeSemanticScholar,
+			Query:      "test query",
+			MaxResults: 10,
+		}
+
+		env := testsuite.WorkflowTestSuite{}
+		testEnv := env.NewTestActivityEnvironment()
+		testEnv.RegisterActivity(activities.SearchSingleSource)
+
+		val, err := testEnv.ExecuteActivity(activities.SearchSingleSource, input)
+		require.NoError(t, err)
+
+		var output SearchSingleSourceOutput
+		require.NoError(t, val.Get(&output))
+
+		assert.Equal(t, domain.SourceTypeSemanticScholar, output.Source)
+		assert.Len(t, output.Papers, 2)
+		assert.Equal(t, 2, output.TotalFound)
+		assert.Empty(t, output.Error)
+	})
+
+	t.Run("returns error in output when source fails", func(t *testing.T) {
+		mockSearcher := &mockPaperSearcher{
+			results: []papersources.SourceResult{
+				{
+					Source: domain.SourceTypeOpenAlex,
+					Error:  fmt.Errorf("API rate limit exceeded"),
+				},
+			},
+		}
+
+		activities := NewSearchActivities(mockSearcher, nil)
+
+		input := SearchSingleSourceInput{
+			Source:     domain.SourceTypeOpenAlex,
+			Query:      "test query",
+			MaxResults: 10,
+		}
+
+		env := testsuite.WorkflowTestSuite{}
+		testEnv := env.NewTestActivityEnvironment()
+		testEnv.RegisterActivity(activities.SearchSingleSource)
+
+		val, err := testEnv.ExecuteActivity(activities.SearchSingleSource, input)
+		require.NoError(t, err) // Activity succeeds, error is in output
+
+		var output SearchSingleSourceOutput
+		require.NoError(t, val.Get(&output))
+
+		assert.Equal(t, domain.SourceTypeOpenAlex, output.Source)
+		assert.Nil(t, output.Papers)
+		assert.Contains(t, output.Error, "rate limit")
+	})
+
+	t.Run("handles empty results from registry", func(t *testing.T) {
+		mockSearcher := &mockPaperSearcher{
+			results: []papersources.SourceResult{},
+		}
+
+		activities := NewSearchActivities(mockSearcher, nil)
+
+		input := SearchSingleSourceInput{
+			Source:     domain.SourceTypePubMed,
+			Query:      "test query",
+			MaxResults: 10,
+		}
+
+		env := testsuite.WorkflowTestSuite{}
+		testEnv := env.NewTestActivityEnvironment()
+		testEnv.RegisterActivity(activities.SearchSingleSource)
+
+		val, err := testEnv.ExecuteActivity(activities.SearchSingleSource, input)
+		require.NoError(t, err)
+
+		var output SearchSingleSourceOutput
+		require.NoError(t, val.Get(&output))
+
+		assert.Equal(t, domain.SourceTypePubMed, output.Source)
+		assert.Contains(t, output.Error, "no results returned")
+	})
 }

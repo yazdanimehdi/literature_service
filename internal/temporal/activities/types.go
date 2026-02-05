@@ -411,3 +411,31 @@ type EmbedPapersOutput struct {
 	// Failed is the count of papers that failed embedding.
 	Failed int `json:"failed"`
 }
+
+// SearchSingleSourceInput contains the parameters for searching a single paper source.
+type SearchSingleSourceInput struct {
+	// Source is the paper source to search.
+	Source domain.SourceType `json:"source"`
+	// Query is the search query string.
+	Query string `json:"query"`
+	// MaxResults is the maximum number of results to return.
+	MaxResults int `json:"max_results"`
+	// IncludePreprints indicates whether to include preprint results.
+	IncludePreprints bool `json:"include_preprints"`
+	// OpenAccessOnly indicates whether to restrict results to open access papers.
+	OpenAccessOnly bool `json:"open_access_only"`
+	// MinCitations filters papers by minimum citation count.
+	MinCitations int `json:"min_citations"`
+}
+
+// SearchSingleSourceOutput contains the results of searching a single paper source.
+type SearchSingleSourceOutput struct {
+	// Source is the paper source that was searched.
+	Source domain.SourceType `json:"source"`
+	// Papers is the list of papers found.
+	Papers []*domain.Paper `json:"papers"`
+	// TotalFound is the count of papers found.
+	TotalFound int `json:"total_found"`
+	// Error contains error message if the search failed.
+	Error string `json:"error"`
+}

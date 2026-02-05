@@ -159,3 +159,72 @@ func formatSourceTypes(sources []domain.SourceType) string {
 	}
 	return strings.Join(strs, ", ")
 }
+
+// SearchSingleSource searches a single paper source.
+// This activity is designed for rate-limited parallel execution where each source
+// is searched independently with its own rate limiting.
+func (a *SearchActivities) SearchSingleSource(ctx context.Context, input SearchSingleSourceInput) (*SearchSingleSourceOutput, error) {
+	logger := activity.GetLogger(ctx)
+	logger.Info("searching single source",
+		"source", input.Source,
+		"query", input.Query,
+		"maxResults", input.MaxResults,
+	)
+
+	params := papersources.SearchParams{
+		Query:            input.Query,
+		MaxResults:       input.MaxResults,
+		IncludePreprints: input.IncludePreprints,
+		OpenAccessOnly:   input.OpenAccessOnly,
+		MinCitations:     input.MinCitations,
+	}
+
+	if a.metrics != nil {
+		a.metrics.RecordSearchStarted(string(input.Source))
+	}
+
+	start := time.Now()
+
+	// Search single source
+	results := a.registry.SearchSources(ctx, params, []domain.SourceType{input.Source})
+
+	output := &SearchSingleSourceOutput{
+		Source: input.Source,
+	}
+
+	if len(results) == 0 {
+		output.Error = "no results returned from registry"
+		return output, nil
+	}
+
+	sr := results[0]
+	if sr.Error != nil {
+		output.Error = sr.Error.Error()
+		logger.Warn("source search failed",
+			"source", input.Source,
+			"error", sr.Error,
+		)
+		if a.metrics != nil {
+			a.metrics.RecordSearchFailed(string(input.Source), time.Since(start).Seconds())
+		}
+		return output, nil // Non-fatal: return result with error field set
+	}
+
+	if sr.Result != nil {
+		output.Papers = sr.Result.Papers
+		output.TotalFound = len(sr.Result.Papers)
+	}
+
+	logger.Info("source search completed",
+		"source", input.Source,
+		"paperCount", output.TotalFound,
+		"duration", time.Since(start).Seconds(),
+	)
+
+	if a.metrics != nil {
+		a.metrics.RecordSearchCompleted(string(input.Source), output.TotalFound, time.Since(start).Seconds())
+		a.metrics.RecordPapersDiscovered(string(input.Source), output.TotalFound)
+	}
+
+	return output, nil
+}

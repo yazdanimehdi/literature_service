@@ -297,3 +297,21 @@ type SubmitPapersForIngestionOutput struct {
 	// RunIDs maps paper IDs to their ingestion run IDs.
 	RunIDs map[string]string
 }
+
+// DedupPapersInput contains the parameters for the batch dedup activity.
+type DedupPapersInput struct {
+	// Papers to check for duplicates.
+	Papers []*domain.Paper
+}
+
+// DedupPapersOutput contains the dedup results.
+type DedupPapersOutput struct {
+	// NonDuplicateIDs are paper IDs that passed the dedup check.
+	NonDuplicateIDs []uuid.UUID
+
+	// DuplicateCount is the number of duplicates found.
+	DuplicateCount int
+
+	// SkippedCount is papers skipped (no abstract).
+	SkippedCount int
+}

@@ -147,7 +147,7 @@ type TracingConfig struct {
 
 // LLMConfig holds LLM client configuration.
 type LLMConfig struct {
-	// Provider is the LLM provider (openai, anthropic).
+	// Provider is the LLM provider (openai, anthropic, azure, bedrock, gemini, vertex).
 	Provider string `mapstructure:"provider"`
 	// MaxKeywords is the maximum number of keywords to extract.
 	MaxKeywords int `mapstructure:"max_keywords"`
@@ -165,6 +165,12 @@ type LLMConfig struct {
 	OpenAI OpenAIConfig `mapstructure:"openai"`
 	// Anthropic contains Anthropic-specific settings.
 	Anthropic AnthropicConfig `mapstructure:"anthropic"`
+	// Azure contains Azure OpenAI-specific settings.
+	Azure AzureConfig `mapstructure:"azure"`
+	// Bedrock contains AWS Bedrock-specific settings.
+	Bedrock BedrockConfig `mapstructure:"bedrock"`
+	// Gemini contains Google Gemini/Vertex AI-specific settings.
+	Gemini GeminiConfig `mapstructure:"gemini"`
 }
 
 // OpenAIConfig holds OpenAI-specific settings.
@@ -185,6 +191,40 @@ type AnthropicConfig struct {
 	Model string `mapstructure:"model"`
 	// BaseURL is the Anthropic API base URL (for custom endpoints).
 	BaseURL string `mapstructure:"base_url"`
+}
+
+// AzureConfig holds Azure OpenAI-specific settings.
+type AzureConfig struct {
+	// ResourceName is the Azure resource name.
+	ResourceName string `mapstructure:"resource_name"`
+	// DeploymentName is the Azure deployment name.
+	DeploymentName string `mapstructure:"deployment_name"`
+	// APIKey is the Azure OpenAI API key.
+	APIKey string `mapstructure:"api_key"`
+	// APIVersion is the Azure OpenAI API version.
+	APIVersion string `mapstructure:"api_version"`
+	// Model is the model name for response metadata.
+	Model string `mapstructure:"model"`
+}
+
+// BedrockConfig holds AWS Bedrock-specific settings.
+type BedrockConfig struct {
+	// Region is the AWS region (e.g., "us-east-1").
+	Region string `mapstructure:"region"`
+	// Model is the Bedrock model ID.
+	Model string `mapstructure:"model"`
+}
+
+// GeminiConfig holds Google Gemini/Vertex AI-specific settings.
+type GeminiConfig struct {
+	// APIKey is the Gemini API key (for Gemini API mode).
+	APIKey string `mapstructure:"api_key"`
+	// Project is the GCP project ID (for Vertex AI mode).
+	Project string `mapstructure:"project"`
+	// Location is the GCP location (for Vertex AI mode).
+	Location string `mapstructure:"location"`
+	// Model is the Gemini model name.
+	Model string `mapstructure:"model"`
 }
 
 // KafkaConfig holds Kafka publisher settings for the outbox pattern.
@@ -389,6 +429,17 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.anthropic.api_key", "")
 	v.SetDefault("llm.anthropic.model", "claude-3-sonnet-20240229")
 	v.SetDefault("llm.anthropic.base_url", "https://api.anthropic.com")
+	v.SetDefault("llm.azure.resource_name", "")
+	v.SetDefault("llm.azure.deployment_name", "")
+	v.SetDefault("llm.azure.api_key", "")
+	v.SetDefault("llm.azure.api_version", "2024-08-01-preview")
+	v.SetDefault("llm.azure.model", "")
+	v.SetDefault("llm.bedrock.region", "us-east-1")
+	v.SetDefault("llm.bedrock.model", "")
+	v.SetDefault("llm.gemini.api_key", "")
+	v.SetDefault("llm.gemini.project", "")
+	v.SetDefault("llm.gemini.location", "us-central1")
+	v.SetDefault("llm.gemini.model", "gemini-2.0-flash")
 
 	// Kafka defaults
 	v.SetDefault("kafka.enabled", false)

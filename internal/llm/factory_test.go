@@ -74,7 +74,7 @@ func TestNewKeywordExtractor_Unknown(t *testing.T) {
 	t.Parallel()
 
 	cfg := FactoryConfig{
-		Provider: "gemini",
+		Provider: "unknown-provider",
 	}
 
 	extractor, err := NewKeywordExtractor(cfg)
@@ -82,7 +82,7 @@ func TestNewKeywordExtractor_Unknown(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, extractor)
 	assert.Contains(t, err.Error(), "unsupported LLM provider")
-	assert.Contains(t, err.Error(), "gemini")
+	assert.Contains(t, err.Error(), "unknown-provider")
 }
 
 func TestNewKeywordExtractor_EmptyProvider(t *testing.T) {

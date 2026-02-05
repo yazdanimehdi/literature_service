@@ -19,8 +19,11 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+
+	sharedllm "github.com/helixir/llm"
 )
 
 // ExtractionMode specifies what kind of text is being processed.
@@ -142,6 +145,53 @@ func buildSystemPrompt(req ExtractionRequest) string {
 
 	return sb.String()
 }
+
+// clientAdapter wraps a shared llm.Client to implement KeywordExtractor.
+type clientAdapter struct {
+	client sharedllm.Client
+}
+
+// NewKeywordExtractorFromClient creates a KeywordExtractor from a shared llm.Client.
+func NewKeywordExtractorFromClient(client sharedllm.Client) KeywordExtractor {
+	return &clientAdapter{client: client}
+}
+
+func (a *clientAdapter) ExtractKeywords(ctx context.Context, req ExtractionRequest) (*ExtractionResult, error) {
+	systemPrompt, userPrompt := BuildExtractionPrompt(req)
+
+	completionReq := sharedllm.Request{
+		Messages: []sharedllm.Message{
+			{Role: sharedllm.RoleSystem, Content: systemPrompt},
+			{Role: sharedllm.RoleUser, Content: userPrompt},
+		},
+		ResponseFormat: "json",
+	}
+
+	resp, err := a.client.Complete(ctx, completionReq)
+	if err != nil {
+		return nil, fmt.Errorf("keyword extraction via %s failed: %w", a.client.Provider(), err)
+	}
+
+	var parsed llmResponse
+	if err := json.Unmarshal([]byte(resp.Content), &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse LLM response as JSON: %w", err)
+	}
+
+	if len(parsed.Keywords) == 0 {
+		return nil, fmt.Errorf("LLM response contains no keywords")
+	}
+
+	return &ExtractionResult{
+		Keywords:     parsed.Keywords,
+		Reasoning:    parsed.Reasoning,
+		Model:        resp.Model,
+		InputTokens:  resp.Usage.InputTokens,
+		OutputTokens: resp.Usage.OutputTokens,
+	}, nil
+}
+
+func (a *clientAdapter) Provider() string { return a.client.Provider() }
+func (a *clientAdapter) Model() string    { return a.client.Model() }
 
 // buildUserPrompt constructs the user-level prompt containing the text and constraints.
 func buildUserPrompt(req ExtractionRequest) string {

@@ -381,3 +381,33 @@ type UpdatePaperIngestionResultsOutput struct {
 	// Failed is the count of papers that failed to update.
 	Failed int
 }
+
+// EmbedPapersInput contains the parameters for the batch embedding activity.
+type EmbedPapersInput struct {
+	// Papers contains the papers to embed.
+	Papers []PaperForEmbedding `json:"papers"`
+}
+
+// PaperForEmbedding contains the minimum paper data needed for embedding.
+type PaperForEmbedding struct {
+	// PaperID is the paper's internal UUID.
+	PaperID uuid.UUID `json:"paper_id"`
+
+	// CanonicalID is the paper's canonical identifier.
+	CanonicalID string `json:"canonical_id"`
+
+	// Abstract is the text to embed.
+	Abstract string `json:"abstract"`
+}
+
+// EmbedPapersOutput contains the results of the batch embedding activity.
+type EmbedPapersOutput struct {
+	// Embeddings maps canonical ID to embedding vector.
+	Embeddings map[string][]float32 `json:"embeddings"`
+
+	// Skipped is the count of papers skipped (no abstract).
+	Skipped int `json:"skipped"`
+
+	// Failed is the count of papers that failed embedding.
+	Failed int `json:"failed"`
+}

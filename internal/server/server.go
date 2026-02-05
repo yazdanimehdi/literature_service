@@ -1,12 +1,23 @@
+// Package server implements the gRPC handlers for the Literature Review Service.
+//
+// The server layer translates between protobuf request/response types and internal
+// domain types, delegates business operations to Temporal workflows, and queries
+// repositories for read operations. All handlers enforce multi-tenancy via org_id
+// and project_id validation, and map domain errors to appropriate gRPC status codes.
 package server
 
 import (
+	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	grpcauth "github.com/helixir/grpcauth"
 
 	"github.com/helixir/literature-review-service/internal/domain"
 	"github.com/helixir/literature-review-service/internal/repository"
@@ -15,25 +26,46 @@ import (
 	pb "github.com/helixir/literature-review-service/gen/proto/literaturereview/v1"
 )
 
+// Pagination constants for list endpoints.
+const (
+	defaultPageSize = 50
+	maxPageSize     = 100
+	maxQueryLength  = 10000
+)
+
+// WorkflowClient defines the interface for workflow operations used by the server.
+// This decouples the server layer from the concrete temporal.ReviewWorkflowClient,
+// enabling straightforward testing with mock implementations.
+type WorkflowClient interface {
+	StartReviewWorkflow(ctx context.Context, req temporal.ReviewWorkflowRequest, workflowFunc interface{}, input interface{}) (workflowID, runID string, err error)
+	SignalWorkflow(ctx context.Context, workflowID, runID, signalName string, arg interface{}) error
+	QueryWorkflow(ctx context.Context, workflowID, runID, queryType string, result interface{}, args ...interface{}) error
+}
+
 // LiteratureReviewServer implements the gRPC LiteratureReviewService.
 type LiteratureReviewServer struct {
 	pb.UnimplementedLiteratureReviewServiceServer
 
-	workflowClient *temporal.ReviewWorkflowClient
+	workflowClient WorkflowClient
+	workflowFunc   interface{} // The Temporal workflow function reference.
 	reviewRepo     repository.ReviewRepository
 	paperRepo      repository.PaperRepository
 	keywordRepo    repository.KeywordRepository
 }
 
 // NewLiteratureReviewServer creates a new LiteratureReviewServer with all required dependencies.
+// workflowFunc is the Temporal workflow function reference (e.g., workflows.LiteratureReviewWorkflow)
+// that will be passed to StartReviewWorkflow. This avoids a direct import of the workflows package.
 func NewLiteratureReviewServer(
-	workflowClient *temporal.ReviewWorkflowClient,
+	workflowClient WorkflowClient,
+	workflowFunc interface{},
 	reviewRepo repository.ReviewRepository,
 	paperRepo repository.PaperRepository,
 	keywordRepo repository.KeywordRepository,
 ) *LiteratureReviewServer {
 	return &LiteratureReviewServer{
 		workflowClient: workflowClient,
+		workflowFunc:   workflowFunc,
 		reviewRepo:     reviewRepo,
 		paperRepo:      paperRepo,
 		keywordRepo:    keywordRepo,
@@ -69,7 +101,8 @@ func domainErrToGRPC(err error) error {
 	case errors.Is(err, temporal.ErrWorkflowAlreadyStarted):
 		return status.Error(codes.AlreadyExists, err.Error())
 	default:
-		return status.Error(codes.Internal, err.Error())
+		// Do not leak internal error details to clients.
+		return status.Error(codes.Internal, "internal server error")
 	}
 }
 
@@ -84,6 +117,31 @@ func validateOrgProject(orgID, projectID string) error {
 	return nil
 }
 
+// validateTenantAccess checks that the authenticated user has access to the
+// requested org_id and project_id. In permissive mode (no auth context), this
+// is a no-op. In strict mode, org/project membership is verified against JWT claims.
+func validateTenantAccess(ctx context.Context, orgID, projectID string) error {
+	authCtx, ok := grpcauth.AuthFromContext(ctx)
+	if !ok || authCtx == nil || authCtx.User == nil {
+		// No auth context — permissive mode or service-to-service call.
+		return nil
+	}
+
+	user := authCtx.User
+
+	if !user.HasOrgAccess(orgID) {
+		return status.Errorf(codes.PermissionDenied, "access denied to organization %s", orgID)
+	}
+
+	if projectID != "" {
+		if !user.IsOrgAdmin() && len(user.GetProjectRoles(projectID)) == 0 {
+			return status.Errorf(codes.PermissionDenied, "access denied to project %s", projectID)
+		}
+	}
+
+	return nil
+}
+
 // validateUUID parses and validates a UUID string. Returns a descriptive error
 // referencing fieldName if the string is not a valid UUID.
 func validateUUID(s, fieldName string) (uuid.UUID, error) {
@@ -92,4 +150,37 @@ func validateUUID(s, fieldName string) (uuid.UUID, error) {
 		return uuid.Nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid %s: %v", fieldName, err))
 	}
 	return id, nil
+}
+
+// parsePagination extracts limit and offset from page_size and page_token.
+// It applies default and maximum bounds to the page size.
+func parsePagination(pageSize int32, pageToken string) (limit, offset int) {
+	limit = int(pageSize)
+	if limit <= 0 {
+		limit = defaultPageSize
+	}
+	if limit > maxPageSize {
+		limit = maxPageSize
+	}
+
+	if pageToken != "" {
+		decoded, err := base64.StdEncoding.DecodeString(pageToken)
+		if err == nil {
+			parsed, parseErr := strconv.Atoi(string(decoded))
+			if parseErr == nil && parsed > 0 {
+				offset = parsed
+			}
+		}
+	}
+
+	return limit, offset
+}
+
+// encodePageToken encodes the next offset as a base64 page token.
+// Returns an empty string if there are no more results.
+func encodePageToken(offset, limit int, totalCount int64) string {
+	if offset+limit < int(totalCount) {
+		return base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset + limit)))
+	}
+	return ""
 }

@@ -12,8 +12,13 @@ import (
 )
 
 const (
+	// streamPollInterval is how frequently the server polls the database for review progress updates
+	// when streaming progress events to the client.
 	streamPollInterval = 2 * time.Second
-	streamMaxDuration  = 4 * time.Hour
+
+	// streamMaxDuration is the maximum total time a progress stream may remain open.
+	// After this duration, the stream is closed with a DeadlineExceeded error.
+	streamMaxDuration = 4 * time.Hour
 )
 
 // StreamLiteratureReviewProgress streams real-time progress updates for a literature review.
@@ -21,6 +26,10 @@ const (
 // until the review reaches a terminal state or the stream duration limit is exceeded.
 func (s *LiteratureReviewServer) StreamLiteratureReviewProgress(req *pb.StreamLiteratureReviewProgressRequest, stream grpc.ServerStreamingServer[pb.LiteratureReviewProgressEvent]) error {
 	if err := validateOrgProject(req.OrgId, req.ProjectId); err != nil {
+		return err
+	}
+
+	if err := validateTenantAccess(stream.Context(), req.OrgId, req.ProjectId); err != nil {
 		return err
 	}
 
@@ -61,7 +70,8 @@ func (s *LiteratureReviewServer) StreamLiteratureReviewProgress(req *pb.StreamLi
 
 	// Poll loop with deadline.
 	ctx := stream.Context()
-	deadline := time.After(streamMaxDuration)
+	deadlineTimer := time.NewTimer(streamMaxDuration)
+	defer deadlineTimer.Stop()
 	ticker := time.NewTicker(streamPollInterval)
 	defer ticker.Stop()
 
@@ -81,7 +91,7 @@ func (s *LiteratureReviewServer) StreamLiteratureReviewProgress(req *pb.StreamLi
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-deadline:
+		case <-deadlineTimer.C:
 			return status.Error(codes.DeadlineExceeded, "stream max duration exceeded")
 		case <-ticker.C:
 			// Re-fetch review status from repo.

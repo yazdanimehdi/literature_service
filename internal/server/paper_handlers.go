@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
-	"strconv"
 
 	"github.com/helixir/literature-review-service/internal/domain"
 	"github.com/helixir/literature-review-service/internal/repository"
@@ -18,6 +16,10 @@ func (s *LiteratureReviewServer) GetLiteratureReviewPapers(ctx context.Context, 
 		return nil, err
 	}
 
+	if err := validateTenantAccess(ctx, req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
 	reviewID, err := validateUUID(req.ReviewId, "review_id")
 	if err != nil {
 		return nil, err
@@ -30,31 +32,24 @@ func (s *LiteratureReviewServer) GetLiteratureReviewPapers(ctx context.Context, 
 	}
 
 	// Build pagination parameters.
-	limit := int(req.PageSize)
-	if limit <= 0 {
-		limit = 50
-	}
-	if limit > 100 {
-		limit = 100
-	}
-
-	offset := 0
-	if req.PageToken != "" {
-		decoded, err := base64.StdEncoding.DecodeString(req.PageToken)
-		if err == nil {
-			offset, _ = strconv.Atoi(string(decoded))
-		}
-	}
+	limit, offset := parsePagination(req.PageSize, req.PageToken)
 
 	filter := repository.PaperFilter{
-		Limit:  limit,
-		Offset: offset,
+		ReviewID: &reviewID,
+		Limit:    limit,
+		Offset:   offset,
 	}
 
 	// Apply source filter if specified.
 	if req.SourceFilter != "" {
 		source := domain.SourceType(req.SourceFilter)
 		filter.Source = &source
+	}
+
+	// Apply ingestion status filter if specified.
+	if req.IngestionStatusFilter != pb.IngestionStatus_INGESTION_STATUS_UNSPECIFIED {
+		ingestionStatus := protoToIngestionStatus(req.IngestionStatusFilter)
+		filter.IngestionStatus = &ingestionStatus
 	}
 
 	papers, totalCount, err := s.paperRepo.List(ctx, filter)
@@ -67,15 +62,9 @@ func (s *LiteratureReviewServer) GetLiteratureReviewPapers(ctx context.Context, 
 		pbPapers[i] = paperToProto(p)
 	}
 
-	// Build next_page_token if there are more results.
-	nextPageToken := ""
-	if offset+limit < int(totalCount) {
-		nextPageToken = base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset + limit)))
-	}
-
 	return &pb.GetLiteratureReviewPapersResponse{
 		Papers:        pbPapers,
-		NextPageToken: nextPageToken,
+		NextPageToken: encodePageToken(offset, limit, totalCount),
 		TotalCount:    int32(totalCount),
 	}, nil
 }
@@ -84,6 +73,10 @@ func (s *LiteratureReviewServer) GetLiteratureReviewPapers(ctx context.Context, 
 // It validates tenant isolation by verifying the review exists within the org/project scope.
 func (s *LiteratureReviewServer) GetLiteratureReviewKeywords(ctx context.Context, req *pb.GetLiteratureReviewKeywordsRequest) (*pb.GetLiteratureReviewKeywordsResponse, error) {
 	if err := validateOrgProject(req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
+	if err := validateTenantAccess(ctx, req.OrgId, req.ProjectId); err != nil {
 		return nil, err
 	}
 
@@ -99,25 +92,24 @@ func (s *LiteratureReviewServer) GetLiteratureReviewKeywords(ctx context.Context
 	}
 
 	// Build pagination parameters.
-	limit := int(req.PageSize)
-	if limit <= 0 {
-		limit = 50
-	}
-	if limit > 100 {
-		limit = 100
-	}
-
-	offset := 0
-	if req.PageToken != "" {
-		decoded, err := base64.StdEncoding.DecodeString(req.PageToken)
-		if err == nil {
-			offset, _ = strconv.Atoi(string(decoded))
-		}
-	}
+	limit, offset := parsePagination(req.PageSize, req.PageToken)
 
 	filter := repository.KeywordFilter{
-		Limit:  limit,
-		Offset: offset,
+		ReviewID: &reviewID,
+		Limit:    limit,
+		Offset:   offset,
+	}
+
+	// Apply extraction round filter if specified.
+	if req.ExtractionRoundFilter != nil {
+		round := int(req.ExtractionRoundFilter.Value)
+		filter.ExtractionRound = &round
+	}
+
+	// Apply source type filter if specified.
+	if req.SourceTypeFilter != pb.KeywordSourceType_KEYWORD_SOURCE_TYPE_UNSPECIFIED {
+		sourceType := protoToKeywordSourceType(req.SourceTypeFilter)
+		filter.SourceType = &sourceType
 	}
 
 	keywords, totalCount, err := s.keywordRepo.List(ctx, filter)
@@ -130,15 +122,9 @@ func (s *LiteratureReviewServer) GetLiteratureReviewKeywords(ctx context.Context
 		pbKeywords[i] = keywordToReviewKeywordProto(k)
 	}
 
-	// Build next_page_token if there are more results.
-	nextPageToken := ""
-	if offset+limit < int(totalCount) {
-		nextPageToken = base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset + limit)))
-	}
-
 	return &pb.GetLiteratureReviewKeywordsResponse{
 		Keywords:      pbKeywords,
-		NextPageToken: nextPageToken,
+		NextPageToken: encodePageToken(offset, limit, totalCount),
 		TotalCount:    int32(totalCount),
 	}, nil
 }

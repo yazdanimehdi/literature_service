@@ -194,7 +194,7 @@ func newTestServer(
 	paperRepo repository.PaperRepository,
 	keywordRepo repository.KeywordRepository,
 ) *LiteratureReviewServer {
-	return NewLiteratureReviewServer(nil, reviewRepo, paperRepo, keywordRepo)
+	return NewLiteratureReviewServer(nil, nil, reviewRepo, paperRepo, keywordRepo)
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +363,154 @@ func TestGetLiteratureReviewKeywords_Success(t *testing.T) {
 	}
 	if resp.Keywords[1].NormalizedKeyword != "gene editing" {
 		t.Errorf("expected second normalized keyword 'gene editing', got %q", resp.Keywords[1].NormalizedKeyword)
+	}
+}
+
+func TestGetLiteratureReviewKeywords_ValidationError_EmptyOrgID(t *testing.T) {
+	srv := newTestServer(&paperTestReviewRepo{}, &paperTestPaperRepo{}, &paperTestKeywordRepo{})
+
+	_, err := srv.GetLiteratureReviewKeywords(context.Background(), &pb.GetLiteratureReviewKeywordsRequest{
+		OrgId:     "",
+		ProjectId: "proj-1",
+		ReviewId:  uuid.New().String(),
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assertGRPCCode(t, err, codes.InvalidArgument)
+}
+
+func TestGetLiteratureReviewKeywords_InvalidUUID(t *testing.T) {
+	srv := newTestServer(&paperTestReviewRepo{}, &paperTestPaperRepo{}, &paperTestKeywordRepo{})
+
+	_, err := srv.GetLiteratureReviewKeywords(context.Background(), &pb.GetLiteratureReviewKeywordsRequest{
+		OrgId:     "org-1",
+		ProjectId: "proj-1",
+		ReviewId:  "not-a-valid-uuid",
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assertGRPCCode(t, err, codes.InvalidArgument)
+}
+
+func TestGetLiteratureReviewKeywords_ReviewNotFound(t *testing.T) {
+	reviewRepo := &paperTestReviewRepo{
+		getFunc: func(_ context.Context, _ string, _ string, id uuid.UUID) (*domain.LiteratureReviewRequest, error) {
+			return nil, domain.NewNotFoundError("review", id.String())
+		},
+	}
+
+	srv := newTestServer(reviewRepo, &paperTestPaperRepo{}, &paperTestKeywordRepo{})
+
+	_, err := srv.GetLiteratureReviewKeywords(context.Background(), &pb.GetLiteratureReviewKeywordsRequest{
+		OrgId:     "org-1",
+		ProjectId: "proj-1",
+		ReviewId:  uuid.New().String(),
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assertGRPCCode(t, err, codes.NotFound)
+}
+
+func TestGetLiteratureReviewKeywords_RepoError(t *testing.T) {
+	review := newTestReview()
+
+	reviewRepo := &paperTestReviewRepo{
+		getFunc: func(_ context.Context, orgID, projectID string, id uuid.UUID) (*domain.LiteratureReviewRequest, error) {
+			if orgID != review.OrgID || projectID != review.ProjectID || id != review.ID {
+				return nil, domain.NewNotFoundError("review", id.String())
+			}
+			return review, nil
+		},
+	}
+
+	keywordRepo := &paperTestKeywordRepo{
+		listFunc: func(_ context.Context, _ repository.KeywordFilter) ([]*domain.Keyword, int64, error) {
+			return nil, 0, domain.ErrInternalError
+		},
+	}
+
+	srv := newTestServer(reviewRepo, &paperTestPaperRepo{}, keywordRepo)
+
+	_, err := srv.GetLiteratureReviewKeywords(context.Background(), &pb.GetLiteratureReviewKeywordsRequest{
+		OrgId:     review.OrgID,
+		ProjectId: review.ProjectID,
+		ReviewId:  review.ID.String(),
+		PageSize:  10,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assertGRPCCode(t, err, codes.Internal)
+}
+
+func TestGetLiteratureReviewPapers_RepoError(t *testing.T) {
+	review := newTestReview()
+
+	reviewRepo := &paperTestReviewRepo{
+		getFunc: func(_ context.Context, orgID, projectID string, id uuid.UUID) (*domain.LiteratureReviewRequest, error) {
+			if orgID != review.OrgID || projectID != review.ProjectID || id != review.ID {
+				return nil, domain.NewNotFoundError("review", id.String())
+			}
+			return review, nil
+		},
+	}
+
+	paperRepo := &paperTestPaperRepo{
+		listFunc: func(_ context.Context, _ repository.PaperFilter) ([]*domain.Paper, int64, error) {
+			return nil, 0, domain.ErrInternalError
+		},
+	}
+
+	srv := newTestServer(reviewRepo, paperRepo, &paperTestKeywordRepo{})
+
+	_, err := srv.GetLiteratureReviewPapers(context.Background(), &pb.GetLiteratureReviewPapersRequest{
+		OrgId:     review.OrgID,
+		ProjectId: review.ProjectID,
+		ReviewId:  review.ID.String(),
+		PageSize:  10,
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	assertGRPCCode(t, err, codes.Internal)
+}
+
+func TestGetLiteratureReviewPapers_WithSourceFilter(t *testing.T) {
+	review := newTestReview()
+
+	reviewRepo := &paperTestReviewRepo{
+		getFunc: func(_ context.Context, orgID, projectID string, id uuid.UUID) (*domain.LiteratureReviewRequest, error) {
+			return review, nil
+		},
+	}
+
+	var capturedFilter repository.PaperFilter
+	paperRepo := &paperTestPaperRepo{
+		listFunc: func(_ context.Context, filter repository.PaperFilter) ([]*domain.Paper, int64, error) {
+			capturedFilter = filter
+			return []*domain.Paper{}, 0, nil
+		},
+	}
+
+	srv := newTestServer(reviewRepo, paperRepo, &paperTestKeywordRepo{})
+
+	_, err := srv.GetLiteratureReviewPapers(context.Background(), &pb.GetLiteratureReviewPapersRequest{
+		OrgId:        review.OrgID,
+		ProjectId:    review.ProjectID,
+		ReviewId:     review.ID.String(),
+		PageSize:     10,
+		SourceFilter: "semantic_scholar",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if capturedFilter.Source == nil {
+		t.Error("expected source filter to be set")
+	} else if *capturedFilter.Source != domain.SourceTypeSemanticScholar {
+		t.Errorf("expected source filter semantic_scholar, got %s", *capturedFilter.Source)
 	}
 }
 

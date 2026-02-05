@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -180,4 +181,148 @@ func TestStreamProgress_NoWorkflowID(t *testing.T) {
 	err := srv.StreamLiteratureReviewProgress(req, stream)
 	assertGRPCCode(t, err, codes.FailedPrecondition)
 	assert.Empty(t, stream.events, "no events should be sent when workflow ID is missing")
+}
+
+func TestStreamProgress_ContextCancellation(t *testing.T) {
+	reviewID := uuid.New()
+
+	repo := &mockReviewRepo{
+		getFn: func(_ context.Context, _, _ string, _ uuid.UUID) (*domain.LiteratureReviewRequest, error) {
+			return &domain.LiteratureReviewRequest{
+				ID:                 reviewID,
+				OrgID:              "org-1",
+				ProjectID:          "proj-1",
+				Status:             domain.ReviewStatusSearching,
+				TemporalWorkflowID: "wf-123",
+				TemporalRunID:      "run-456",
+			}, nil
+		},
+	}
+
+	srv := newTestServer(repo, &mockPaperRepo{}, &mockKeywordRepo{})
+
+	// Create a context that is immediately cancelled.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	stream := &mockProgressStreamServer{ctx: ctx}
+	req := &pb.StreamLiteratureReviewProgressRequest{
+		OrgId:     "org-1",
+		ProjectId: "proj-1",
+		ReviewId:  reviewID.String(),
+	}
+
+	err := srv.StreamLiteratureReviewProgress(req, stream)
+	// When context is cancelled, the initial "stream_started" event is sent,
+	// but then the select picks up ctx.Done() and returns ctx.Err().
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+
+	// The initial "stream_started" event should have been sent.
+	require.GreaterOrEqual(t, len(stream.events), 1)
+	assert.Equal(t, "stream_started", stream.events[0].EventType)
+}
+
+func TestStreamProgress_PollLoopCompletesOnTerminalStatus(t *testing.T) {
+	reviewID := uuid.New()
+	callCount := 0
+
+	repo := &mockReviewRepo{
+		getFn: func(_ context.Context, _, _ string, _ uuid.UUID) (*domain.LiteratureReviewRequest, error) {
+			callCount++
+			if callCount == 1 {
+				// First call: initial check (active review).
+				return &domain.LiteratureReviewRequest{
+					ID:                  reviewID,
+					OrgID:               "org-1",
+					ProjectID:           "proj-1",
+					Status:              domain.ReviewStatusSearching,
+					TemporalWorkflowID:  "wf-123",
+					PapersFoundCount:    10,
+					PapersIngestedCount: 5,
+				}, nil
+			}
+			// Subsequent calls from poll loop: return terminal status.
+			return &domain.LiteratureReviewRequest{
+				ID:                  reviewID,
+				OrgID:               "org-1",
+				ProjectID:           "proj-1",
+				Status:              domain.ReviewStatusCompleted,
+				TemporalWorkflowID:  "wf-123",
+				PapersFoundCount:    42,
+				PapersIngestedCount: 38,
+				PapersFailedCount:   4,
+			}, nil
+		},
+	}
+
+	srv := newTestServer(repo, &mockPaperRepo{}, &mockKeywordRepo{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream := &mockProgressStreamServer{ctx: ctx}
+	req := &pb.StreamLiteratureReviewProgressRequest{
+		OrgId:     "org-1",
+		ProjectId: "proj-1",
+		ReviewId:  reviewID.String(),
+	}
+
+	err := srv.StreamLiteratureReviewProgress(req, stream)
+	require.NoError(t, err)
+
+	// Should have: stream_started + progress_update + completed
+	require.GreaterOrEqual(t, len(stream.events), 2)
+
+	// First event is stream_started.
+	assert.Equal(t, "stream_started", stream.events[0].EventType)
+
+	// Last event is completed.
+	lastEvent := stream.events[len(stream.events)-1]
+	assert.Equal(t, "completed", lastEvent.EventType)
+	assert.Equal(t, int32(42), lastEvent.Progress.PapersFound)
+	assert.Equal(t, int32(38), lastEvent.Progress.PapersIngested)
+	assert.Equal(t, int32(4), lastEvent.Progress.PapersFailed)
+}
+
+func TestStreamProgress_PollLoopRepoError(t *testing.T) {
+	reviewID := uuid.New()
+	callCount := 0
+
+	repo := &mockReviewRepo{
+		getFn: func(_ context.Context, _, _ string, _ uuid.UUID) (*domain.LiteratureReviewRequest, error) {
+			callCount++
+			if callCount == 1 {
+				// Initial check succeeds.
+				return &domain.LiteratureReviewRequest{
+					ID:                 reviewID,
+					OrgID:              "org-1",
+					ProjectID:          "proj-1",
+					Status:             domain.ReviewStatusSearching,
+					TemporalWorkflowID: "wf-123",
+				}, nil
+			}
+			// Poll loop: repo returns error.
+			return nil, domain.NewNotFoundError("review", reviewID.String())
+		},
+	}
+
+	srv := newTestServer(repo, &mockPaperRepo{}, &mockKeywordRepo{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream := &mockProgressStreamServer{ctx: ctx}
+	req := &pb.StreamLiteratureReviewProgressRequest{
+		OrgId:     "org-1",
+		ProjectId: "proj-1",
+		ReviewId:  reviewID.String(),
+	}
+
+	err := srv.StreamLiteratureReviewProgress(req, stream)
+	assertGRPCCode(t, err, codes.NotFound)
+
+	// stream_started event should have been sent before the error.
+	require.GreaterOrEqual(t, len(stream.events), 1)
+	assert.Equal(t, "stream_started", stream.events[0].EventType)
 }

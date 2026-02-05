@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/base64"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,7 +12,6 @@ import (
 	"github.com/helixir/literature-review-service/internal/domain"
 	"github.com/helixir/literature-review-service/internal/repository"
 	"github.com/helixir/literature-review-service/internal/temporal"
-	"github.com/helixir/literature-review-service/internal/temporal/workflows"
 
 	pb "github.com/helixir/literature-review-service/gen/proto/literaturereview/v1"
 )
@@ -26,12 +23,16 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 		return nil, err
 	}
 
+	if err := validateTenantAccess(ctx, req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
 	// Validate query.
 	if req.Query == "" {
 		return nil, status.Error(codes.InvalidArgument, "query is required")
 	}
-	if len(req.Query) > 10000 {
-		return nil, status.Error(codes.InvalidArgument, "query must be at most 10000 characters")
+	if len(req.Query) > maxQueryLength {
+		return nil, status.Errorf(codes.InvalidArgument, "query must be at most %d characters", maxQueryLength)
 	}
 
 	requestID := uuid.New()
@@ -40,6 +41,9 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 	cfg := domain.DefaultReviewConfiguration()
 	if req.InitialKeywordCount != nil {
 		cfg.MaxKeywordsPerRound = int(req.InitialKeywordCount.Value)
+	}
+	if req.PaperKeywordCount != nil {
+		cfg.PaperKeywordCount = int(req.PaperKeywordCount.Value)
 	}
 	if req.MaxExpansionDepth != nil {
 		cfg.MaxExpansionDepth = int(req.MaxExpansionDepth.Value)
@@ -77,7 +81,7 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 	}
 
 	// Prepare and start the Temporal workflow.
-	wfInput := workflows.ReviewWorkflowInput{
+	wfInput := temporal.ReviewWorkflowInput{
 		RequestID: requestID,
 		OrgID:     req.OrgId,
 		ProjectID: req.ProjectId,
@@ -90,7 +94,7 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 		OrgID:     req.OrgId,
 		ProjectID: req.ProjectId,
 		Query:     req.Query,
-	}, workflows.LiteratureReviewWorkflow, wfInput)
+	}, s.workflowFunc, wfInput)
 	if err != nil {
 		return nil, domainErrToGRPC(err)
 	}
@@ -118,6 +122,10 @@ func (s *LiteratureReviewServer) GetLiteratureReviewStatus(ctx context.Context, 
 		return nil, err
 	}
 
+	if err := validateTenantAccess(ctx, req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
 	reviewID, err := validateUUID(req.ReviewId, "review_id")
 	if err != nil {
 		return nil, err
@@ -138,6 +146,10 @@ func (s *LiteratureReviewServer) CancelLiteratureReview(ctx context.Context, req
 		return nil, err
 	}
 
+	if err := validateTenantAccess(ctx, req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
 	reviewID, err := validateUUID(req.ReviewId, "review_id")
 	if err != nil {
 		return nil, err
@@ -152,7 +164,7 @@ func (s *LiteratureReviewServer) CancelLiteratureReview(ctx context.Context, req
 		return nil, status.Error(codes.FailedPrecondition, "review is already in terminal state")
 	}
 
-	err = s.workflowClient.SignalWorkflow(ctx, review.TemporalWorkflowID, review.TemporalRunID, workflows.SignalCancel, req.Reason)
+	err = s.workflowClient.SignalWorkflow(ctx, review.TemporalWorkflowID, review.TemporalRunID, temporal.SignalCancel, req.Reason)
 	if err != nil {
 		return nil, domainErrToGRPC(err)
 	}
@@ -171,21 +183,11 @@ func (s *LiteratureReviewServer) ListLiteratureReviews(ctx context.Context, req 
 		return nil, err
 	}
 
-	limit := int(req.PageSize)
-	if limit <= 0 {
-		limit = 50
-	}
-	if limit > 100 {
-		limit = 100
+	if err := validateTenantAccess(ctx, req.OrgId, req.ProjectId); err != nil {
+		return nil, err
 	}
 
-	offset := 0
-	if req.PageToken != "" {
-		decoded, err := base64.StdEncoding.DecodeString(req.PageToken)
-		if err == nil {
-			offset, _ = strconv.Atoi(string(decoded))
-		}
-	}
+	limit, offset := parsePagination(req.PageSize, req.PageToken)
 
 	filter := repository.ReviewFilter{
 		OrgID:     req.OrgId,
@@ -216,14 +218,9 @@ func (s *LiteratureReviewServer) ListLiteratureReviews(ctx context.Context, req 
 		summaries[i] = reviewToSummaryProto(r)
 	}
 
-	nextPageToken := ""
-	if offset+limit < int(totalCount) {
-		nextPageToken = base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(offset + limit)))
-	}
-
 	return &pb.ListLiteratureReviewsResponse{
 		Reviews:       summaries,
-		NextPageToken: nextPageToken,
+		NextPageToken: encodePageToken(offset, limit, totalCount),
 		TotalCount:    int32(totalCount),
 	}, nil
 }

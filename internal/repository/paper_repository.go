@@ -70,11 +70,19 @@ type PaperRepository interface {
 
 // PaperFilter specifies criteria for listing papers.
 type PaperFilter struct {
+	// ReviewID filters to papers associated with a specific review request (optional).
+	// When set, only papers linked to this review through request_paper_mappings are returned.
+	ReviewID *uuid.UUID
+
 	// KeywordID filters to papers associated with a specific keyword (optional).
 	KeywordID *uuid.UUID
 
 	// Source filters to papers from a specific source API (optional).
 	Source *domain.SourceType
+
+	// IngestionStatus filters to papers with a specific ingestion status (optional).
+	// This applies to the request_paper_mappings ingestion_status column.
+	IngestionStatus *domain.IngestionStatus
 
 	// HasPDF filters to papers that have a PDF URL available (optional).
 	// When true, only papers with PDFURL set are returned.
@@ -97,16 +105,6 @@ type PaperFilter struct {
 
 // Validate checks if the filter has valid values and sets defaults.
 func (f *PaperFilter) Validate() error {
-	// Apply defaults
-	if f.Limit <= 0 {
-		f.Limit = 100
-	}
-	if f.Limit > 1000 {
-		f.Limit = 1000
-	}
-	if f.Offset < 0 {
-		f.Offset = 0
-	}
-
+	applyPaginationDefaults(&f.Limit, &f.Offset)
 	return nil
 }

@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"time"
-
-	"github.com/helixir/literature-review-service/internal/config"
 )
 
 const (
@@ -81,13 +79,29 @@ type AnthropicProvider struct {
 	retryDelay  time.Duration
 }
 
+// AnthropicConfig holds the parameters needed to create an Anthropic provider.
+// This is defined in the llm package to avoid importing the config package.
+type AnthropicConfig struct {
+	// APIKey is the Anthropic API key.
+	APIKey string
+	// Model is the model identifier (e.g., "claude-3-sonnet-20240229").
+	Model string
+	// BaseURL is the API base URL.
+	BaseURL string
+}
+
 // NewAnthropicProvider creates a new AnthropicProvider with the given configuration.
 // The timeout parameter controls the HTTP client timeout for API calls.
 // The maxRetries parameter controls how many times transient errors are retried.
-func NewAnthropicProvider(cfg config.AnthropicConfig, temperature float64, timeout time.Duration, maxRetries int) *AnthropicProvider {
+func NewAnthropicProvider(cfg AnthropicConfig, temperature float64, timeout time.Duration, maxRetries int) *AnthropicProvider {
 	return &AnthropicProvider{
 		httpClient: &http.Client{
 			Timeout: timeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        10,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+			},
 		},
 		apiKey:      cfg.APIKey,
 		model:       cfg.Model,
@@ -191,7 +205,7 @@ func (p *AnthropicProvider) sendRequest(ctx context.Context, apiReq messagesRequ
 	}
 	defer httpResp.Body.Close()
 
-	respBody, err := io.ReadAll(httpResp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(httpResp.Body, 10<<20))
 	if err != nil {
 		return nil, &APIError{
 			Provider:   "anthropic",

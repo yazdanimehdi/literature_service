@@ -175,7 +175,7 @@ func (r *PgPaperRepository) FindByIdentifier(ctx context.Context, idType domain.
 			p.created_at, p.updated_at
 		FROM papers p
 		INNER JOIN paper_identifiers pi ON p.id = pi.paper_id
-		WHERE pi.id_type = $1 AND pi.id_value = $2`
+		WHERE pi.identifier_type = $1 AND pi.identifier_value = $2`
 
 	row := r.db.QueryRow(ctx, query, idType, value)
 	paper, err := scanPaper(row)
@@ -196,11 +196,10 @@ func (r *PgPaperRepository) UpsertIdentifier(ctx context.Context, paperID uuid.U
 	}
 
 	query := `
-		INSERT INTO paper_identifiers (paper_id, id_type, id_value, source_api, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $5)
-		ON CONFLICT (id_type, id_value) DO UPDATE SET
-			source_api = EXCLUDED.source_api,
-			updated_at = NOW()
+		INSERT INTO paper_identifiers (paper_id, identifier_type, identifier_value, source_api, discovered_at)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (identifier_type, identifier_value) DO UPDATE SET
+			source_api = EXCLUDED.source_api
 		WHERE paper_identifiers.paper_id = EXCLUDED.paper_id`
 
 	now := time.Now().UTC()
@@ -240,11 +239,11 @@ func (r *PgPaperRepository) AddSource(ctx context.Context, paperID uuid.UUID, so
 	}
 
 	query := `
-		INSERT INTO paper_sources (paper_id, source_api, metadata, first_seen_at, last_seen_at)
+		INSERT INTO paper_sources (paper_id, source_api, source_metadata, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $4)
 		ON CONFLICT (paper_id, source_api) DO UPDATE SET
-			metadata = COALESCE(EXCLUDED.metadata, paper_sources.metadata),
-			last_seen_at = NOW()`
+			source_metadata = COALESCE(EXCLUDED.source_metadata, paper_sources.source_metadata),
+			updated_at = NOW()`
 
 	now := time.Now().UTC()
 	result, err := r.db.Exec(ctx, query, paperID, sourceAPI, metadataJSON, now)
@@ -271,7 +270,7 @@ func (r *PgPaperRepository) List(ctx context.Context, filter PaperFilter) ([]*do
 
 	// Build dynamic WHERE clause
 	var conditions []string
-	args := []interface{}{}
+	var args []interface{}
 	argIndex := 1
 
 	if filter.Source != nil {
@@ -335,7 +334,7 @@ func (r *PgPaperRepository) List(ctx context.Context, filter PaperFilter) ([]*do
 	}
 	defer rows.Close()
 
-	var papers []*domain.Paper
+	papers := make([]*domain.Paper, 0, filter.Limit)
 	for rows.Next() {
 		paper, err := scanPaperFromRows(rows)
 		if err != nil {
@@ -371,6 +370,8 @@ func (r *PgPaperRepository) MarkKeywordsExtracted(ctx context.Context, id uuid.U
 }
 
 // BulkUpsert creates or updates multiple papers in a single transaction.
+// Uses pgx.Batch to send all upserts in a single network roundtrip,
+// dramatically reducing latency compared to individual queries.
 func (r *PgPaperRepository) BulkUpsert(ctx context.Context, papers []*domain.Paper) ([]*domain.Paper, error) {
 	if len(papers) == 0 {
 		return []*domain.Paper{}, nil
@@ -386,15 +387,87 @@ func (r *PgPaperRepository) BulkUpsert(ctx context.Context, papers []*domain.Pap
 		}
 	}
 
-	// Process each paper individually using upsert
-	// Note: For very large batches, consider using COPY or batch inserts
+	query := `
+		INSERT INTO papers (
+			id, canonical_id, title, abstract, authors,
+			publication_date, publication_year, venue, journal,
+			volume, issue, pages, citation_count, reference_count,
+			pdf_url, open_access, keywords_extracted, raw_metadata,
+			created_at, updated_at
+		) VALUES (
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+		)
+		ON CONFLICT (canonical_id) DO UPDATE SET
+			title = EXCLUDED.title,
+			abstract = COALESCE(EXCLUDED.abstract, papers.abstract),
+			authors = EXCLUDED.authors,
+			publication_date = COALESCE(EXCLUDED.publication_date, papers.publication_date),
+			publication_year = COALESCE(EXCLUDED.publication_year, papers.publication_year),
+			venue = COALESCE(EXCLUDED.venue, papers.venue),
+			journal = COALESCE(EXCLUDED.journal, papers.journal),
+			citation_count = GREATEST(EXCLUDED.citation_count, papers.citation_count),
+			reference_count = GREATEST(EXCLUDED.reference_count, papers.reference_count),
+			pdf_url = COALESCE(EXCLUDED.pdf_url, papers.pdf_url),
+			open_access = EXCLUDED.open_access OR papers.open_access,
+			raw_metadata = COALESCE(EXCLUDED.raw_metadata, papers.raw_metadata),
+			updated_at = NOW()
+		RETURNING id, created_at, updated_at`
+
+	now := time.Now().UTC()
+	batch := &pgx.Batch{}
+
+	for _, paper := range papers {
+		authorsJSON, err := json.Marshal(paper.Authors)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal authors: %w", err)
+		}
+
+		var metadataJSON []byte
+		if paper.RawMetadata != nil {
+			metadataJSON, err = json.Marshal(paper.RawMetadata)
+			if err != nil {
+				return nil, fmt.Errorf("failed to marshal metadata: %w", err)
+			}
+		}
+
+		if paper.ID == uuid.Nil {
+			paper.ID = uuid.New()
+		}
+
+		batch.Queue(query,
+			paper.ID,
+			paper.CanonicalID,
+			paper.Title,
+			paper.Abstract,
+			authorsJSON,
+			paper.PublicationDate,
+			paper.PublicationYear,
+			paper.Venue,
+			paper.Journal,
+			paper.Volume,
+			paper.Issue,
+			paper.Pages,
+			paper.CitationCount,
+			paper.ReferenceCount,
+			paper.PDFURL,
+			paper.OpenAccess,
+			paper.KeywordsExtracted,
+			metadataJSON,
+			now,
+			now,
+		)
+	}
+
+	br := r.db.SendBatch(ctx, batch)
+	defer br.Close()
+
 	results := make([]*domain.Paper, len(papers))
 	for i, paper := range papers {
-		result, err := r.Create(ctx, paper)
+		err := br.QueryRow().Scan(&paper.ID, &paper.CreatedAt, &paper.UpdatedAt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to upsert paper at index %d: %w", i, err)
 		}
-		results[i] = result
+		results[i] = paper
 	}
 
 	return results, nil

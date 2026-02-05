@@ -14,11 +14,6 @@ import (
 	"github.com/helixir/literature-review-service/internal/domain"
 )
 
-// isNotFoundError checks if an error is a domain not found error.
-func isNotFoundError(err error) bool {
-	return errors.Is(err, domain.ErrNotFound)
-}
-
 // Compile-time interface verification.
 var _ KeywordRepository = (*PgKeywordRepository)(nil)
 
@@ -33,24 +28,13 @@ func NewPgKeywordRepository(db DBTX) *PgKeywordRepository {
 }
 
 // GetOrCreate retrieves an existing keyword by its normalized form or creates a new one.
+// Uses a single INSERT...ON CONFLICT...RETURNING query to avoid two roundtrips.
 func (r *PgKeywordRepository) GetOrCreate(ctx context.Context, keyword string) (*domain.Keyword, error) {
 	normalized := domain.NormalizeKeyword(keyword)
 	if normalized == "" {
 		return nil, domain.NewValidationError("keyword", "keyword cannot be empty or whitespace-only")
 	}
 
-	// Try to get existing keyword first
-	existing, err := r.GetByNormalized(ctx, normalized)
-	if err == nil {
-		return existing, nil
-	}
-
-	// If not found, create a new one
-	if !isNotFoundError(err) {
-		return nil, err
-	}
-
-	// Insert new keyword
 	kw := domain.NewKeyword(keyword)
 	query := `
 		INSERT INTO keywords (id, keyword, normalized_keyword, created_at)
@@ -59,7 +43,7 @@ func (r *PgKeywordRepository) GetOrCreate(ctx context.Context, keyword string) (
 			normalized_keyword = keywords.normalized_keyword
 		RETURNING id, keyword, normalized_keyword, created_at`
 
-	err = r.db.QueryRow(ctx, query, kw.ID, keyword, normalized, kw.CreatedAt).
+	err := r.db.QueryRow(ctx, query, kw.ID, keyword, normalized, kw.CreatedAt).
 		Scan(&kw.ID, &kw.Keyword, &kw.NormalizedKeyword, &kw.CreatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get or create keyword: %w", err)
@@ -209,7 +193,7 @@ func (r *PgKeywordRepository) RecordSearch(ctx context.Context, search *domain.K
 			id, keyword_id, source_api, searched_at, date_from, date_to,
 			search_window_hash, papers_found, status, error_message
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-		ON CONFLICT (keyword_id, source_api, search_window_hash) DO UPDATE SET
+		ON CONFLICT (search_window_hash) DO UPDATE SET
 			searched_at = EXCLUDED.searched_at,
 			papers_found = EXCLUDED.papers_found,
 			status = EXCLUDED.status,
@@ -231,7 +215,7 @@ func (r *PgKeywordRepository) RecordSearch(ctx context.Context, search *domain.K
 	if err != nil {
 		var pgErr *pgconn.PgError
 		// Foreign key violation indicates the keyword doesn't exist
-		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
 			return domain.NewNotFoundError("keyword", search.KeywordID.String())
 		}
 		return fmt.Errorf("failed to record search: %w", err)
@@ -270,7 +254,7 @@ func (r *PgKeywordRepository) GetLastSearch(ctx context.Context, keywordID uuid.
 func (r *PgKeywordRepository) NeedsSearch(ctx context.Context, keywordID uuid.UUID, sourceAPI domain.SourceType, maxAge time.Duration) (bool, error) {
 	lastSearch, err := r.GetLastSearch(ctx, keywordID, sourceAPI)
 	if err != nil {
-		if isNotFoundError(err) {
+		if errors.Is(err, domain.ErrNotFound) {
 			// Never searched before
 			return true, nil
 		}
@@ -298,7 +282,7 @@ func (r *PgKeywordRepository) ListSearches(ctx context.Context, filter SearchFil
 
 	// Build dynamic WHERE clause
 	var conditions []string
-	args := []interface{}{}
+	var args []interface{}
 	argIndex := 1
 
 	if filter.KeywordID != nil {
@@ -361,7 +345,7 @@ func (r *PgKeywordRepository) ListSearches(ctx context.Context, filter SearchFil
 	}
 	defer rows.Close()
 
-	var searches []*domain.KeywordSearch
+	searches := make([]*domain.KeywordSearch, 0, filter.Limit)
 	for rows.Next() {
 		search, err := scanKeywordSearchFromRows(rows)
 		if err != nil {
@@ -394,7 +378,7 @@ func (r *PgKeywordRepository) AddPaperMapping(ctx context.Context, mapping *doma
 		INSERT INTO keyword_paper_mappings (
 			id, keyword_id, paper_id, mapping_type, source_type, confidence_score, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (keyword_id, paper_id) DO NOTHING`
+		ON CONFLICT (keyword_id, paper_id, mapping_type) DO NOTHING`
 
 	_, err := r.db.Exec(ctx, query,
 		mapping.ID,
@@ -407,7 +391,7 @@ func (r *PgKeywordRepository) AddPaperMapping(ctx context.Context, mapping *doma
 	)
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
 			return domain.NewNotFoundError("keyword or paper", fmt.Sprintf("keyword=%s, paper=%s", mapping.KeywordID, mapping.PaperID))
 		}
 		return fmt.Errorf("failed to add paper mapping: %w", err)
@@ -450,13 +434,13 @@ func (r *PgKeywordRepository) BulkAddPaperMappings(ctx context.Context, mappings
 		INSERT INTO keyword_paper_mappings (
 			id, keyword_id, paper_id, mapping_type, source_type, confidence_score, created_at
 		) VALUES %s
-		ON CONFLICT (keyword_id, paper_id) DO NOTHING`,
+		ON CONFLICT (keyword_id, paper_id, mapping_type) DO NOTHING`,
 		strings.Join(valueStrings, ", "))
 
 	_, err := r.db.Exec(ctx, query, args...)
 	if err != nil {
 		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
 			return domain.NewNotFoundError("keyword or paper", "foreign key constraint violation")
 		}
 		return fmt.Errorf("failed to bulk add paper mappings: %w", err)
@@ -467,16 +451,7 @@ func (r *PgKeywordRepository) BulkAddPaperMappings(ctx context.Context, mappings
 
 // GetPapersForKeyword retrieves papers associated with a specific keyword.
 func (r *PgKeywordRepository) GetPapersForKeyword(ctx context.Context, keywordID uuid.UUID, limit, offset int) ([]*domain.Paper, int64, error) {
-	// Apply defaults
-	if limit <= 0 {
-		limit = 100
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
-	if offset < 0 {
-		offset = 0
-	}
+	applyPaginationDefaults(&limit, &offset)
 
 	// Count total matching records
 	countQuery := `SELECT COUNT(*) FROM keyword_paper_mappings WHERE keyword_id = $1`
@@ -504,7 +479,7 @@ func (r *PgKeywordRepository) GetPapersForKeyword(ctx context.Context, keywordID
 	}
 	defer rows.Close()
 
-	var papers []*domain.Paper
+	papers := make([]*domain.Paper, 0, limit)
 	for rows.Next() {
 		paper, err := scanPaperFromRows(rows)
 		if err != nil {
@@ -528,12 +503,14 @@ func (r *PgKeywordRepository) List(ctx context.Context, filter KeywordFilter) ([
 
 	// Build dynamic WHERE clause
 	var conditions []string
-	args := []interface{}{}
+	var args []interface{}
 	argIndex := 1
 
 	if filter.NormalizedContains != "" {
 		conditions = append(conditions, fmt.Sprintf("normalized_keyword ILIKE $%d", argIndex))
-		args = append(args, "%"+filter.NormalizedContains+"%")
+		// Escape LIKE special characters to prevent pattern injection.
+		escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(filter.NormalizedContains)
+		args = append(args, "%"+escaped+"%")
 		argIndex++
 	}
 
@@ -607,7 +584,7 @@ func (r *PgKeywordRepository) List(ctx context.Context, filter KeywordFilter) ([
 	}
 	defer rows.Close()
 
-	var keywords []*domain.Keyword
+	keywords := make([]*domain.Keyword, 0, filter.Limit)
 	for rows.Next() {
 		kw, err := scanKeywordFromRows(rows)
 		if err != nil {

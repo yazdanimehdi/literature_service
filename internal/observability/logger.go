@@ -77,9 +77,10 @@ func NewLogger(cfg LoggingConfig) zerolog.Logger {
 	// Build the final logger
 	log := logger.Logger()
 
-	// Set log level
+	// Set log level on the logger instance. Avoid zerolog.SetGlobalLevel as it
+	// mutates package-level state, which is problematic in tests and when multiple
+	// loggers with different levels coexist.
 	level := parseLevel(cfg.Level)
-	zerolog.SetGlobalLevel(level)
 	log = log.Level(level)
 
 	return log

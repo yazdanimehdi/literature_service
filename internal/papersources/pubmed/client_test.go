@@ -948,8 +948,6 @@ func TestClient_articleToPaper(t *testing.T) {
 }
 
 func TestClient_parseMonth(t *testing.T) {
-	client := New(Config{Enabled: true})
-
 	tests := []struct {
 		input    string
 		expected time.Month
@@ -979,15 +977,13 @@ func TestClient_parseMonth(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := client.parseMonth(tt.input)
+			result := parseMonth(tt.input)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
 
 func TestClient_extractYearFromMedlineDate(t *testing.T) {
-	client := New(Config{Enabled: true})
-
 	tests := []struct {
 		input    string
 		expected int
@@ -1003,7 +999,7 @@ func TestClient_extractYearFromMedlineDate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			result := client.extractYearFromMedlineDate(tt.input)
+			result := extractYearFromMedlineDate(tt.input)
 			assert.Equal(t, tt.expected, result)
 		})
 	}

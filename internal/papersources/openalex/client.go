@@ -152,7 +152,7 @@ func (c *Client) Search(ctx context.Context, params papersources.SearchParams) (
 
 	// Handle non-success status codes
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return nil, domain.NewExternalAPIError(
 			"OpenAlex",
 			resp.StatusCode,
@@ -221,7 +221,7 @@ func (c *Client) GetByID(ctx context.Context, id string) (*domain.Paper, error) 
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		return nil, domain.NewExternalAPIError(
 			"OpenAlex",
 			resp.StatusCode,
@@ -389,21 +389,21 @@ func (c *Client) workToPaper(work *Work) *domain.Paper {
 	}
 
 	// Extract and normalize DOI
-	doi := c.normalizeDOI(work.DOI)
+	doi := normalizeDOI(work.DOI)
 	if doi == "" && work.IDs.DOI != "" {
-		doi = c.normalizeDOI(work.IDs.DOI)
+		doi = normalizeDOI(work.IDs.DOI)
 	}
 
 	// Extract OpenAlex ID
-	openAlexID := c.normalizeOpenAlexID(work.ID)
+	openAlexID := normalizeOpenAlexID(work.ID)
 	if openAlexID == "" && work.IDs.OpenAlex != "" {
-		openAlexID = c.normalizeOpenAlexID(work.IDs.OpenAlex)
+		openAlexID = normalizeOpenAlexID(work.IDs.OpenAlex)
 	}
 
 	// Generate canonical ID
 	canonicalID := domain.GenerateCanonicalID(domain.PaperIdentifiers{
 		DOI:        doi,
-		PubMedID:   c.normalizePMID(work.IDs.PMID),
+		PubMedID:   normalizePMID(work.IDs.PMID),
 		PMCID:      work.IDs.PMCID,
 		OpenAlexID: openAlexID,
 	})
@@ -426,7 +426,7 @@ func (c *Client) workToPaper(work *Work) *domain.Paper {
 	for _, authorship := range work.Authorships {
 		author := domain.Author{
 			Name:  authorship.Author.DisplayName,
-			ORCID: c.normalizeORCID(authorship.Author.Orcid),
+			ORCID: normalizeORCID(authorship.Author.Orcid),
 		}
 		// Get affiliation from first institution
 		if len(authorship.Institutions) > 0 {
@@ -463,7 +463,7 @@ func (c *Client) workToPaper(work *Work) *domain.Paper {
 	}
 
 	// Reconstruct abstract from inverted index
-	abstract := c.reconstructAbstract(work.AbstractInvertedIndex)
+	abstract := reconstructAbstract(work.AbstractInvertedIndex)
 
 	return &domain.Paper{
 		CanonicalID:     canonicalID,
@@ -490,7 +490,7 @@ func (c *Client) workToPaper(work *Work) *domain.Paper {
 }
 
 // normalizeDOI strips the https://doi.org/ prefix from DOIs and returns lowercase.
-func (c *Client) normalizeDOI(doi string) string {
+func normalizeDOI(doi string) string {
 	if doi == "" {
 		return ""
 	}
@@ -504,7 +504,7 @@ func (c *Client) normalizeDOI(doi string) string {
 }
 
 // normalizeOpenAlexID extracts the short ID from full OpenAlex URLs.
-func (c *Client) normalizeOpenAlexID(id string) string {
+func normalizeOpenAlexID(id string) string {
 	if id == "" {
 		return ""
 	}
@@ -514,7 +514,7 @@ func (c *Client) normalizeOpenAlexID(id string) string {
 }
 
 // normalizePMID strips any URL prefixes from PubMed IDs.
-func (c *Client) normalizePMID(pmid string) string {
+func normalizePMID(pmid string) string {
 	if pmid == "" {
 		return ""
 	}
@@ -523,7 +523,7 @@ func (c *Client) normalizePMID(pmid string) string {
 }
 
 // normalizeORCID strips any URL prefixes from ORCID identifiers.
-func (c *Client) normalizeORCID(orcid string) string {
+func normalizeORCID(orcid string) string {
 	if orcid == "" {
 		return ""
 	}
@@ -533,17 +533,27 @@ func (c *Client) normalizeORCID(orcid string) string {
 
 // reconstructAbstract reconstructs the abstract text from OpenAlex's inverted index format.
 // OpenAlex stores abstracts as inverted indices mapping words to their positions.
-func (c *Client) reconstructAbstract(invertedIndex map[string][]int) string {
+func reconstructAbstract(invertedIndex map[string][]int) string {
 	if len(invertedIndex) == 0 {
 		return ""
 	}
 
-	// Build a slice of (position, word) pairs
+	// Build a slice of (position, word) pairs.
+	// Pre-calculate total capacity by summing all position slice lengths.
 	type posWord struct {
 		pos  int
 		word string
 	}
-	var pairs []posWord
+	const maxAbstractWords = 100_000
+	totalPairs := 0
+	for _, positions := range invertedIndex {
+		totalPairs += len(positions)
+	}
+	// Guard against malicious payloads with excessive position entries.
+	if totalPairs > maxAbstractWords {
+		return ""
+	}
+	pairs := make([]posWord, 0, totalPairs)
 
 	for word, positions := range invertedIndex {
 		for _, pos := range positions {
@@ -556,11 +566,13 @@ func (c *Client) reconstructAbstract(invertedIndex map[string][]int) string {
 		return pairs[i].pos < pairs[j].pos
 	})
 
-	// Reconstruct the text
+	// Reconstruct the text with pre-sized builder to reduce allocations.
+	// Estimate average word length of 6 characters plus a space separator.
 	var builder strings.Builder
+	builder.Grow(totalPairs * 7)
 	for i, pair := range pairs {
 		if i > 0 {
-			builder.WriteString(" ")
+			builder.WriteByte(' ')
 		}
 		builder.WriteString(pair.word)
 	}

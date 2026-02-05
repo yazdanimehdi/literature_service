@@ -27,8 +27,7 @@ func reviewStatusToProto(s domain.ReviewStatus) pb.ReviewStatus {
 	case domain.ReviewStatusCompleted:
 		return pb.ReviewStatus_REVIEW_STATUS_COMPLETED
 	case domain.ReviewStatusPartial:
-		// No separate proto enum for partial; map to completed.
-		return pb.ReviewStatus_REVIEW_STATUS_COMPLETED
+		return pb.ReviewStatus_REVIEW_STATUS_PARTIAL
 	case domain.ReviewStatusFailed:
 		return pb.ReviewStatus_REVIEW_STATUS_FAILED
 	case domain.ReviewStatusCancelled:
@@ -57,6 +56,8 @@ func protoToReviewStatus(s pb.ReviewStatus) domain.ReviewStatus {
 		return domain.ReviewStatusFailed
 	case pb.ReviewStatus_REVIEW_STATUS_CANCELLED:
 		return domain.ReviewStatusCancelled
+	case pb.ReviewStatus_REVIEW_STATUS_PARTIAL:
+		return domain.ReviewStatusPartial
 	default:
 		return ""
 	}
@@ -82,6 +83,38 @@ func ingestionStatusToProto(s domain.IngestionStatus) pb.IngestionStatus {
 	}
 }
 
+// protoToIngestionStatus converts a proto IngestionStatus enum value to a domain IngestionStatus.
+func protoToIngestionStatus(s pb.IngestionStatus) domain.IngestionStatus {
+	switch s {
+	case pb.IngestionStatus_INGESTION_STATUS_PENDING:
+		return domain.IngestionStatusPending
+	case pb.IngestionStatus_INGESTION_STATUS_QUEUED:
+		return domain.IngestionStatusSubmitted
+	case pb.IngestionStatus_INGESTION_STATUS_INGESTING:
+		return domain.IngestionStatusProcessing
+	case pb.IngestionStatus_INGESTION_STATUS_COMPLETED:
+		return domain.IngestionStatusCompleted
+	case pb.IngestionStatus_INGESTION_STATUS_FAILED:
+		return domain.IngestionStatusFailed
+	case pb.IngestionStatus_INGESTION_STATUS_SKIPPED:
+		return domain.IngestionStatusSkipped
+	default:
+		return ""
+	}
+}
+
+// protoToKeywordSourceType converts a proto KeywordSourceType enum value to a domain mapping source type string.
+func protoToKeywordSourceType(s pb.KeywordSourceType) string {
+	switch s {
+	case pb.KeywordSourceType_KEYWORD_SOURCE_TYPE_USER_QUERY:
+		return "query"
+	case pb.KeywordSourceType_KEYWORD_SOURCE_TYPE_PAPER_EXTRACTION:
+		return "llm_extraction"
+	default:
+		return ""
+	}
+}
+
 // reviewToSummaryProto converts a domain LiteratureReviewRequest to a proto LiteratureReviewSummary.
 func reviewToSummaryProto(r *domain.LiteratureReviewRequest) *pb.LiteratureReviewSummary {
 	return &pb.LiteratureReviewSummary{
@@ -101,15 +134,19 @@ func reviewToSummaryProto(r *domain.LiteratureReviewRequest) *pb.LiteratureRevie
 // reviewToStatusResponseProto converts a domain LiteratureReviewRequest to a full
 // GetLiteratureReviewStatusResponse proto message.
 func reviewToStatusResponseProto(r *domain.LiteratureReviewRequest) *pb.GetLiteratureReviewStatusResponse {
-	var errorMessage string
-	if r.Status == domain.ReviewStatusFailed {
-		errorMessage = "review failed"
-	}
-
 	return &pb.GetLiteratureReviewStatusResponse{
-		ReviewId:      r.ID.String(),
-		Status:        reviewStatusToProto(r.Status),
-		ErrorMessage:  errorMessage,
+		ReviewId:     r.ID.String(),
+		Status:       reviewStatusToProto(r.Status),
+		ErrorMessage: r.ErrorMessage,
+		Progress: &pb.ReviewProgress{
+			InitialKeywordsCount:  int32(r.Configuration.MaxKeywordsPerRound),
+			TotalKeywordsProcessed: int32(r.KeywordsFoundCount),
+			PapersFound:           int32(r.PapersFoundCount),
+			PapersNew:             int32(r.PapersFoundCount),
+			PapersIngested:        int32(r.PapersIngestedCount),
+			PapersFailed:          int32(r.PapersFailedCount),
+			MaxExpansionDepth:     int32(r.Configuration.MaxExpansionDepth),
+		},
 		CreatedAt:     timeToProtoTimestamp(r.CreatedAt),
 		StartedAt:     optionalTimeToProtoTimestamp(r.StartedAt),
 		CompletedAt:   optionalTimeToProtoTimestamp(r.CompletedAt),
@@ -125,9 +162,14 @@ func reviewConfigToProto(c domain.ReviewConfiguration) *pb.ReviewConfiguration {
 		enabledSources[i] = string(s)
 	}
 
+	paperKeywordCount := c.PaperKeywordCount
+	if paperKeywordCount == 0 {
+		paperKeywordCount = c.MaxKeywordsPerRound
+	}
+
 	return &pb.ReviewConfiguration{
 		InitialKeywordCount: int32(c.MaxKeywordsPerRound),
-		PaperKeywordCount:   int32(c.MaxKeywordsPerRound),
+		PaperKeywordCount:   int32(paperKeywordCount),
 		MaxExpansionDepth:   int32(c.MaxExpansionDepth),
 		EnabledSources:      enabledSources,
 		DateFrom:            optionalTimeToProtoTimestamp(c.DateFrom),

@@ -11,8 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/helixir/literature-review-service/internal/config"
 )
 
 // Compile-time check that OpenAIProvider implements KeywordExtractor.
@@ -29,7 +27,7 @@ func newOpenAITestServer(t *testing.T, handler http.HandlerFunc) *httptest.Serve
 // newOpenAITestProvider creates an OpenAIProvider configured to use the test server.
 func newOpenAITestProvider(t *testing.T, serverURL string) *OpenAIProvider {
 	t.Helper()
-	cfg := config.OpenAIConfig{
+	cfg := OpenAIConfig{
 		APIKey:  "test-api-key",
 		Model:   "gpt-4-turbo",
 		BaseURL: serverURL,
@@ -270,7 +268,7 @@ func TestOpenAIProvider_ExtractKeywords_APIError(t *testing.T) {
 				w.Write([]byte(tt.responseBody))
 			})
 
-			cfg := config.OpenAIConfig{
+			cfg := OpenAIConfig{
 				APIKey:  "test-api-key",
 				Model:   "gpt-4-turbo",
 				BaseURL: server.URL,
@@ -440,13 +438,13 @@ func TestOpenAIProvider_ExtractKeywords_InvalidJSON(t *testing.T) {
 }
 
 func TestOpenAIProvider_Provider(t *testing.T) {
-	provider := NewOpenAIProvider(config.OpenAIConfig{}, 0.5, 30*time.Second, 3)
+	provider := NewOpenAIProvider(OpenAIConfig{}, 0.5, 30*time.Second, 3)
 	assert.Equal(t, "openai", provider.Provider())
 }
 
 func TestOpenAIProvider_Model(t *testing.T) {
 	t.Run("returns configured model", func(t *testing.T) {
-		cfg := config.OpenAIConfig{
+		cfg := OpenAIConfig{
 			Model: "gpt-4o",
 		}
 		provider := NewOpenAIProvider(cfg, 0.5, 30*time.Second, 3)
@@ -454,14 +452,14 @@ func TestOpenAIProvider_Model(t *testing.T) {
 	})
 
 	t.Run("returns default model when not configured", func(t *testing.T) {
-		provider := NewOpenAIProvider(config.OpenAIConfig{}, 0.5, 30*time.Second, 3)
+		provider := NewOpenAIProvider(OpenAIConfig{}, 0.5, 30*time.Second, 3)
 		assert.Equal(t, defaultOpenAIModel, provider.Model())
 	})
 }
 
 func TestNewOpenAIProvider(t *testing.T) {
 	t.Run("applies default values for empty config", func(t *testing.T) {
-		provider := NewOpenAIProvider(config.OpenAIConfig{}, 0.7, 0, -1)
+		provider := NewOpenAIProvider(OpenAIConfig{}, 0.7, 0, -1)
 
 		assert.Equal(t, defaultOpenAIBaseURL, provider.baseURL)
 		assert.Equal(t, defaultOpenAIModel, provider.model)
@@ -471,7 +469,7 @@ func TestNewOpenAIProvider(t *testing.T) {
 	})
 
 	t.Run("uses provided config values", func(t *testing.T) {
-		cfg := config.OpenAIConfig{
+		cfg := OpenAIConfig{
 			APIKey:  "sk-test-key",
 			Model:   "gpt-4o-mini",
 			BaseURL: "https://custom-api.example.com/v1",

@@ -77,3 +77,23 @@ import (
 //	    return txRepo.Create(ctx, review)
 //	})
 type DBTX = database.DBTX
+
+// Filter pagination defaults and limits.
+const (
+	defaultFilterLimit = 100
+	maxFilterLimit     = 1000
+)
+
+// applyPaginationDefaults normalizes limit and offset values for filter queries.
+// It clamps limit to [1, maxFilterLimit] and ensures offset >= 0.
+func applyPaginationDefaults(limit, offset *int) {
+	if *limit <= 0 {
+		*limit = defaultFilterLimit
+	}
+	if *limit > maxFilterLimit {
+		*limit = maxFilterLimit
+	}
+	if *offset < 0 {
+		*offset = 0
+	}
+}

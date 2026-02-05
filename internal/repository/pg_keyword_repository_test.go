@@ -25,12 +25,7 @@ func TestPgKeywordRepository_GetOrCreate(t *testing.T) {
 		repo := NewPgKeywordRepository(mock)
 		ctx := context.Background()
 
-		// First, expect the GetByNormalized query to return no rows
-		mock.ExpectQuery(`SELECT id, keyword, normalized_keyword, created_at FROM keywords WHERE normalized_keyword = \$1`).
-			WithArgs("machine learning").
-			WillReturnError(pgx.ErrNoRows)
-
-		// Then expect the insert
+		// Expect the single INSERT...ON CONFLICT...RETURNING query
 		keywordID := uuid.New()
 		now := time.Now().UTC()
 		mock.ExpectQuery(`INSERT INTO keywords`).
@@ -52,10 +47,11 @@ func TestPgKeywordRepository_GetOrCreate(t *testing.T) {
 		repo := NewPgKeywordRepository(mock)
 		ctx := context.Background()
 
+		// INSERT...ON CONFLICT returns the existing keyword via RETURNING
 		keywordID := uuid.New()
 		now := time.Now().UTC()
-		mock.ExpectQuery(`SELECT id, keyword, normalized_keyword, created_at FROM keywords WHERE normalized_keyword = \$1`).
-			WithArgs("machine learning").
+		mock.ExpectQuery(`INSERT INTO keywords`).
+			WithArgs(pgxmock.AnyArg(), "machine learning", "machine learning", pgxmock.AnyArg()).
 			WillReturnRows(pgxmock.NewRows([]string{"id", "keyword", "normalized_keyword", "created_at"}).
 				AddRow(keywordID, "Machine Learning", "machine learning", now))
 

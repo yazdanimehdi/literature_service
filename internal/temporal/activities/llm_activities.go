@@ -2,6 +2,7 @@ package activities
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -91,8 +92,10 @@ func (a *LLMActivities) ExtractKeywords(ctx context.Context, input ExtractKeywor
 }
 
 // errorType classifies an error for metrics labeling.
+// Uses errors.As to correctly unwrap wrapped errors.
 func errorType(err error) string {
-	if apiErr, ok := err.(*llm.APIError); ok {
+	var apiErr *llm.APIError
+	if errors.As(err, &apiErr) {
 		if apiErr.Type != "" {
 			return apiErr.Type
 		}

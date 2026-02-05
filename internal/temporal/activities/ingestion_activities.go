@@ -10,16 +10,32 @@ import (
 	"github.com/helixir/literature-review-service/internal/observability"
 )
 
+const (
+	// mimeTypePDF is the MIME type used when submitting papers for ingestion.
+	mimeTypePDF = "application/pdf"
+
+	// idempotencyKeyPrefix is the prefix for ingestion idempotency keys.
+	idempotencyKeyPrefix = "litreview"
+)
+
+// IngestionClient defines the interface for interacting with the ingestion service.
+// This decouples the activity from the concrete ingestion.Client implementation,
+// enabling straightforward testing with mock implementations.
+type IngestionClient interface {
+	StartIngestion(ctx context.Context, req ingestion.StartIngestionRequest) (*ingestion.StartIngestionResult, error)
+	GetRunStatus(ctx context.Context, runID string) (*ingestion.RunStatus, error)
+}
+
 // IngestionActivities provides Temporal activities for paper ingestion operations.
 // Methods on this struct are registered as Temporal activities via the worker.
 type IngestionActivities struct {
-	client  *ingestion.Client
+	client  IngestionClient
 	metrics *observability.Metrics
 }
 
 // NewIngestionActivities creates a new IngestionActivities instance.
 // The metrics parameter may be nil (metrics recording will be skipped).
-func NewIngestionActivities(client *ingestion.Client, metrics *observability.Metrics) *IngestionActivities {
+func NewIngestionActivities(client IngestionClient, metrics *observability.Metrics) *IngestionActivities {
 	return &IngestionActivities{
 		client:  client,
 		metrics: metrics,
@@ -36,7 +52,7 @@ func (a *IngestionActivities) SubmitPaperForIngestion(ctx context.Context, input
 
 	idempotencyKey := input.IdempotencyKey
 	if idempotencyKey == "" {
-		idempotencyKey = fmt.Sprintf("litreview/%s/%s", input.RequestID, input.PaperID)
+		idempotencyKey = fmt.Sprintf("%s/%s/%s", idempotencyKeyPrefix, input.RequestID, input.PaperID)
 	}
 
 	result, err := a.client.StartIngestion(ctx, ingestion.StartIngestionRequest{
@@ -44,7 +60,7 @@ func (a *IngestionActivities) SubmitPaperForIngestion(ctx context.Context, input
 		ProjectID:      input.ProjectID,
 		IdempotencyKey: idempotencyKey,
 		PDFURL:         input.PDFURL,
-		MimeType:       "application/pdf",
+		MimeType:       mimeTypePDF,
 	})
 	if err != nil {
 		logger.Error("failed to submit paper for ingestion",
@@ -106,14 +122,14 @@ func (a *IngestionActivities) SubmitPapersForIngestion(ctx context.Context, inpu
 
 		activity.RecordHeartbeat(ctx, fmt.Sprintf("submitting paper %s", paper.PaperID))
 
-		idempotencyKey := fmt.Sprintf("litreview/%s/%s", input.RequestID, paper.PaperID)
+		idempotencyKey := fmt.Sprintf("%s/%s/%s", idempotencyKeyPrefix, input.RequestID, paper.PaperID)
 
 		res, err := a.client.StartIngestion(ctx, ingestion.StartIngestionRequest{
 			OrgID:          input.OrgID,
 			ProjectID:      input.ProjectID,
 			IdempotencyKey: idempotencyKey,
 			PDFURL:         paper.PDFURL,
-			MimeType:       "application/pdf",
+			MimeType:       mimeTypePDF,
 		})
 		if err != nil {
 			logger.Warn("failed to submit paper for ingestion",

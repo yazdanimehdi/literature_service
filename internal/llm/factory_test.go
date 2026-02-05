@@ -6,21 +6,17 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"github.com/helixir/literature-review-service/internal/config"
 )
 
 func TestNewKeywordExtractor_OpenAI(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.LLMConfig{
+	cfg := FactoryConfig{
 		Provider:    "openai",
-		MaxKeywords: 10,
-		MinKeywords: 3,
 		Timeout:     30 * time.Second,
 		MaxRetries:  3,
 		Temperature: 0.7,
-		OpenAI: config.OpenAIConfig{
+		OpenAI: OpenAIConfig{
 			APIKey:  "sk-test-key",
 			Model:   "gpt-4o",
 			BaseURL: "https://api.openai.com/v1",
@@ -46,14 +42,12 @@ func TestNewKeywordExtractor_OpenAI(t *testing.T) {
 func TestNewKeywordExtractor_Anthropic(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.LLMConfig{
+	cfg := FactoryConfig{
 		Provider:    "anthropic",
-		MaxKeywords: 10,
-		MinKeywords: 3,
 		Timeout:     45 * time.Second,
 		MaxRetries:  2,
 		Temperature: 0.5,
-		Anthropic: config.AnthropicConfig{
+		Anthropic: AnthropicConfig{
 			APIKey:  "sk-ant-test-key",
 			Model:   "claude-3-sonnet-20240229",
 			BaseURL: "https://api.anthropic.com",
@@ -79,7 +73,7 @@ func TestNewKeywordExtractor_Anthropic(t *testing.T) {
 func TestNewKeywordExtractor_Unknown(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.LLMConfig{
+	cfg := FactoryConfig{
 		Provider: "gemini",
 	}
 
@@ -94,7 +88,7 @@ func TestNewKeywordExtractor_Unknown(t *testing.T) {
 func TestNewKeywordExtractor_EmptyProvider(t *testing.T) {
 	t.Parallel()
 
-	cfg := config.LLMConfig{
+	cfg := FactoryConfig{
 		Provider: "",
 	}
 

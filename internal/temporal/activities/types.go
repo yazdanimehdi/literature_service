@@ -191,3 +191,99 @@ type IncrementCountersInput struct {
 	// PapersIngested is the number of papers ingested to add to the counter.
 	PapersIngested int
 }
+
+// SubmitPaperForIngestionInput contains the parameters for submitting a single paper to the ingestion service.
+type SubmitPaperForIngestionInput struct {
+	// OrgID is the organization identifier.
+	OrgID string
+
+	// ProjectID is the project identifier.
+	ProjectID string
+
+	// RequestID is the literature review request identifier.
+	RequestID uuid.UUID
+
+	// PaperID is the paper's internal UUID.
+	PaperID uuid.UUID
+
+	// PDFURL is the URL to the paper's PDF.
+	PDFURL string
+
+	// IdempotencyKey is a unique key for deduplication.
+	IdempotencyKey string
+}
+
+// SubmitPaperForIngestionOutput contains the result of submitting a paper for ingestion.
+type SubmitPaperForIngestionOutput struct {
+	// RunID is the ingestion run identifier returned by the ingestion service.
+	RunID string
+
+	// IsExisting indicates whether this was an idempotent hit (run already existed).
+	IsExisting bool
+
+	// Status is the current status of the ingestion run.
+	Status string
+}
+
+// CheckIngestionStatusInput contains the parameters for checking ingestion run status.
+type CheckIngestionStatusInput struct {
+	// RunID is the ingestion run identifier to check.
+	RunID string
+}
+
+// CheckIngestionStatusOutput contains the result of checking ingestion status.
+type CheckIngestionStatusOutput struct {
+	// RunID is the ingestion run identifier.
+	RunID string
+
+	// Status is the current status string (e.g., "COMPLETED", "FAILED", "EXECUTING").
+	Status string
+
+	// IsTerminal indicates whether the status is a final state.
+	IsTerminal bool
+
+	// ErrorMessage contains the error message if the run failed.
+	ErrorMessage string
+}
+
+// SubmitPapersForIngestionInput contains the parameters for batch paper ingestion submission.
+type SubmitPapersForIngestionInput struct {
+	// OrgID is the organization identifier.
+	OrgID string
+
+	// ProjectID is the project identifier.
+	ProjectID string
+
+	// RequestID is the literature review request identifier.
+	RequestID uuid.UUID
+
+	// Papers contains the papers to submit (only those with PDF URLs).
+	Papers []PaperForIngestion
+}
+
+// PaperForIngestion contains the minimum paper data needed for ingestion submission.
+type PaperForIngestion struct {
+	// PaperID is the paper's internal UUID.
+	PaperID uuid.UUID
+
+	// PDFURL is the URL to the paper's PDF.
+	PDFURL string
+
+	// CanonicalID is the paper's canonical identifier (used for idempotency).
+	CanonicalID string
+}
+
+// SubmitPapersForIngestionOutput contains the results of batch paper ingestion submission.
+type SubmitPapersForIngestionOutput struct {
+	// Submitted is the number of papers successfully submitted.
+	Submitted int
+
+	// Skipped is the number of papers skipped (already ingested or no PDF).
+	Skipped int
+
+	// Failed is the number of papers that failed submission.
+	Failed int
+
+	// RunIDs maps paper IDs to their ingestion run IDs.
+	RunIDs map[string]string
+}

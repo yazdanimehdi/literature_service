@@ -395,6 +395,233 @@ func TestSavePapers_Empty(t *testing.T) {
 	reviewRepo.AssertNotCalled(t, "IncrementCounters", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
+func TestUpdateStatus_Error(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	requestID := uuid.New()
+
+	reviewRepo.On("UpdateStatus", mock.Anything, "org-1", "proj-1", requestID, domain.ReviewStatusFailed, "some error").
+		Return(assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdateStatus)
+
+	input := UpdateStatusInput{
+		OrgID:     "org-1",
+		ProjectID: "proj-1",
+		RequestID: requestID,
+		Status:    domain.ReviewStatusFailed,
+		ErrorMsg:  "some error",
+	}
+
+	_, err := env.ExecuteActivity(act.UpdateStatus, input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update review status")
+
+	reviewRepo.AssertExpectations(t)
+}
+
+func TestUpdateStatus_FailedMetrics(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	requestID := uuid.New()
+
+	reviewRepo.On("UpdateStatus", mock.Anything, "org-1", "proj-1", requestID, domain.ReviewStatusFailed, "workflow timed out").
+		Return(nil)
+
+	// nil metrics should not panic.
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdateStatus)
+
+	input := UpdateStatusInput{
+		OrgID:     "org-1",
+		ProjectID: "proj-1",
+		RequestID: requestID,
+		Status:    domain.ReviewStatusFailed,
+		ErrorMsg:  "workflow timed out",
+	}
+
+	_, err := env.ExecuteActivity(act.UpdateStatus, input)
+	require.NoError(t, err)
+
+	reviewRepo.AssertExpectations(t)
+}
+
+func TestUpdateStatus_CancelledMetrics(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	requestID := uuid.New()
+
+	reviewRepo.On("UpdateStatus", mock.Anything, "org-1", "proj-1", requestID, domain.ReviewStatusCancelled, "").
+		Return(nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdateStatus)
+
+	input := UpdateStatusInput{
+		OrgID:     "org-1",
+		ProjectID: "proj-1",
+		RequestID: requestID,
+		Status:    domain.ReviewStatusCancelled,
+		ErrorMsg:  "",
+	}
+
+	_, err := env.ExecuteActivity(act.UpdateStatus, input)
+	require.NoError(t, err)
+
+	reviewRepo.AssertExpectations(t)
+}
+
+func TestSaveKeywords_Error(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	keywordRepo.On("BulkGetOrCreate", mock.Anything, []string{"CRISPR"}).
+		Return(nil, assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.SaveKeywords)
+
+	input := SaveKeywordsInput{
+		RequestID:       uuid.New(),
+		Keywords:        []string{"CRISPR"},
+		ExtractionRound: 1,
+		SourceType:      "query",
+	}
+
+	_, err := env.ExecuteActivity(act.SaveKeywords, input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bulk get or create keywords")
+
+	keywordRepo.AssertExpectations(t)
+}
+
+func TestSavePapers_BulkUpsertError(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	inputPapers := []*domain.Paper{
+		{CanonicalID: "doi:10.1234/test1", Title: "Paper One"},
+	}
+
+	paperRepo.On("BulkUpsert", mock.Anything, inputPapers).
+		Return(nil, assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.SavePapers)
+
+	input := SavePapersInput{
+		RequestID:           uuid.New(),
+		OrgID:               "org-1",
+		ProjectID:           "proj-1",
+		Papers:              inputPapers,
+		DiscoveredViaSource: domain.SourceTypeSemanticScholar,
+		ExpansionDepth:      0,
+	}
+
+	_, err := env.ExecuteActivity(act.SavePapers, input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bulk upsert papers")
+
+	paperRepo.AssertExpectations(t)
+}
+
+func TestSavePapers_IncrementCountersError(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	requestID := uuid.New()
+	inputPapers := []*domain.Paper{
+		{CanonicalID: "doi:10.1234/test1", Title: "Paper One"},
+	}
+
+	savedPapers := []*domain.Paper{
+		{ID: uuid.New(), CanonicalID: "doi:10.1234/test1", Title: "Paper One", CreatedAt: time.Now(), UpdatedAt: time.Now()},
+	}
+
+	paperRepo.On("BulkUpsert", mock.Anything, inputPapers).
+		Return(savedPapers, nil)
+	reviewRepo.On("IncrementCounters", mock.Anything, "org-1", "proj-1", requestID, 1, 0).
+		Return(assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.SavePapers)
+
+	input := SavePapersInput{
+		RequestID:           requestID,
+		OrgID:               "org-1",
+		ProjectID:           "proj-1",
+		Papers:              inputPapers,
+		DiscoveredViaSource: domain.SourceTypePubMed,
+		ExpansionDepth:      1,
+	}
+
+	_, err := env.ExecuteActivity(act.SavePapers, input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "increment review counters")
+
+	paperRepo.AssertExpectations(t)
+	reviewRepo.AssertExpectations(t)
+}
+
+func TestIncrementCounters_Error(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	requestID := uuid.New()
+
+	reviewRepo.On("IncrementCounters", mock.Anything, "org-1", "proj-1", requestID, 10, 5).
+		Return(assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.IncrementCounters)
+
+	input := IncrementCountersInput{
+		OrgID:          "org-1",
+		ProjectID:      "proj-1",
+		RequestID:      requestID,
+		PapersFound:    10,
+		PapersIngested: 5,
+	}
+
+	_, err := env.ExecuteActivity(act.IncrementCounters, input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "increment review counters")
+
+	reviewRepo.AssertExpectations(t)
+}
+
 func TestIncrementCounters_Success(t *testing.T) {
 	suite := &testsuite.WorkflowTestSuite{}
 	env := suite.NewTestActivityEnvironment()

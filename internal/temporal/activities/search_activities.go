@@ -13,16 +13,23 @@ import (
 	"github.com/helixir/literature-review-service/internal/papersources"
 )
 
+// PaperSearcher defines the interface for searching paper sources.
+// This decouples the activity from the concrete papersources.Registry,
+// enabling straightforward testing with mock implementations.
+type PaperSearcher interface {
+	SearchSources(ctx context.Context, params papersources.SearchParams, sourceTypes []domain.SourceType) []papersources.SourceResult
+}
+
 // SearchActivities provides Temporal activities for paper search operations.
 // Methods on this struct are registered as Temporal activities via the worker.
 type SearchActivities struct {
-	registry *papersources.Registry
+	registry PaperSearcher
 	metrics  *observability.Metrics
 }
 
 // NewSearchActivities creates a new SearchActivities instance with the given dependencies.
 // The metrics parameter may be nil (metrics recording will be skipped).
-func NewSearchActivities(registry *papersources.Registry, metrics *observability.Metrics) *SearchActivities {
+func NewSearchActivities(registry PaperSearcher, metrics *observability.Metrics) *SearchActivities {
 	return &SearchActivities{
 		registry: registry,
 		metrics:  metrics,

@@ -15,8 +15,12 @@ type ReviewConfiguration struct {
 	// MaxExpansionDepth is the maximum recursive search depth.
 	MaxExpansionDepth int `json:"max_expansion_depth"`
 
-	// MaxKeywordsPerRound limits keywords extracted in each expansion round.
+	// MaxKeywordsPerRound limits keywords extracted in the initial round.
 	MaxKeywordsPerRound int `json:"max_keywords_per_round,omitempty"`
+
+	// PaperKeywordCount limits keywords extracted per paper during expansion rounds.
+	// If zero, defaults to MaxKeywordsPerRound.
+	PaperKeywordCount int `json:"paper_keyword_count,omitempty"`
 
 	// Sources lists the paper sources to search.
 	Sources []SourceType `json:"sources,omitempty"`
@@ -109,6 +113,7 @@ type LiteratureReviewRequest struct {
 
 	// Status and progress
 	Status              ReviewStatus `json:"status"`
+	ErrorMessage        string       `json:"error_message,omitempty"`
 	KeywordsFoundCount  int          `json:"keywords_found_count"`
 	PapersFoundCount    int          `json:"papers_found_count"`
 	PapersIngestedCount int          `json:"papers_ingested_count"`
@@ -186,35 +191,78 @@ type RequestPaperMapping struct {
 }
 
 // ReviewProgressEvent represents a real-time progress event for UI updates.
+// These events are streamed to clients via the gRPC streaming endpoint.
 type ReviewProgressEvent struct {
-	ID        uuid.UUID              `json:"id"`
-	RequestID uuid.UUID              `json:"request_id"`
-	EventType string                 `json:"event_type"`
+	// ID is the unique identifier for this progress event.
+	ID uuid.UUID `json:"id"`
+
+	// RequestID references the literature review request this event belongs to.
+	RequestID uuid.UUID `json:"request_id"`
+
+	// EventType describes the kind of progress event (e.g., "stream_started", "progress_update", "completed").
+	EventType string `json:"event_type"`
+
+	// EventData holds the event-specific payload as a flexible JSON object.
 	EventData map[string]interface{} `json:"event_data"`
-	CreatedAt time.Time              `json:"created_at"`
+
+	// CreatedAt records when this progress event was generated.
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ReviewProgress represents the current progress of a literature review.
+// This is a snapshot of the review's state used for progress reporting and streaming.
 type ReviewProgress struct {
-	RequestID        uuid.UUID                     `json:"request_id"`
-	Status           ReviewStatus                  `json:"status"`
-	CurrentPhase     string                        `json:"current_phase"`
-	KeywordsFound    int                           `json:"keywords_found"`
-	KeywordsSearched int                           `json:"keywords_searched"`
-	PapersFound      int                           `json:"papers_found"`
-	PapersIngested   int                           `json:"papers_ingested"`
-	PapersFailed     int                           `json:"papers_failed"`
-	SourceProgress   map[SourceType]*SourceProgress `json:"source_progress,omitempty"`
-	StartedAt        time.Time                     `json:"started_at"`
-	EstimatedEndAt   *time.Time                    `json:"estimated_end_at,omitempty"`
-	LastUpdatedAt    time.Time                     `json:"last_updated_at"`
+	// RequestID references the literature review request.
+	RequestID uuid.UUID `json:"request_id"`
+
+	// Status is the current review lifecycle status.
+	Status ReviewStatus `json:"status"`
+
+	// CurrentPhase describes the active processing phase in human-readable form.
+	CurrentPhase string `json:"current_phase"`
+
+	// KeywordsFound is the total number of keywords extracted so far.
+	KeywordsFound int `json:"keywords_found"`
+
+	// KeywordsSearched is the number of keywords that have been searched across sources.
+	KeywordsSearched int `json:"keywords_searched"`
+
+	// PapersFound is the total number of unique papers discovered.
+	PapersFound int `json:"papers_found"`
+
+	// PapersIngested is the number of papers successfully submitted for ingestion.
+	PapersIngested int `json:"papers_ingested"`
+
+	// PapersFailed is the number of papers that failed during ingestion.
+	PapersFailed int `json:"papers_failed"`
+
+	// SourceProgress provides per-source search progress, keyed by source type.
+	SourceProgress map[SourceType]*SourceProgress `json:"source_progress,omitempty"`
+
+	// StartedAt records when the review processing began.
+	StartedAt time.Time `json:"started_at"`
+
+	// EstimatedEndAt is the estimated completion time, if available.
+	EstimatedEndAt *time.Time `json:"estimated_end_at,omitempty"`
+
+	// LastUpdatedAt records when the progress was last updated.
+	LastUpdatedAt time.Time `json:"last_updated_at"`
 }
 
-// SourceProgress represents the progress of searches for a specific source.
+// SourceProgress represents the progress of searches for a specific paper source API.
 type SourceProgress struct {
-	Source       SourceType   `json:"source"`
-	Searched     int          `json:"searched"`
-	PapersFound  int          `json:"papers_found"`
-	Status       SearchStatus `json:"status"`
-	ErrorMessage string       `json:"error_message,omitempty"`
+	// Source identifies the paper source API.
+	Source SourceType `json:"source"`
+
+	// Searched is the number of keyword searches completed against this source.
+	Searched int `json:"searched"`
+
+	// PapersFound is the number of papers discovered from this source.
+	PapersFound int `json:"papers_found"`
+
+	// Status is the overall search status for this source.
+	Status SearchStatus `json:"status"`
+
+	// ErrorMessage contains error details if the source encountered a failure; empty otherwise.
+	ErrorMessage string `json:"error_message,omitempty"`
 }

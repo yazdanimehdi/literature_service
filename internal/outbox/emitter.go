@@ -8,8 +8,16 @@ import (
 	sharedoutbox "github.com/helixir/outbox"
 )
 
-// AggregateTypeLiteratureReview is the aggregate type for literature review events.
-const AggregateTypeLiteratureReview = "literature_review"
+const (
+	// AggregateTypeLiteratureReview is the aggregate type for literature review events.
+	AggregateTypeLiteratureReview = "literature_review"
+
+	// defaultMaxAttempts is the default maximum number of delivery attempts for outbox events.
+	defaultMaxAttempts = 5
+
+	// defaultScope is the default scope for tenant-scoped events.
+	defaultScope = "project"
+)
 
 // EmitterConfig configures the EventEmitter with service context.
 type EmitterConfig struct {
@@ -81,7 +89,7 @@ func (e *Emitter) Emit(params EmitParams) (sharedoutbox.Event, error) {
 	// Default scope to "project" for tenant-scoped events
 	scope := params.Scope
 	if scope == "" {
-		scope = "project"
+		scope = defaultScope
 	}
 
 	// Prepare org/project pointers for scope
@@ -101,7 +109,7 @@ func (e *Emitter) Emit(params EmitParams) (sharedoutbox.Event, error) {
 		WithPayload(payloadBytes).
 		WithScope(scope, orgPtr, projectPtr).
 		WithMetadata(metadata).
-		WithMaxAttempts(5)
+		WithMaxAttempts(defaultMaxAttempts)
 
 	event := builder.Build()
 	return event, nil

@@ -175,8 +175,8 @@ func (a *StatusActivities) SavePapers(ctx context.Context, input SavePapersInput
 	// Record metrics.
 	if a.metrics != nil {
 		a.metrics.RecordPapersDiscovered(string(input.DiscoveredViaSource), savedCount)
-		for i := 0; i < duplicateCount; i++ {
-			a.metrics.RecordPaperDuplicate()
+		if duplicateCount > 0 {
+			a.metrics.RecordPaperDuplicates(duplicateCount)
 		}
 	}
 

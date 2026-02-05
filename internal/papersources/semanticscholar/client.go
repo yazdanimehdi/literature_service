@@ -158,7 +158,7 @@ func (c *Client) Search(ctx context.Context, params papersources.SearchParams) (
 
 	// Apply date filtering client-side if needed
 	if params.DateFrom != nil || params.DateTo != nil {
-		papers = c.filterByDate(papers, params.DateFrom, params.DateTo)
+		papers = filterByDate(papers, params.DateFrom, params.DateTo)
 	}
 
 	// Determine if there are more results
@@ -287,8 +287,8 @@ func (c *Client) handleErrorResponse(resp *http.Response) error {
 		return nil
 	}
 
-	// Read the error body
-	body, err := io.ReadAll(resp.Body)
+	// Read the error body (limit to 1MB to prevent resource exhaustion)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return domain.NewExternalAPIError(sourceName, resp.StatusCode, "failed to read error response", err)
 	}
@@ -355,16 +355,16 @@ func (c *Client) convertToPaper(result PaperResult) *domain.Paper {
 	}
 
 	// Convert authors
-	paper.Authors = c.convertAuthors(result.Authors)
+	paper.Authors = convertAuthors(result.Authors)
 
 	// Generate canonical ID from identifiers
-	paper.CanonicalID = c.generateCanonicalID(result)
+	paper.CanonicalID = generateCanonicalID(result)
 
 	return paper
 }
 
 // convertAuthors converts API authors to domain authors.
-func (c *Client) convertAuthors(apiAuthors []Author) []domain.Author {
+func convertAuthors(apiAuthors []Author) []domain.Author {
 	authors := make([]domain.Author, 0, len(apiAuthors))
 	for _, a := range apiAuthors {
 		authors = append(authors, domain.Author{
@@ -375,7 +375,7 @@ func (c *Client) convertAuthors(apiAuthors []Author) []domain.Author {
 }
 
 // generateCanonicalID generates a canonical ID from paper identifiers.
-func (c *Client) generateCanonicalID(result PaperResult) string {
+func generateCanonicalID(result PaperResult) string {
 	ids := domain.PaperIdentifiers{
 		SemanticScholarID: result.PaperID,
 	}
@@ -394,7 +394,7 @@ func (c *Client) generateCanonicalID(result PaperResult) string {
 
 // filterByDate filters papers by publication date.
 // This is needed because Semantic Scholar only supports year-based filtering via the API.
-func (c *Client) filterByDate(papers []*domain.Paper, dateFrom, dateTo *time.Time) []*domain.Paper {
+func filterByDate(papers []*domain.Paper, dateFrom, dateTo *time.Time) []*domain.Paper {
 	if dateFrom == nil && dateTo == nil {
 		return papers
 	}

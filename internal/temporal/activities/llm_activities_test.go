@@ -113,6 +113,89 @@ func TestExtractKeywords_Error(t *testing.T) {
 	extractor.AssertExpectations(t)
 }
 
+func TestExtractKeywords_WithMetrics(t *testing.T) {
+	// Set up Temporal test environment.
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	// Set up mock extractor.
+	extractor := &mockKeywordExtractor{}
+	extractor.On("ExtractKeywords", mock.Anything, mock.Anything).
+		Return(&llm.ExtractionResult{
+			Keywords:     []string{"CRISPR", "gene editing"},
+			Reasoning:    "Core terms",
+			Model:        "gpt-4o",
+			InputTokens:  100,
+			OutputTokens: 30,
+		}, nil)
+
+	// Use real metrics (nil-safe).
+	activities := NewLLMActivities(extractor, nil)
+	env.RegisterActivity(activities.ExtractKeywords)
+
+	input := ExtractKeywordsInput{
+		Text:        "CRISPR gene editing query",
+		Mode:        "query",
+		MaxKeywords: 10,
+		MinKeywords: 3,
+	}
+
+	result, err := env.ExecuteActivity(activities.ExtractKeywords, input)
+	require.NoError(t, err)
+
+	var output ExtractKeywordsOutput
+	require.NoError(t, result.Get(&output))
+	assert.Len(t, output.Keywords, 2)
+
+	extractor.AssertExpectations(t)
+}
+
+func TestErrorType(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected string
+	}{
+		{
+			name:     "APIError with Type field",
+			err:      &llm.APIError{Provider: "openai", StatusCode: 429, Type: "rate_limit_error"},
+			expected: "rate_limit_error",
+		},
+		{
+			name:     "APIError without Type field uses status code",
+			err:      &llm.APIError{Provider: "openai", StatusCode: 500, Type: ""},
+			expected: "http_500",
+		},
+		{
+			name:     "wrapped APIError with Type",
+			err:      fmt.Errorf("call failed: %w", &llm.APIError{Provider: "anthropic", StatusCode: 400, Type: "invalid_request_error"}),
+			expected: "invalid_request_error",
+		},
+		{
+			name:     "wrapped APIError without Type",
+			err:      fmt.Errorf("call failed: %w", &llm.APIError{Provider: "anthropic", StatusCode: 503}),
+			expected: "http_503",
+		},
+		{
+			name:     "non-APIError returns unknown",
+			err:      fmt.Errorf("connection refused"),
+			expected: "unknown",
+		},
+		{
+			name:     "nil-like wrapped error returns unknown",
+			err:      fmt.Errorf("something: %w", fmt.Errorf("nested")),
+			expected: "unknown",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := errorType(tt.err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestExtractKeywords_WithExistingKeywords(t *testing.T) {
 	// Set up Temporal test environment.
 	suite := &testsuite.WorkflowTestSuite{}

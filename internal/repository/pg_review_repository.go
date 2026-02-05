@@ -15,6 +15,47 @@ import (
 	"github.com/helixir/literature-review-service/internal/domain"
 )
 
+// PostgreSQL error codes used for constraint violation detection.
+const (
+	pgUniqueViolation     = "23505" // unique_violation
+	pgForeignKeyViolation = "23503" // foreign_key_violation
+)
+
+// validStatusTransitions defines the allowed status transitions for review requests.
+// This is a package-level variable to avoid re-allocating on every call.
+var validStatusTransitions = map[domain.ReviewStatus][]domain.ReviewStatus{
+	domain.ReviewStatusPending: {
+		domain.ReviewStatusExtractingKeywords,
+		domain.ReviewStatusFailed,
+		domain.ReviewStatusCancelled,
+	},
+	domain.ReviewStatusExtractingKeywords: {
+		domain.ReviewStatusSearching,
+		domain.ReviewStatusFailed,
+		domain.ReviewStatusCancelled,
+	},
+	domain.ReviewStatusSearching: {
+		domain.ReviewStatusExpanding,
+		domain.ReviewStatusIngesting,
+		domain.ReviewStatusCompleted,
+		domain.ReviewStatusPartial,
+		domain.ReviewStatusFailed,
+		domain.ReviewStatusCancelled,
+	},
+	domain.ReviewStatusExpanding: {
+		domain.ReviewStatusSearching,
+		domain.ReviewStatusIngesting,
+		domain.ReviewStatusFailed,
+		domain.ReviewStatusCancelled,
+	},
+	domain.ReviewStatusIngesting: {
+		domain.ReviewStatusCompleted,
+		domain.ReviewStatusPartial,
+		domain.ReviewStatusFailed,
+		domain.ReviewStatusCancelled,
+	},
+}
+
 // Compile-time interface verification.
 var _ ReviewRepository = (*PgReviewRepository)(nil)
 
@@ -61,7 +102,7 @@ func (r *PgReviewRepository) Create(ctx context.Context, review *domain.Literatu
 			id, org_id, project_id, user_id, original_query,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
-			configuration, source_filters,
+			config_snapshot, source_filters,
 			created_at, updated_at, started_at, completed_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
@@ -95,7 +136,7 @@ func (r *PgReviewRepository) Get(ctx context.Context, orgID, projectID string, i
 		SELECT id, org_id, project_id, user_id, original_query,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
-			configuration, source_filters,
+			config_snapshot, source_filters,
 			created_at, updated_at, started_at, completed_at
 		FROM literature_review_requests
 		WHERE id = $1 AND org_id = $2 AND project_id = $3`
@@ -146,7 +187,7 @@ func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string
 		SELECT id, org_id, project_id, user_id, original_query,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
-			configuration, source_filters,
+			config_snapshot, source_filters,
 			created_at, updated_at, started_at, completed_at
 		FROM literature_review_requests
 		WHERE id = $1 AND org_id = $2 AND project_id = $3
@@ -194,7 +235,7 @@ func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string
 			papers_found_count = $6,
 			papers_ingested_count = $7,
 			papers_failed_count = $8,
-			configuration = $9,
+			config_snapshot = $9,
 			source_filters = $10,
 			updated_at = $11,
 			started_at = $12,
@@ -302,7 +343,7 @@ func (r *PgReviewRepository) List(ctx context.Context, filter ReviewFilter) ([]*
 		SELECT id, org_id, project_id, user_id, original_query,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
-			configuration, source_filters,
+			config_snapshot, source_filters,
 			created_at, updated_at, started_at, completed_at
 		FROM literature_review_requests
 		WHERE %s
@@ -318,7 +359,7 @@ func (r *PgReviewRepository) List(ctx context.Context, filter ReviewFilter) ([]*
 	}
 	defer rows.Close()
 
-	var reviews []*domain.LiteratureReviewRequest
+	reviews := make([]*domain.LiteratureReviewRequest, 0, filter.Limit)
 	for rows.Next() {
 		review, err := scanReviewFromRows(rows)
 		if err != nil {
@@ -371,7 +412,7 @@ func (r *PgReviewRepository) GetByWorkflowID(ctx context.Context, workflowID str
 		SELECT id, org_id, project_id, user_id, original_query,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
-			configuration, source_filters,
+			config_snapshot, source_filters,
 			created_at, updated_at, started_at, completed_at
 		FROM literature_review_requests
 		WHERE temporal_workflow_id = $1`
@@ -390,46 +431,12 @@ func (r *PgReviewRepository) GetByWorkflowID(ctx context.Context, workflowID str
 
 // isValidStatusTransition validates that a status transition is allowed.
 func isValidStatusTransition(from, to domain.ReviewStatus) bool {
-	// Terminal states cannot transition to anything
+	// Terminal states cannot transition to anything.
 	if from.IsTerminal() {
 		return false
 	}
 
-	// Define valid transitions
-	validTransitions := map[domain.ReviewStatus][]domain.ReviewStatus{
-		domain.ReviewStatusPending: {
-			domain.ReviewStatusExtractingKeywords,
-			domain.ReviewStatusFailed,
-			domain.ReviewStatusCancelled,
-		},
-		domain.ReviewStatusExtractingKeywords: {
-			domain.ReviewStatusSearching,
-			domain.ReviewStatusFailed,
-			domain.ReviewStatusCancelled,
-		},
-		domain.ReviewStatusSearching: {
-			domain.ReviewStatusExpanding,
-			domain.ReviewStatusIngesting,
-			domain.ReviewStatusCompleted,
-			domain.ReviewStatusPartial,
-			domain.ReviewStatusFailed,
-			domain.ReviewStatusCancelled,
-		},
-		domain.ReviewStatusExpanding: {
-			domain.ReviewStatusSearching,
-			domain.ReviewStatusIngesting,
-			domain.ReviewStatusFailed,
-			domain.ReviewStatusCancelled,
-		},
-		domain.ReviewStatusIngesting: {
-			domain.ReviewStatusCompleted,
-			domain.ReviewStatusPartial,
-			domain.ReviewStatusFailed,
-			domain.ReviewStatusCancelled,
-		},
-	}
-
-	allowed, ok := validTransitions[from]
+	allowed, ok := validStatusTransitions[from]
 	if !ok {
 		return false
 	}
@@ -443,11 +450,11 @@ func isValidStatusTransition(from, to domain.ReviewStatus) bool {
 	return false
 }
 
-// isPgUniqueViolation checks if the error is a PostgreSQL unique constraint violation (error code 23505).
+// isPgUniqueViolation checks if the error is a PostgreSQL unique constraint violation.
 func isPgUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
-		return pgErr.Code == "23505"
+		return pgErr.Code == pgUniqueViolation
 	}
 	return false
 }

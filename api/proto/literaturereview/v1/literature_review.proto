@@ -44,6 +44,7 @@ enum ReviewStatus {
   REVIEW_STATUS_COMPLETED = 6;
   REVIEW_STATUS_FAILED = 7;
   REVIEW_STATUS_CANCELLED = 8;
+  REVIEW_STATUS_PARTIAL = 9;
 }
 
 enum IngestionStatus {

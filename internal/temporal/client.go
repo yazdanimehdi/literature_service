@@ -7,10 +7,39 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
+
+	"github.com/helixir/literature-review-service/internal/domain"
+)
+
+// =============================================================================
+// Signal and Query Names
+// =============================================================================
+
+// Signal and query names for external interaction with review workflows.
+// These are defined here (not in the workflows package) so that both the
+// server layer and the workflow implementation can reference them without
+// creating a dependency from server -> workflows.
+const (
+	// SignalCancel is the signal name used to request workflow cancellation.
+	SignalCancel = "cancel"
+
+	// QueryProgress is the query name used to retrieve workflow progress.
+	QueryProgress = "progress"
+)
+
+// Default timeout constants for workflow execution and health checks.
+const (
+	// DefaultWorkflowExecutionTimeout is the maximum time a review workflow is allowed to run.
+	DefaultWorkflowExecutionTimeout = 4 * time.Hour
+
+	// DefaultHealthCheckTimeout is the timeout for Temporal server health checks.
+	DefaultHealthCheckTimeout = 5 * time.Second
 )
 
 // =============================================================================
@@ -288,11 +317,39 @@ func NewClient(cfg ClientConfig) (client.Client, error) {
 }
 
 // =============================================================================
+// Shared Workflow Input Types
+// =============================================================================
+
+// ReviewWorkflowInput contains the parameters for starting a literature review workflow.
+// This type is defined in the temporal package (not in workflows) so that
+// the server layer can construct workflow inputs without importing the workflows package.
+type ReviewWorkflowInput struct {
+	// RequestID is the unique identifier for this review request.
+	RequestID uuid.UUID
+
+	// OrgID is the organization identifier for multi-tenancy.
+	OrgID string
+
+	// ProjectID is the project identifier for multi-tenancy.
+	ProjectID string
+
+	// UserID is the user who initiated the review.
+	UserID string
+
+	// Query is the natural language research query.
+	Query string
+
+	// Config holds the review configuration parameters.
+	Config domain.ReviewConfiguration
+}
+
+// =============================================================================
 // Literature Review Workflow Client
 // =============================================================================
 
 // ReviewWorkflowClient provides methods for starting and managing review workflows.
 type ReviewWorkflowClient struct {
+	mu                 sync.RWMutex
 	client             client.Client
 	taskQueue          string
 	healthCheckTimeout time.Duration
@@ -304,7 +361,7 @@ func NewReviewWorkflowClient(c client.Client, taskQueue string) *ReviewWorkflowC
 	return &ReviewWorkflowClient{
 		client:             c,
 		taskQueue:          taskQueue,
-		healthCheckTimeout: 5 * time.Second,
+		healthCheckTimeout: DefaultHealthCheckTimeout,
 	}
 }
 
@@ -312,7 +369,7 @@ func NewReviewWorkflowClient(c client.Client, taskQueue string) *ReviewWorkflowC
 func NewReviewWorkflowClientWithConfig(c client.Client, cfg ClientConfig) *ReviewWorkflowClient {
 	healthTimeout := cfg.HealthCheckTimeout
 	if healthTimeout == 0 {
-		healthTimeout = 5 * time.Second
+		healthTimeout = DefaultHealthCheckTimeout
 	}
 
 	return &ReviewWorkflowClient{
@@ -324,15 +381,24 @@ func NewReviewWorkflowClientWithConfig(c client.Client, cfg ClientConfig) *Revie
 
 // Close closes the underlying Temporal client connection.
 func (c *ReviewWorkflowClient) Close() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.client != nil && !c.closed {
 		c.client.Close()
 		c.closed = true
 	}
 }
 
+// isClosed returns whether the client has been closed. It is safe for concurrent use.
+func (c *ReviewWorkflowClient) isClosed() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.closed
+}
+
 // Health checks the connection health to the Temporal server.
 func (c *ReviewWorkflowClient) Health(ctx context.Context) error {
-	if c.closed {
+	if c.isClosed() {
 		return &TemporalError{
 			Op:   "Health",
 			Kind: ErrClientClosed,
@@ -371,7 +437,7 @@ type ReviewWorkflowRequest struct {
 // StartReviewWorkflow starts a new literature review workflow.
 // The workflow function must be registered with the worker separately.
 func (c *ReviewWorkflowClient) StartReviewWorkflow(ctx context.Context, req ReviewWorkflowRequest, workflowFunc interface{}, input interface{}) (workflowID, runID string, err error) {
-	if c.closed {
+	if c.isClosed() {
 		return "", "", &TemporalError{
 			Op:   "StartReviewWorkflow",
 			Kind: ErrClientClosed,
@@ -382,7 +448,7 @@ func (c *ReviewWorkflowClient) StartReviewWorkflow(ctx context.Context, req Revi
 	options := client.StartWorkflowOptions{
 		ID:                       workflowID,
 		TaskQueue:                c.taskQueue,
-		WorkflowExecutionTimeout: 4 * time.Hour,
+		WorkflowExecutionTimeout: DefaultWorkflowExecutionTimeout,
 	}
 
 	run, err := c.client.ExecuteWorkflow(ctx, options, workflowFunc, input)
@@ -395,7 +461,7 @@ func (c *ReviewWorkflowClient) StartReviewWorkflow(ctx context.Context, req Revi
 
 // CancelWorkflow cancels a running workflow.
 func (c *ReviewWorkflowClient) CancelWorkflow(ctx context.Context, workflowID, runID string) error {
-	if c.closed {
+	if c.isClosed() {
 		return &TemporalError{
 			Op:         "CancelWorkflow",
 			Kind:       ErrClientClosed,
@@ -413,7 +479,7 @@ func (c *ReviewWorkflowClient) CancelWorkflow(ctx context.Context, workflowID, r
 
 // GetWorkflowResult waits for a workflow to complete and returns the result.
 func (c *ReviewWorkflowClient) GetWorkflowResult(ctx context.Context, workflowID, runID string, result interface{}) error {
-	if c.closed {
+	if c.isClosed() {
 		return &TemporalError{
 			Op:         "GetWorkflowResult",
 			Kind:       ErrClientClosed,
@@ -447,7 +513,7 @@ type WorkflowDescription struct {
 
 // DescribeWorkflow returns information about a workflow execution.
 func (c *ReviewWorkflowClient) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*WorkflowDescription, error) {
-	if c.closed {
+	if c.isClosed() {
 		return nil, &TemporalError{
 			Op:         "DescribeWorkflow",
 			Kind:       ErrClientClosed,
@@ -478,7 +544,7 @@ func (c *ReviewWorkflowClient) DescribeWorkflow(ctx context.Context, workflowID,
 
 // SignalWorkflow sends a signal to a running workflow.
 func (c *ReviewWorkflowClient) SignalWorkflow(ctx context.Context, workflowID, runID, signalName string, arg interface{}) error {
-	if c.closed {
+	if c.isClosed() {
 		return &TemporalError{
 			Op:         "SignalWorkflow",
 			Kind:       ErrClientClosed,
@@ -497,7 +563,7 @@ func (c *ReviewWorkflowClient) SignalWorkflow(ctx context.Context, workflowID, r
 
 // QueryWorkflow queries a running workflow's state.
 func (c *ReviewWorkflowClient) QueryWorkflow(ctx context.Context, workflowID, runID, queryType string, result interface{}, args ...interface{}) error {
-	if c.closed {
+	if c.isClosed() {
 		return &TemporalError{
 			Op:         "QueryWorkflow",
 			Kind:       ErrClientClosed,

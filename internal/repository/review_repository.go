@@ -91,16 +91,6 @@ func (f *ReviewFilter) Validate() error {
 		return domain.NewValidationError("org_id", "organization ID is required")
 	}
 
-	// Apply defaults
-	if f.Limit <= 0 {
-		f.Limit = 100
-	}
-	if f.Limit > 1000 {
-		f.Limit = 1000
-	}
-	if f.Offset < 0 {
-		f.Offset = 0
-	}
-
+	applyPaginationDefaults(&f.Limit, &f.Offset)
 	return nil
 }

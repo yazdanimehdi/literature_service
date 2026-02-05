@@ -37,22 +37,6 @@ func TestWorkerConfig(t *testing.T) {
 	})
 }
 
-func TestActivityDependencies(t *testing.T) {
-	t.Run("can hold dependencies", func(t *testing.T) {
-		deps := ActivityDependencies{
-			LLMActivities:       nil,
-			SearchActivities:    nil,
-			StatusActivities:    nil,
-			IngestionActivities: nil,
-		}
-
-		assert.Nil(t, deps.LLMActivities)
-		assert.Nil(t, deps.SearchActivities)
-		assert.Nil(t, deps.StatusActivities)
-		assert.Nil(t, deps.IngestionActivities)
-	})
-}
-
 func TestWorkflowRegistry(t *testing.T) {
 	t.Run("creates empty registry", func(t *testing.T) {
 		r := NewWorkflowRegistry()
@@ -110,5 +94,47 @@ func TestNewWorker(t *testing.T) {
 		_, err := NewWorker(nil, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "task queue is required")
+	})
+}
+
+func TestWorkerOptionsFromConfig(t *testing.T) {
+	t.Run("zero values get defaults", func(t *testing.T) {
+		cfg := WorkerConfig{}
+		opts := workerOptionsFromConfig(cfg)
+
+		assert.Equal(t, 100, opts.MaxConcurrentActivityExecutionSize)
+		assert.Equal(t, 50, opts.MaxConcurrentWorkflowTaskExecutionSize)
+		assert.Equal(t, 4, opts.MaxConcurrentActivityTaskPollers)
+		assert.Equal(t, 2, opts.MaxConcurrentWorkflowTaskPollers)
+	})
+
+	t.Run("non-zero values are preserved", func(t *testing.T) {
+		cfg := WorkerConfig{
+			MaxConcurrentActivityExecutionSize:     200,
+			MaxConcurrentWorkflowTaskExecutionSize: 75,
+			MaxConcurrentActivityTaskPollers:       8,
+			MaxConcurrentWorkflowTaskPollers:       4,
+		}
+		opts := workerOptionsFromConfig(cfg)
+
+		assert.Equal(t, 200, opts.MaxConcurrentActivityExecutionSize)
+		assert.Equal(t, 75, opts.MaxConcurrentWorkflowTaskExecutionSize)
+		assert.Equal(t, 8, opts.MaxConcurrentActivityTaskPollers)
+		assert.Equal(t, 4, opts.MaxConcurrentWorkflowTaskPollers)
+	})
+
+	t.Run("partial zero values get defaults selectively", func(t *testing.T) {
+		cfg := WorkerConfig{
+			MaxConcurrentActivityExecutionSize:     150,
+			MaxConcurrentWorkflowTaskExecutionSize: 0,   // should default
+			MaxConcurrentActivityTaskPollers:       6,
+			MaxConcurrentWorkflowTaskPollers:       0,   // should default
+		}
+		opts := workerOptionsFromConfig(cfg)
+
+		assert.Equal(t, 150, opts.MaxConcurrentActivityExecutionSize)
+		assert.Equal(t, 50, opts.MaxConcurrentWorkflowTaskExecutionSize)
+		assert.Equal(t, 6, opts.MaxConcurrentActivityTaskPollers)
+		assert.Equal(t, 2, opts.MaxConcurrentWorkflowTaskPollers)
 	})
 }

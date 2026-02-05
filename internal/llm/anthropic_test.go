@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helixir/literature-review-service/internal/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +27,7 @@ func newAnthropicTestServer(t *testing.T, handler http.HandlerFunc) *httptest.Se
 
 // newAnthropicTestProvider creates an AnthropicProvider pointing at the given test server URL.
 func newAnthropicTestProvider(baseURL string) *AnthropicProvider {
-	cfg := config.AnthropicConfig{
+	cfg := AnthropicConfig{
 		APIKey:  "test-api-key",
 		Model:   "claude-3-sonnet-20240229",
 		BaseURL: baseURL,
@@ -419,7 +418,7 @@ func TestAnthropicProvider_ExtractKeywords_RetryThenSuccess(t *testing.T) {
 func TestAnthropicProvider_Provider(t *testing.T) {
 	t.Parallel()
 
-	provider := NewAnthropicProvider(config.AnthropicConfig{
+	provider := NewAnthropicProvider(AnthropicConfig{
 		APIKey:  "key",
 		Model:   "claude-3-sonnet-20240229",
 		BaseURL: "https://api.anthropic.com",
@@ -444,7 +443,7 @@ func TestAnthropicProvider_Model(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			provider := NewAnthropicProvider(config.AnthropicConfig{
+			provider := NewAnthropicProvider(AnthropicConfig{
 				APIKey:  "key",
 				Model:   tt.model,
 				BaseURL: "https://api.anthropic.com",

@@ -6,8 +6,6 @@ import (
 
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
-
-	"github.com/helixir/literature-review-service/internal/temporal/activities"
 )
 
 // WorkerConfig contains configuration for the Temporal worker.
@@ -41,22 +39,6 @@ func DefaultWorkerConfig(taskQueue string) WorkerConfig {
 		MaxConcurrentActivityTaskPollers:       4,
 		MaxConcurrentWorkflowTaskPollers:       2,
 	}
-}
-
-// ActivityDependencies contains all dependencies needed by activities.
-// Each field holds a typed activity struct that is registered with the Temporal worker.
-type ActivityDependencies struct {
-	// LLMActivities contains keyword extraction and query parsing activities.
-	LLMActivities *activities.LLMActivities
-
-	// SearchActivities contains paper source search activities.
-	SearchActivities *activities.SearchActivities
-
-	// StatusActivities contains review status and event emission activities.
-	StatusActivities *activities.StatusActivities
-
-	// IngestionActivities contains paper ingestion request activities.
-	IngestionActivities *activities.IngestionActivities
 }
 
 // WorkflowRegistry holds workflow functions to be registered with the worker.
@@ -101,12 +83,9 @@ type WorkerManager struct {
 	activities *ActivityRegistry
 }
 
-// NewWorkerManager creates a new WorkerManager with the given configuration.
-func NewWorkerManager(c client.Client, config WorkerConfig) (*WorkerManager, error) {
-	if config.TaskQueue == "" {
-		return nil, fmt.Errorf("task queue is required")
-	}
-
+// workerOptionsFromConfig builds worker.Options from WorkerConfig, applying defaults
+// for any zero-valued fields.
+func workerOptionsFromConfig(config WorkerConfig) worker.Options {
 	options := worker.Options{
 		MaxConcurrentActivityExecutionSize:     config.MaxConcurrentActivityExecutionSize,
 		MaxConcurrentWorkflowTaskExecutionSize: config.MaxConcurrentWorkflowTaskExecutionSize,
@@ -114,7 +93,6 @@ func NewWorkerManager(c client.Client, config WorkerConfig) (*WorkerManager, err
 		MaxConcurrentWorkflowTaskPollers:       config.MaxConcurrentWorkflowTaskPollers,
 	}
 
-	// Set defaults if not specified
 	if options.MaxConcurrentActivityExecutionSize == 0 {
 		options.MaxConcurrentActivityExecutionSize = 100
 	}
@@ -128,6 +106,16 @@ func NewWorkerManager(c client.Client, config WorkerConfig) (*WorkerManager, err
 		options.MaxConcurrentWorkflowTaskPollers = 2
 	}
 
+	return options
+}
+
+// NewWorkerManager creates a new WorkerManager with the given configuration.
+func NewWorkerManager(c client.Client, config WorkerConfig) (*WorkerManager, error) {
+	if config.TaskQueue == "" {
+		return nil, fmt.Errorf("task queue is required")
+	}
+
+	options := workerOptionsFromConfig(config)
 	w := worker.New(c, config.TaskQueue, options)
 
 	return &WorkerManager{
@@ -177,27 +165,7 @@ func NewWorker(c client.Client, config WorkerConfig) (worker.Worker, error) {
 		return nil, fmt.Errorf("task queue is required")
 	}
 
-	options := worker.Options{
-		MaxConcurrentActivityExecutionSize:     config.MaxConcurrentActivityExecutionSize,
-		MaxConcurrentWorkflowTaskExecutionSize: config.MaxConcurrentWorkflowTaskExecutionSize,
-		MaxConcurrentActivityTaskPollers:       config.MaxConcurrentActivityTaskPollers,
-		MaxConcurrentWorkflowTaskPollers:       config.MaxConcurrentWorkflowTaskPollers,
-	}
-
-	// Set defaults if not specified
-	if options.MaxConcurrentActivityExecutionSize == 0 {
-		options.MaxConcurrentActivityExecutionSize = 100
-	}
-	if options.MaxConcurrentWorkflowTaskExecutionSize == 0 {
-		options.MaxConcurrentWorkflowTaskExecutionSize = 50
-	}
-	if options.MaxConcurrentActivityTaskPollers == 0 {
-		options.MaxConcurrentActivityTaskPollers = 4
-	}
-	if options.MaxConcurrentWorkflowTaskPollers == 0 {
-		options.MaxConcurrentWorkflowTaskPollers = 2
-	}
-
+	options := workerOptionsFromConfig(config)
 	return worker.New(c, config.TaskQueue, options), nil
 }
 

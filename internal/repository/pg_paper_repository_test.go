@@ -655,8 +655,10 @@ func TestPgPaperRepository_BulkUpsert(t *testing.T) {
 		paper2.CanonicalID = "doi:10.1234/paper2"
 		papers := []*domain.Paper{paper1, paper2}
 
+		// BulkUpsert now uses pgx.Batch for a single network roundtrip
+		expectedBatch := mock.ExpectBatch()
 		for i, paper := range papers {
-			mock.ExpectQuery("INSERT INTO papers").
+			expectedBatch.ExpectQuery("INSERT INTO papers").
 				WithArgs(
 					pgxmock.AnyArg(), paper.CanonicalID, paper.Title, paper.Abstract, pgxmock.AnyArg(),
 					pgxmock.AnyArg(), paper.PublicationYear, paper.Venue, paper.Journal,

@@ -36,6 +36,7 @@ const (
 	ReviewStatus_REVIEW_STATUS_COMPLETED           ReviewStatus = 6
 	ReviewStatus_REVIEW_STATUS_FAILED              ReviewStatus = 7
 	ReviewStatus_REVIEW_STATUS_CANCELLED           ReviewStatus = 8
+	ReviewStatus_REVIEW_STATUS_PARTIAL             ReviewStatus = 9
 )
 
 // Enum value maps for ReviewStatus.
@@ -50,6 +51,7 @@ var (
 		6: "REVIEW_STATUS_COMPLETED",
 		7: "REVIEW_STATUS_FAILED",
 		8: "REVIEW_STATUS_CANCELLED",
+		9: "REVIEW_STATUS_PARTIAL",
 	}
 	ReviewStatus_value = map[string]int32{
 		"REVIEW_STATUS_UNSPECIFIED":         0,
@@ -61,6 +63,7 @@ var (
 		"REVIEW_STATUS_COMPLETED":           6,
 		"REVIEW_STATUS_FAILED":              7,
 		"REVIEW_STATUS_CANCELLED":           8,
+		"REVIEW_STATUS_PARTIAL":             9,
 	}
 )
 
@@ -2763,7 +2766,7 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"error_code\x18\x01 \x01(\tR\terrorCode\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12\x14\n" +
 	"\x05phase\x18\x03 \x01(\tR\x05phase\x12 \n" +
-	"\vrecoverable\x18\x04 \x01(\bR\vrecoverable*\x9a\x02\n" +
+	"\vrecoverable\x18\x04 \x01(\bR\vrecoverable*\xb5\x02\n" +
 	"\fReviewStatus\x12\x1d\n" +
 	"\x19REVIEW_STATUS_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15REVIEW_STATUS_PENDING\x10\x01\x12%\n" +
@@ -2773,7 +2776,8 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"\x17REVIEW_STATUS_INGESTING\x10\x05\x12\x1b\n" +
 	"\x17REVIEW_STATUS_COMPLETED\x10\x06\x12\x18\n" +
 	"\x14REVIEW_STATUS_FAILED\x10\a\x12\x1b\n" +
-	"\x17REVIEW_STATUS_CANCELLED\x10\b*\xe9\x01\n" +
+	"\x17REVIEW_STATUS_CANCELLED\x10\b\x12\x19\n" +
+	"\x15REVIEW_STATUS_PARTIAL\x10\t*\xe9\x01\n" +
 	"\x0fIngestionStatus\x12 \n" +
 	"\x1cINGESTION_STATUS_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18INGESTION_STATUS_PENDING\x10\x01\x12\x1b\n" +

@@ -20,6 +20,17 @@ const (
 	HealthCheckTimeout = 5 * time.Second
 )
 
+// HealthStatus contains database health information.
+type HealthStatus struct {
+	Status           string `json:"status"`
+	Error            string `json:"error,omitempty"`
+	TotalConns       int32  `json:"total_conns"`
+	AcquiredConns    int32  `json:"acquired_conns"`
+	IdleConns        int32  `json:"idle_conns"`
+	ConstructingConns int32 `json:"constructing_conns"`
+	MaxConns         int32  `json:"max_conns"`
+}
+
 // DB represents the database connection pool.
 type DB struct {
 	pool   *pgxpool.Pool
@@ -116,25 +127,25 @@ func (db *DB) Stats() *pgxpool.Stat {
 	return db.pool.Stat()
 }
 
-// Health returns database health information.
-func (db *DB) Health(ctx context.Context) map[string]interface{} {
+// Health returns database health information as a typed struct.
+func (db *DB) Health(ctx context.Context) HealthStatus {
 	stat := db.pool.Stat()
-	health := map[string]interface{}{
-		"total_conns":        stat.TotalConns(),
-		"acquired_conns":     stat.AcquiredConns(),
-		"idle_conns":         stat.IdleConns(),
-		"constructing_conns": stat.ConstructingConns(),
-		"max_conns":          stat.MaxConns(),
+	health := HealthStatus{
+		TotalConns:        stat.TotalConns(),
+		AcquiredConns:     stat.AcquiredConns(),
+		IdleConns:         stat.IdleConns(),
+		ConstructingConns: stat.ConstructingConns(),
+		MaxConns:          stat.MaxConns(),
 	}
 
 	// Check if we can ping
 	pingCtx, cancel := context.WithTimeout(ctx, HealthCheckTimeout)
 	defer cancel()
 	if err := db.pool.Ping(pingCtx); err != nil {
-		health["status"] = "unhealthy"
-		health["error"] = err.Error()
+		health.Status = "unhealthy"
+		health.Error = err.Error()
 	} else {
-		health["status"] = "healthy"
+		health.Status = "healthy"
 	}
 
 	return health
@@ -192,7 +203,7 @@ func (db *DB) WithTransactionOptions(ctx context.Context, opts pgx.TxOptions, fn
 		if rbErr := tx.Rollback(ctx); rbErr != nil {
 			db.logger.Error().
 				Err(rbErr).
-				Err(err).
+				AnErr("original_error", err).
 				Msg("failed to rollback transaction")
 			return fmt.Errorf("transaction error: %w (rollback error: %v)", err, rbErr)
 		}

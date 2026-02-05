@@ -12,11 +12,19 @@ import (
 var whitespaceRegex = regexp.MustCompile(`\s+`)
 
 // Keyword represents a unique keyword used for paper searches.
+// Keywords are deduplicated by their normalized form.
 type Keyword struct {
-	ID                uuid.UUID
-	Keyword           string
+	// ID is the primary key for this keyword.
+	ID uuid.UUID
+
+	// Keyword is the original keyword text as provided by the source.
+	Keyword string
+
+	// NormalizedKeyword is the lowercase, whitespace-collapsed form used for deduplication.
 	NormalizedKeyword string
-	CreatedAt         time.Time
+
+	// CreatedAt records when the keyword was first created.
+	CreatedAt time.Time
 }
 
 // NormalizeKeyword normalizes a keyword string by:
@@ -52,26 +60,63 @@ func NewKeyword(keyword string) *Keyword {
 }
 
 // KeywordSearch records a search operation for idempotency and audit.
+// Each combination of keyword, source, and date window produces a unique search record,
+// preventing duplicate API calls during recursive expansion rounds.
 type KeywordSearch struct {
-	ID               uuid.UUID
-	KeywordID        uuid.UUID
-	SourceAPI        SourceType
-	SearchedAt       time.Time
-	DateFrom         *time.Time
-	DateTo           *time.Time
+	// ID is the primary key for this search record.
+	ID uuid.UUID
+
+	// KeywordID references the keyword that was searched.
+	KeywordID uuid.UUID
+
+	// SourceAPI identifies which paper source API was queried.
+	SourceAPI SourceType
+
+	// SearchedAt records when the search was executed.
+	SearchedAt time.Time
+
+	// DateFrom is the start of the publication date filter window, if set.
+	DateFrom *time.Time
+
+	// DateTo is the end of the publication date filter window, if set.
+	DateTo *time.Time
+
+	// SearchWindowHash is a deterministic hash of the search parameters used for idempotency checks.
 	SearchWindowHash string
-	PapersFound      int
-	Status           SearchStatus
-	ErrorMessage     string
+
+	// PapersFound is the number of papers returned by this search.
+	PapersFound int
+
+	// Status is the current state of this search operation.
+	Status SearchStatus
+
+	// ErrorMessage contains the error details if the search failed.
+	ErrorMessage string
 }
 
 // KeywordPaperMapping links keywords to papers with provenance information.
+// This many-to-many relationship tracks how keywords and papers were associated.
 type KeywordPaperMapping struct {
-	ID              uuid.UUID
-	KeywordID       uuid.UUID
-	PaperID         uuid.UUID
-	MappingType     MappingType
-	SourceType      SourceType
+	// ID is the primary key for this mapping record.
+	ID uuid.UUID
+
+	// KeywordID references the keyword in the mapping.
+	KeywordID uuid.UUID
+
+	// PaperID references the paper in the mapping.
+	PaperID uuid.UUID
+
+	// MappingType indicates how the keyword-paper association was established
+	// (e.g., author keyword, MeSH term, LLM extraction, or query match).
+	MappingType MappingType
+
+	// SourceType identifies which paper source API provided the association.
+	SourceType SourceType
+
+	// ConfidenceScore is an optional relevance score for the keyword-paper relationship.
+	// Nil when the source does not provide confidence information.
 	ConfidenceScore *float64
-	CreatedAt       time.Time
+
+	// CreatedAt records when this mapping was created.
+	CreatedAt time.Time
 }

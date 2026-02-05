@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"time"
-
-	"github.com/helixir/literature-review-service/internal/config"
 )
 
 // Default values for the OpenAI provider.
@@ -84,11 +82,22 @@ type OpenAIProvider struct {
 	retryDelay  time.Duration
 }
 
+// OpenAIConfig holds the parameters needed to create an OpenAI provider.
+// This is defined in the llm package to avoid importing the config package.
+type OpenAIConfig struct {
+	// APIKey is the OpenAI API key.
+	APIKey string
+	// Model is the model identifier (e.g., "gpt-4-turbo").
+	Model string
+	// BaseURL is the API base URL (empty means default).
+	BaseURL string
+}
+
 // NewOpenAIProvider creates a new OpenAI keyword extraction provider.
 //
 // The provider uses the OpenAI Chat Completions API with JSON response format
 // for structured keyword extraction. It handles retry logic for transient API errors.
-func NewOpenAIProvider(cfg config.OpenAIConfig, temperature float64, timeout time.Duration, maxRetries int) *OpenAIProvider {
+func NewOpenAIProvider(cfg OpenAIConfig, temperature float64, timeout time.Duration, maxRetries int) *OpenAIProvider {
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
 		baseURL = defaultOpenAIBaseURL
@@ -110,6 +119,11 @@ func NewOpenAIProvider(cfg config.OpenAIConfig, temperature float64, timeout tim
 	return &OpenAIProvider{
 		httpClient: &http.Client{
 			Timeout: timeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        10,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+			},
 		},
 		apiKey:      cfg.APIKey,
 		model:       model,
@@ -197,13 +211,9 @@ func (p *OpenAIProvider) doRequest(ctx context.Context, chatReq chatRequest) (*E
 	if err != nil {
 		return nil, fmt.Errorf("openai: request failed: %w", err)
 	}
-	defer func() {
-		// Drain remaining body to allow connection reuse before closing.
-		_, _ = io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-	}()
+	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("openai: failed to read response body: %w", err)
 	}

@@ -82,6 +82,18 @@ type KeywordRepository interface {
 // For filtering keyword search records (the history of searches performed for keywords),
 // use SearchFilter with KeywordRepository.ListSearches instead.
 type KeywordFilter struct {
+	// ReviewID filters to keywords associated with a specific review request (optional).
+	// When set, only keywords linked through request_keyword_mappings are returned.
+	ReviewID *uuid.UUID
+
+	// ExtractionRound filters to keywords from a specific extraction round (optional).
+	// Applies only when ReviewID is also set, since extraction rounds are per-review.
+	ExtractionRound *int
+
+	// SourceType filters to keywords discovered via a specific source type (optional).
+	// Applies to the source_type column in request_keyword_mappings.
+	SourceType *string
+
 	// NormalizedContains filters to keywords containing this substring (optional).
 	// The search is performed on the normalized keyword form.
 	NormalizedContains string
@@ -106,17 +118,7 @@ type KeywordFilter struct {
 
 // Validate checks if the filter has valid values and sets defaults.
 func (f *KeywordFilter) Validate() error {
-	// Apply defaults
-	if f.Limit <= 0 {
-		f.Limit = 100
-	}
-	if f.Limit > 1000 {
-		f.Limit = 1000
-	}
-	if f.Offset < 0 {
-		f.Offset = 0
-	}
-
+	applyPaginationDefaults(&f.Limit, &f.Offset)
 	return nil
 }
 
@@ -151,16 +153,6 @@ type SearchFilter struct {
 
 // Validate checks if the filter has valid values and sets defaults.
 func (f *SearchFilter) Validate() error {
-	// Apply defaults
-	if f.Limit <= 0 {
-		f.Limit = 100
-	}
-	if f.Limit > 1000 {
-		f.Limit = 1000
-	}
-	if f.Offset < 0 {
-		f.Offset = 0
-	}
-
+	applyPaginationDefaults(&f.Limit, &f.Offset)
 	return nil
 }

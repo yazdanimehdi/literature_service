@@ -292,12 +292,12 @@ func (c *Client) esearch(ctx context.Context, params papersources.SearchParams) 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return nil, domain.NewExternalAPIError(sourceName, resp.StatusCode, string(body), nil)
 	}
 
 	// Parse XML response
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -348,12 +348,12 @@ func (c *Client) efetch(ctx context.Context, pmids []string) (*PubmedArticleSet,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 		return nil, domain.NewExternalAPIError(sourceName, resp.StatusCode, string(body), nil)
 	}
 
 	// Parse XML response
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
@@ -372,7 +372,7 @@ func (c *Client) articleToPaper(article PubmedArticle) *domain.Paper {
 	pubmedData := article.PubmedData
 
 	// Extract DOI from ELocationID or ArticleIdList
-	doi := c.extractDOI(citation.Article, pubmedData)
+	doi := extractDOI(citation.Article, pubmedData)
 
 	// Build canonical ID
 	ids := domain.PaperIdentifiers{
@@ -391,13 +391,13 @@ func (c *Client) articleToPaper(article PubmedArticle) *domain.Paper {
 	canonicalID := domain.GenerateCanonicalID(ids)
 
 	// Extract publication date and year
-	pubDate, pubYear := c.extractPublicationDate(citation.Article)
+	pubDate, pubYear := extractPublicationDate(citation.Article)
 
 	// Extract abstract (concatenate multiple sections)
-	abstract := c.extractAbstract(citation.Article.Abstract)
+	abstract := extractAbstract(citation.Article.Abstract)
 
 	// Extract authors
-	authors := c.extractAuthors(citation.Article.AuthorList)
+	authors := extractAuthors(citation.Article.AuthorList)
 
 	// Extract venue/journal information
 	journal := citation.Article.Journal.Title
@@ -407,7 +407,7 @@ func (c *Client) articleToPaper(article PubmedArticle) *domain.Paper {
 
 	volume := citation.Article.Journal.JournalIssue.Volume
 	issue := citation.Article.Journal.JournalIssue.Issue
-	pages := c.extractPages(citation.Article.Pagination)
+	pages := extractPages(citation.Article.Pagination)
 
 	// Build raw metadata
 	rawMetadata := map[string]interface{}{
@@ -457,7 +457,7 @@ func (c *Client) articleToPaper(article PubmedArticle) *domain.Paper {
 
 // extractDOI extracts the DOI from article metadata.
 // It checks ELocationID first (more reliable), then ArticleIdList.
-func (c *Client) extractDOI(article Article, pubmedData PubmedData) string {
+func extractDOI(article Article, pubmedData PubmedData) string {
 	// Check ELocationID first
 	for _, eloc := range article.ELocationID {
 		if eloc.EIdType == "doi" && (eloc.Valid == "" || eloc.Valid == "Y") {
@@ -477,11 +477,11 @@ func (c *Client) extractDOI(article Article, pubmedData PubmedData) string {
 
 // extractPublicationDate extracts the publication date from the article.
 // Returns the parsed date and year. Uses ArticleDate if available, otherwise PubDate.
-func (c *Client) extractPublicationDate(article Article) (*time.Time, int) {
+func extractPublicationDate(article Article) (*time.Time, int) {
 	// Try ArticleDate first (more precise)
 	for _, ad := range article.ArticleDate {
 		if ad.DateType == "epublish" || ad.DateType == "Electronic" || ad.DateType == "" {
-			if t := c.parseDate(ad.Year, ad.Month, ad.Day); t != nil {
+			if t := parseDate(ad.Year, ad.Month, ad.Day); t != nil {
 				return t, t.Year()
 			}
 		}
@@ -492,7 +492,7 @@ func (c *Client) extractPublicationDate(article Article) (*time.Time, int) {
 
 	// Handle MedlineDate format (e.g., "2020 Jan-Feb")
 	if pubDate.MedlineDate != "" {
-		year := c.extractYearFromMedlineDate(pubDate.MedlineDate)
+		year := extractYearFromMedlineDate(pubDate.MedlineDate)
 		if year > 0 {
 			t := time.Date(year, time.January, 1, 0, 0, 0, 0, time.UTC)
 			return &t, year
@@ -501,7 +501,7 @@ func (c *Client) extractPublicationDate(article Article) (*time.Time, int) {
 
 	// Standard date format
 	if pubDate.Year != "" {
-		t := c.parseDate(pubDate.Year, pubDate.Month, pubDate.Day)
+		t := parseDate(pubDate.Year, pubDate.Month, pubDate.Day)
 		if t != nil {
 			return t, t.Year()
 		}
@@ -516,7 +516,7 @@ func (c *Client) extractPublicationDate(article Article) (*time.Time, int) {
 }
 
 // parseDate parses year, month, day strings into a time.Time.
-func (c *Client) parseDate(year, month, day string) *time.Time {
+func parseDate(year, month, day string) *time.Time {
 	if year == "" {
 		return nil
 	}
@@ -526,7 +526,7 @@ func (c *Client) parseDate(year, month, day string) *time.Time {
 		return nil
 	}
 
-	m := c.parseMonth(month)
+	m := parseMonth(month)
 	d := 1
 	if day != "" {
 		if parsed, err := strconv.Atoi(day); err == nil {
@@ -538,8 +538,25 @@ func (c *Client) parseDate(year, month, day string) *time.Time {
 	return &t
 }
 
+// monthNames maps lowercase month name strings (abbreviation and full) to time.Month.
+// This is a package-level variable to avoid re-allocating on every call to parseMonth.
+var monthNames = map[string]time.Month{
+	"jan": time.January, "january": time.January,
+	"feb": time.February, "february": time.February,
+	"mar": time.March, "march": time.March,
+	"apr": time.April, "april": time.April,
+	"may": time.May,
+	"jun": time.June, "june": time.June,
+	"jul": time.July, "july": time.July,
+	"aug": time.August, "august": time.August,
+	"sep": time.September, "september": time.September,
+	"oct": time.October, "october": time.October,
+	"nov": time.November, "november": time.November,
+	"dec": time.December, "december": time.December,
+}
+
 // parseMonth parses a month string (numeric or name) into time.Month.
-func (c *Client) parseMonth(month string) time.Month {
+func parseMonth(month string) time.Month {
 	if month == "" {
 		return time.January
 	}
@@ -549,23 +566,7 @@ func (c *Client) parseMonth(month string) time.Month {
 		return time.Month(m)
 	}
 
-	// Try month name abbreviation
-	months := map[string]time.Month{
-		"jan": time.January, "january": time.January,
-		"feb": time.February, "february": time.February,
-		"mar": time.March, "march": time.March,
-		"apr": time.April, "april": time.April,
-		"may": time.May,
-		"jun": time.June, "june": time.June,
-		"jul": time.July, "july": time.July,
-		"aug": time.August, "august": time.August,
-		"sep": time.September, "september": time.September,
-		"oct": time.October, "october": time.October,
-		"nov": time.November, "november": time.November,
-		"dec": time.December, "december": time.December,
-	}
-
-	if m, ok := months[strings.ToLower(month)]; ok {
+	if m, ok := monthNames[strings.ToLower(month)]; ok {
 		return m
 	}
 
@@ -573,7 +574,7 @@ func (c *Client) parseMonth(month string) time.Month {
 }
 
 // extractYearFromMedlineDate extracts the year from a MedlineDate string.
-func (c *Client) extractYearFromMedlineDate(medlineDate string) int {
+func extractYearFromMedlineDate(medlineDate string) int {
 	// MedlineDate can be "2020 Jan-Feb", "2020 Spring", "2020-2021", etc.
 	parts := strings.Fields(medlineDate)
 	if len(parts) > 0 {
@@ -587,7 +588,7 @@ func (c *Client) extractYearFromMedlineDate(medlineDate string) int {
 }
 
 // extractAbstract concatenates multiple abstract sections into a single string.
-func (c *Client) extractAbstract(abstract *Abstract) string {
+func extractAbstract(abstract *Abstract) string {
 	if abstract == nil || len(abstract.AbstractTexts) == 0 {
 		return ""
 	}
@@ -615,7 +616,7 @@ func (c *Client) extractAbstract(abstract *Abstract) string {
 }
 
 // extractAuthors converts PubMed authors to domain authors.
-func (c *Client) extractAuthors(authorList *AuthorList) []domain.Author {
+func extractAuthors(authorList *AuthorList) []domain.Author {
 	if authorList == nil || len(authorList.Authors) == 0 {
 		return nil
 	}
@@ -673,7 +674,7 @@ func (c *Client) extractAuthors(authorList *AuthorList) []domain.Author {
 }
 
 // extractPages formats the page information.
-func (c *Client) extractPages(pagination *Pagination) string {
+func extractPages(pagination *Pagination) string {
 	if pagination == nil {
 		return ""
 	}

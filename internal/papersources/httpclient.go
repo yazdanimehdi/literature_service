@@ -72,6 +72,12 @@ func NewHTTPClient(cfg HTTPClientConfig) *HTTPClient {
 	return &HTTPClient{
 		client: &http.Client{
 			Timeout: cfg.Timeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 20,
+				IdleConnTimeout:     90 * time.Second,
+				DisableCompression:  false,
+			},
 		},
 		rateLimiter: NewRateLimiter(cfg.RateLimit, cfg.BurstSize),
 		config:      cfg,

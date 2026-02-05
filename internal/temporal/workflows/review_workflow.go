@@ -11,16 +11,16 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/helixir/literature-review-service/internal/domain"
+	litemporal "github.com/helixir/literature-review-service/internal/temporal"
 	"github.com/helixir/literature-review-service/internal/temporal/activities"
 )
 
-// Signal and query names for external interaction with the workflow.
+// Re-export signal/query name constants from the parent temporal package for
+// convenience. These are defined in the parent package so the server layer can
+// reference them without depending on the workflows package.
 const (
-	// SignalCancel is the signal name used to request workflow cancellation.
-	SignalCancel = "cancel"
-
-	// QueryProgress is the query name used to retrieve workflow progress.
-	QueryProgress = "progress"
+	SignalCancel  = litemporal.SignalCancel
+	QueryProgress = litemporal.QueryProgress
 )
 
 // Activity timeout constants.
@@ -34,30 +34,29 @@ const (
 	ingestionMaxPollTime   = 30 * time.Minute
 )
 
-// maxPapersForExpansion is the maximum number of papers to use for keyword
-// expansion in each round.
-const maxPapersForExpansion = 5
+// Workflow defaults for keyword extraction and paper search.
+const (
+	// maxPapersForExpansion is the maximum number of papers to use for keyword
+	// expansion in each round.
+	maxPapersForExpansion = 5
 
-// ReviewWorkflowInput contains the parameters for starting a literature review workflow.
-type ReviewWorkflowInput struct {
-	// RequestID is the unique identifier for this review request.
-	RequestID uuid.UUID
+	// defaultMaxKeywordsPerRound is the default maximum keywords extracted per round
+	// when not specified in the configuration.
+	defaultMaxKeywordsPerRound = 10
 
-	// OrgID is the organization identifier for multi-tenancy.
-	OrgID string
+	// defaultMinKeywordsForQuery is the minimum number of keywords to extract from the
+	// initial user query.
+	defaultMinKeywordsForQuery = 3
 
-	// ProjectID is the project identifier for multi-tenancy.
-	ProjectID string
+	// defaultMaxPapers is the default maximum number of papers to retrieve
+	// when not specified in the configuration.
+	defaultMaxPapers = 100
+)
 
-	// UserID is the user who initiated the review.
-	UserID string
-
-	// Query is the natural language research query.
-	Query string
-
-	// Config holds the review configuration parameters.
-	Config domain.ReviewConfiguration
-}
+// ReviewWorkflowInput is an alias for the shared input type defined in the
+// parent temporal package. This allows the workflow function signature to
+// remain unchanged while the type is importable from either location.
+type ReviewWorkflowInput = litemporal.ReviewWorkflowInput
 
 // ReviewWorkflowResult contains the final results of a literature review workflow.
 type ReviewWorkflowResult struct {
@@ -140,6 +139,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
 	var ingestionAct *activities.IngestionActivities
+	var eventAct *activities.EventActivities
 
 	// Build activity option contexts with retry policies.
 	llmCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
@@ -183,6 +183,16 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		},
 	})
 
+	eventCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
+		StartToCloseTimeout: statusActivityTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    500 * time.Millisecond,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    10 * time.Second,
+			MaximumAttempts:    5,
+		},
+	})
+
 	// Helper to update status and track in progress.
 	updateStatus := func(status domain.ReviewStatus, phase string, errMsg string) error {
 		progress.Status = string(status)
@@ -218,6 +228,17 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			ErrorMsg:  originalErr.Error(),
 		}).Get(ctx, nil)
 
+		// Fire-and-forget: publish review.failed event using root context.
+		_ = workflow.ExecuteActivity(failCtx, eventAct.PublishEvent, activities.PublishEventInput{
+			EventType: "review.failed",
+			RequestID: input.RequestID,
+			OrgID:     input.OrgID,
+			ProjectID: input.ProjectID,
+			Payload: map[string]interface{}{
+				"error": originalErr.Error(),
+			},
+		}).Get(ctx, nil)
+
 		return nil, originalErr
 	}
 
@@ -238,7 +259,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 
 	maxKw := input.Config.MaxKeywordsPerRound
 	if maxKw == 0 {
-		maxKw = 10
+		maxKw = defaultMaxKeywordsPerRound
 	}
 
 	var extractOutput activities.ExtractKeywordsOutput
@@ -246,7 +267,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		Text:        input.Query,
 		Mode:        "query",
 		MaxKeywords: maxKw,
-		MinKeywords: 3,
+		MinKeywords: defaultMinKeywordsForQuery,
 	}).Get(cancelCtx, &extractOutput)
 	if err != nil {
 		return handleFailure(fmt.Errorf("extract_keywords: %w", err))
@@ -270,6 +291,19 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		return handleFailure(fmt.Errorf("save_keywords: %w", err))
 	}
 
+	// Fire-and-forget: publish review.started event.
+	_ = workflow.ExecuteActivity(eventCtx, eventAct.PublishEvent, activities.PublishEventInput{
+		EventType: "review.started",
+		RequestID: input.RequestID,
+		OrgID:     input.OrgID,
+		ProjectID: input.ProjectID,
+		Payload: map[string]interface{}{
+			"query":         input.Query,
+			"keywords":      extractOutput.Keywords,
+			"keyword_count": len(extractOutput.Keywords),
+		},
+	}).Get(cancelCtx, nil)
+
 	// =========================================================================
 	// Phase 2: Search for papers using extracted keywords
 	// =========================================================================
@@ -290,7 +324,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 
 	maxResults := input.Config.MaxPapers
 	if maxResults == 0 {
-		maxResults = 100
+		maxResults = defaultMaxPapers
 	}
 
 	// Search for each keyword.
@@ -521,6 +555,21 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		ExpansionRounds: expansionRounds,
 		Duration:        duration,
 	}
+
+	// Fire-and-forget: publish review.completed event.
+	_ = workflow.ExecuteActivity(eventCtx, eventAct.PublishEvent, activities.PublishEventInput{
+		EventType: "review.completed",
+		RequestID: input.RequestID,
+		OrgID:     input.OrgID,
+		ProjectID: input.ProjectID,
+		Payload: map[string]interface{}{
+			"keywords_found":   totalKeywords,
+			"papers_found":     totalPapersFound,
+			"papers_ingested":  totalPapersSaved,
+			"expansion_rounds": expansionRounds,
+			"duration":         duration,
+		},
+	}).Get(cancelCtx, nil)
 
 	logger.Info("literature review workflow completed",
 		"requestID", input.RequestID,

@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 
 	"github.com/helixir/literature-review-service/internal/domain"
@@ -43,9 +44,13 @@ func TestLiteratureReviewWorkflow_Success(t *testing.T) {
 	var llmAct *activities.LLMActivities
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
 
 	// Mock UpdateStatus - accept any input.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock PublishEvent - fire-and-forget.
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
 
 	// Mock ExtractKeywords - return test keywords.
 	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
@@ -115,9 +120,13 @@ func TestLiteratureReviewWorkflow_ExtractionFailure(t *testing.T) {
 
 	var llmAct *activities.LLMActivities
 	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
 
 	// Mock UpdateStatus - succeed for all calls.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock PublishEvent - fire-and-forget.
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
 
 	// Mock ExtractKeywords - return error.
 	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
@@ -143,9 +152,13 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 	var llmAct *activities.LLMActivities
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
 
 	// Mock UpdateStatus.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock PublishEvent - fire-and-forget.
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
 
 	// Mock ExtractKeywords - returns keywords for both query and abstract modes.
 	// The workflow calls this first for query extraction, then for each expansion paper.
@@ -212,9 +225,13 @@ func TestLiteratureReviewWorkflow_ProgressQuery(t *testing.T) {
 	var llmAct *activities.LLMActivities
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
 
 	// Mock UpdateStatus.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock PublishEvent - fire-and-forget.
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
 
 	// Mock ExtractKeywords.
 	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
@@ -259,6 +276,38 @@ func TestLiteratureReviewWorkflow_ProgressQuery(t *testing.T) {
 	assert.Equal(t, "completed", queryProgress.Phase)
 	assert.Equal(t, 0, queryProgress.MaxExpansionDepth)
 	assert.Equal(t, 1, queryProgress.KeywordsFound)
+}
+
+func TestLiteratureReviewWorkflow_Cancellation(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	input := newTestInput()
+
+	var llmAct *activities.LLMActivities
+	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
+
+	// Mock UpdateStatus - succeed for all calls.
+	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock PublishEvent - fire-and-forget.
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock ExtractKeywords - simulate cancellation by returning a cancellation error.
+	// When the cancel signal fires during an activity, Temporal wraps it as a CanceledError.
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
+		nil, temporal.NewCanceledError("workflow cancelled"),
+	)
+
+	env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
+
+	require.True(t, env.IsWorkflowCompleted())
+
+	err := env.GetWorkflowError()
+	require.Error(t, err)
+	// The error should indicate the workflow failed during keyword extraction.
+	assert.Contains(t, err.Error(), "extract_keywords")
 }
 
 func TestSelectPapersForExpansion(t *testing.T) {

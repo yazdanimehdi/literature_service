@@ -7,33 +7,75 @@ import (
 	"github.com/google/uuid"
 )
 
-// Event type constants for outbox events.
+// Event type constants for outbox events published during the literature review lifecycle.
 const (
-	EventTypeReviewStarted      = "review.started"
-	EventTypeReviewCompleted    = "review.completed"
-	EventTypeReviewFailed       = "review.failed"
-	EventTypeReviewCancelled    = "review.cancelled"
-	EventTypeKeywordsExtracted  = "review.keywords_extracted"
-	EventTypePapersDiscovered   = "review.papers_discovered"
-	EventTypeSearchCompleted    = "review.search_completed"
-	EventTypeIngestionStarted   = "review.ingestion_started"
+	// EventTypeReviewStarted is emitted when a new literature review begins processing.
+	EventTypeReviewStarted = "review.started"
+
+	// EventTypeReviewCompleted is emitted when a literature review finishes successfully.
+	EventTypeReviewCompleted = "review.completed"
+
+	// EventTypeReviewFailed is emitted when a literature review encounters an unrecoverable error.
+	EventTypeReviewFailed = "review.failed"
+
+	// EventTypeReviewCancelled is emitted when a literature review is cancelled by user or system action.
+	EventTypeReviewCancelled = "review.cancelled"
+
+	// EventTypeKeywordsExtracted is emitted after the LLM extracts keywords from a query or paper.
+	EventTypeKeywordsExtracted = "review.keywords_extracted"
+
+	// EventTypePapersDiscovered is emitted when new papers are found from a source search.
+	EventTypePapersDiscovered = "review.papers_discovered"
+
+	// EventTypeSearchCompleted is emitted when a keyword search against a specific source finishes.
+	EventTypeSearchCompleted = "review.search_completed"
+
+	// EventTypeIngestionStarted is emitted when paper ingestion begins for a batch of papers.
+	EventTypeIngestionStarted = "review.ingestion_started"
+
+	// EventTypeIngestionCompleted is emitted when paper ingestion finishes for a batch of papers.
 	EventTypeIngestionCompleted = "review.ingestion_completed"
-	EventTypeProgressUpdated    = "review.progress_updated"
+
+	// EventTypeProgressUpdated is emitted periodically to report review progress to subscribers.
+	EventTypeProgressUpdated = "review.progress_updated"
 )
 
-// OutboxEvent represents an event to be published via the outbox pattern.
+// OutboxEvent represents an event to be published via the transactional outbox pattern.
+// Events are first written to the outbox table within the same database transaction as the
+// state change, then asynchronously published to Kafka by the outbox relay.
 type OutboxEvent struct {
-	EventID       string
-	EventVersion  int
-	AggregateID   string
+	// EventID is a unique identifier for this event instance.
+	EventID string
+
+	// EventVersion is the schema version of the event payload.
+	EventVersion int
+
+	// AggregateID identifies the domain aggregate this event belongs to (e.g., review request ID).
+	AggregateID string
+
+	// AggregateType identifies the type of aggregate (e.g., "literature_review").
 	AggregateType string
-	EventType     string
-	Payload       []byte
-	Scope         string
-	OrgID         string
-	ProjectID     string
-	Metadata      map[string]interface{}
-	CreatedAt     time.Time
+
+	// EventType is the dot-delimited event type string (e.g., "review.started").
+	EventType string
+
+	// Payload is the JSON-serialized event payload.
+	Payload []byte
+
+	// Scope defines the visibility scope for the event (e.g., "project").
+	Scope string
+
+	// OrgID is the organization context for multi-tenant event routing.
+	OrgID string
+
+	// ProjectID is the project context for multi-tenant event routing.
+	ProjectID string
+
+	// Metadata holds optional key-value pairs attached to the event.
+	Metadata map[string]interface{}
+
+	// CreatedAt records when the event was created.
+	CreatedAt time.Time
 }
 
 // NewOutboxEvent creates a new outbox event with the given parameters.

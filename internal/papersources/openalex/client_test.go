@@ -692,8 +692,6 @@ func TestClient_GetByID(t *testing.T) {
 }
 
 func TestClient_normalizeDOI(t *testing.T) {
-	client := New(Config{Enabled: true})
-
 	testCases := []struct {
 		name     string
 		input    string
@@ -738,15 +736,13 @@ func TestClient_normalizeDOI(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := client.normalizeDOI(tc.input)
+			result := normalizeDOI(tc.input)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
 }
 
 func TestClient_normalizeOpenAlexID(t *testing.T) {
-	client := New(Config{Enabled: true})
-
 	testCases := []struct {
 		name     string
 		input    string
@@ -776,20 +772,18 @@ func TestClient_normalizeOpenAlexID(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := client.normalizeOpenAlexID(tc.input)
+			result := normalizeOpenAlexID(tc.input)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
 }
 
 func TestClient_reconstructAbstract(t *testing.T) {
-	client := New(Config{Enabled: true})
-
 	t.Run("empty index", func(t *testing.T) {
-		result := client.reconstructAbstract(nil)
+		result := reconstructAbstract(nil)
 		assert.Equal(t, "", result)
 
-		result = client.reconstructAbstract(map[string][]int{})
+		result = reconstructAbstract(map[string][]int{})
 		assert.Equal(t, "", result)
 	})
 
@@ -798,7 +792,7 @@ func TestClient_reconstructAbstract(t *testing.T) {
 			"Hello":  {0},
 			"world!": {1},
 		}
-		result := client.reconstructAbstract(index)
+		result := reconstructAbstract(index)
 		assert.Equal(t, "Hello world!", result)
 	})
 
@@ -808,7 +802,7 @@ func TestClient_reconstructAbstract(t *testing.T) {
 			"cat":  {1},
 			"sat.": {3},
 		}
-		result := client.reconstructAbstract(index)
+		result := reconstructAbstract(index)
 		assert.Equal(t, "the cat the sat.", result)
 	})
 
@@ -823,7 +817,7 @@ func TestClient_reconstructAbstract(t *testing.T) {
 			"genome":   {6},
 			"editing.": {7},
 		}
-		result := client.reconstructAbstract(index)
+		result := reconstructAbstract(index)
 		assert.Equal(t, "CRISPR is a powerful tool for genome editing.", result)
 	})
 }
@@ -1159,8 +1153,6 @@ func TestClient_buildGetByIDURL(t *testing.T) {
 }
 
 func TestClient_normalizeORCID(t *testing.T) {
-	client := New(Config{Enabled: true})
-
 	testCases := []struct {
 		name     string
 		input    string
@@ -1190,15 +1182,13 @@ func TestClient_normalizeORCID(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := client.normalizeORCID(tc.input)
+			result := normalizeORCID(tc.input)
 			assert.Equal(t, tc.expected, result)
 		})
 	}
 }
 
 func TestClient_normalizePMID(t *testing.T) {
-	client := New(Config{Enabled: true})
-
 	testCases := []struct {
 		name     string
 		input    string
@@ -1228,7 +1218,7 @@ func TestClient_normalizePMID(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := client.normalizePMID(tc.input)
+			result := normalizePMID(tc.input)
 			assert.Equal(t, tc.expected, result)
 		})
 	}

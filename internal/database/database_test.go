@@ -183,12 +183,9 @@ func TestDB_Methods(t *testing.T) {
 
 	t.Run("Health returns health information", func(t *testing.T) {
 		health := db.Health(ctx)
-		require.NotNil(t, health)
-		assert.Equal(t, "healthy", health["status"])
-		assert.Contains(t, health, "total_conns")
-		assert.Contains(t, health, "acquired_conns")
-		assert.Contains(t, health, "idle_conns")
-		assert.Contains(t, health, "max_conns")
+		assert.Equal(t, "healthy", health.Status)
+		assert.GreaterOrEqual(t, health.TotalConns, int32(0))
+		assert.GreaterOrEqual(t, health.MaxConns, int32(1))
 	})
 }
 

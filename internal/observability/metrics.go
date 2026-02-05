@@ -6,49 +6,96 @@ import (
 )
 
 // Metrics contains all Prometheus metrics for the literature review service.
+// Metrics are organized by subsystem: reviews, keywords, searches, papers, sources,
+// ingestion, and LLM operations. All counters and histograms are registered via promauto
+// for automatic registration with the default Prometheus registry.
 type Metrics struct {
-	// Reviews
-	ReviewsStarted   prometheus.Counter
+	// ReviewsStarted counts the total number of literature reviews initiated.
+	ReviewsStarted prometheus.Counter
+
+	// ReviewsCompleted counts the total number of reviews that finished successfully.
 	ReviewsCompleted prometheus.Counter
-	ReviewsFailed    prometheus.Counter
+
+	// ReviewsFailed counts the total number of reviews that ended in failure.
+	ReviewsFailed prometheus.Counter
+
+	// ReviewsCancelled counts the total number of reviews cancelled by user or system.
 	ReviewsCancelled prometheus.Counter
-	ReviewDuration   prometheus.Histogram
 
-	// Keywords
-	KeywordsExtracted   prometheus.Counter
-	KeywordExtractions  *prometheus.CounterVec
-	KeywordsPerReview   prometheus.Histogram
+	// ReviewDuration observes the end-to-end duration of reviews in seconds.
+	ReviewDuration prometheus.Histogram
 
-	// Searches
-	SearchesStarted    *prometheus.CounterVec
-	SearchesCompleted  *prometheus.CounterVec
-	SearchesFailed     *prometheus.CounterVec
-	SearchDuration     *prometheus.HistogramVec
-	PapersPerSearch    *prometheus.HistogramVec
+	// KeywordsExtracted counts the total number of keywords extracted across all reviews.
+	KeywordsExtracted prometheus.Counter
 
-	// Papers
-	PapersDiscovered  prometheus.Counter
-	PapersIngested    prometheus.Counter
-	PapersSkipped     prometheus.Counter
-	PapersDuplicate   prometheus.Counter
-	PapersBySource    *prometheus.CounterVec
+	// KeywordExtractions counts extraction operations by source label (e.g., "query", "paper").
+	KeywordExtractions *prometheus.CounterVec
 
-	// Sources
-	SourceRequestsTotal   *prometheus.CounterVec
-	SourceRequestsFailed  *prometheus.CounterVec
+	// KeywordsPerReview observes the distribution of keyword counts per review.
+	KeywordsPerReview prometheus.Histogram
+
+	// SearchesStarted counts searches initiated, labeled by paper source.
+	SearchesStarted *prometheus.CounterVec
+
+	// SearchesCompleted counts successful searches, labeled by paper source.
+	SearchesCompleted *prometheus.CounterVec
+
+	// SearchesFailed counts failed searches, labeled by paper source.
+	SearchesFailed *prometheus.CounterVec
+
+	// SearchDuration observes search duration in seconds, labeled by paper source.
+	SearchDuration *prometheus.HistogramVec
+
+	// PapersPerSearch observes the distribution of papers returned per search, labeled by source.
+	PapersPerSearch *prometheus.HistogramVec
+
+	// PapersDiscovered counts the total number of unique papers discovered.
+	PapersDiscovered prometheus.Counter
+
+	// PapersIngested counts the total number of papers submitted for ingestion.
+	PapersIngested prometheus.Counter
+
+	// PapersSkipped counts the total number of papers skipped (e.g., already processed).
+	PapersSkipped prometheus.Counter
+
+	// PapersDuplicate counts the total number of duplicate papers detected during deduplication.
+	PapersDuplicate prometheus.Counter
+
+	// PapersBySource counts papers discovered, labeled by paper source.
+	PapersBySource *prometheus.CounterVec
+
+	// SourceRequestsTotal counts HTTP requests to paper source APIs, labeled by source and endpoint.
+	SourceRequestsTotal *prometheus.CounterVec
+
+	// SourceRequestsFailed counts failed HTTP requests to paper source APIs, labeled by source, endpoint, and error type.
+	SourceRequestsFailed *prometheus.CounterVec
+
+	// SourceRequestDuration observes HTTP request duration to paper source APIs in seconds.
 	SourceRequestDuration *prometheus.HistogramVec
-	SourceRateLimited     *prometheus.CounterVec
 
-	// Ingestion
-	IngestionRequestsStarted   prometheus.Counter
+	// SourceRateLimited counts rate-limited responses from paper source APIs, labeled by source.
+	SourceRateLimited *prometheus.CounterVec
+
+	// IngestionRequestsStarted counts ingestion requests initiated.
+	IngestionRequestsStarted prometheus.Counter
+
+	// IngestionRequestsCompleted counts ingestion requests that completed successfully.
 	IngestionRequestsCompleted prometheus.Counter
-	IngestionRequestsFailed    prometheus.Counter
 
-	// LLM
-	LLMRequestsTotal    *prometheus.CounterVec
-	LLMRequestsFailed   *prometheus.CounterVec
-	LLMRequestDuration  *prometheus.HistogramVec
-	LLMTokensUsed       *prometheus.CounterVec
+	// IngestionRequestsFailed counts ingestion requests that failed.
+	IngestionRequestsFailed prometheus.Counter
+
+	// LLMRequestsTotal counts LLM API requests, labeled by operation and model.
+	LLMRequestsTotal *prometheus.CounterVec
+
+	// LLMRequestsFailed counts failed LLM API requests, labeled by operation, model, and error type.
+	LLMRequestsFailed *prometheus.CounterVec
+
+	// LLMRequestDuration observes LLM API request duration in seconds, labeled by operation and model.
+	LLMRequestDuration *prometheus.HistogramVec
+
+	// LLMTokensUsed counts tokens consumed by LLM operations, labeled by operation, model, and token type.
+	LLMTokensUsed *prometheus.CounterVec
 }
 
 // NewMetrics creates a new Metrics instance with all metrics initialized.
@@ -288,6 +335,12 @@ func (m *Metrics) RecordPaperSkipped() {
 // RecordPaperDuplicate records a duplicate paper.
 func (m *Metrics) RecordPaperDuplicate() {
 	m.PapersDuplicate.Inc()
+}
+
+// RecordPaperDuplicates records multiple duplicate papers in a single call,
+// avoiding the overhead of incrementing the counter one at a time.
+func (m *Metrics) RecordPaperDuplicates(count int) {
+	m.PapersDuplicate.Add(float64(count))
 }
 
 // RecordSourceRequest records a request to a paper source.

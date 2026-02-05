@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -38,6 +39,33 @@ func TestTemporalError(t *testing.T) {
 		assert.Contains(t, msg, "Health")
 		assert.Contains(t, msg, "connection failed")
 		assert.NotContains(t, msg, "workflowID")
+	})
+
+	t.Run("Error with workflowID but no runID", func(t *testing.T) {
+		err := &TemporalError{
+			Op:         "StartReviewWorkflow",
+			Kind:       ErrWorkflowAlreadyStarted,
+			WorkflowID: "wf-only",
+		}
+
+		msg := err.Error()
+		assert.Contains(t, msg, "StartReviewWorkflow")
+		assert.Contains(t, msg, "workflow already started")
+		assert.Contains(t, msg, "wf-only")
+		assert.NotContains(t, msg, "runID")
+	})
+
+	t.Run("Error with nil underlying error", func(t *testing.T) {
+		err := &TemporalError{
+			Op:   "Health",
+			Kind: ErrClientClosed,
+			Err:  nil,
+		}
+
+		msg := err.Error()
+		assert.Contains(t, msg, "Health")
+		assert.Contains(t, msg, "client closed")
+		assert.NotContains(t, msg, ": <nil>")
 	})
 
 	t.Run("Unwrap returns underlying error", func(t *testing.T) {
@@ -86,6 +114,77 @@ func TestWrapTemporalError(t *testing.T) {
 		assert.Equal(t, ErrWorkflowAlreadyStarted, te.Kind)
 	})
 
+	t.Run("wraps NamespaceNotFound error", func(t *testing.T) {
+		nsErr := serviceerror.NewNamespaceNotFound("test-namespace")
+		result := wrapTemporalError("Test", nsErr, "", "")
+
+		var te *TemporalError
+		require.True(t, errors.As(result, &te))
+		assert.Equal(t, ErrNamespaceNotFound, te.Kind)
+		assert.Equal(t, "Test", te.Op)
+		assert.ErrorIs(t, te, ErrNamespaceNotFound)
+	})
+
+	t.Run("wraps PermissionDenied error", func(t *testing.T) {
+		permErr := serviceerror.NewPermissionDenied("access denied", "missing role")
+		result := wrapTemporalError("Test", permErr, "wf-1", "")
+
+		var te *TemporalError
+		require.True(t, errors.As(result, &te))
+		assert.Equal(t, ErrPermissionDenied, te.Kind)
+		assert.Equal(t, "wf-1", te.WorkflowID)
+	})
+
+	t.Run("wraps QueryFailed error", func(t *testing.T) {
+		queryErr := serviceerror.NewQueryFailed("query failed")
+		result := wrapTemporalError("QueryWorkflow", queryErr, "wf-1", "run-1")
+
+		var te *TemporalError
+		require.True(t, errors.As(result, &te))
+		assert.Equal(t, ErrQueryFailed, te.Kind)
+		assert.Equal(t, "QueryWorkflow", te.Op)
+		assert.Equal(t, "wf-1", te.WorkflowID)
+		assert.Equal(t, "run-1", te.RunID)
+	})
+
+	t.Run("wraps ResourceExhausted error", func(t *testing.T) {
+		resErr := &serviceerror.ResourceExhausted{
+			Message: "rate limit exceeded",
+		}
+		result := wrapTemporalError("Test", resErr, "", "")
+
+		var te *TemporalError
+		require.True(t, errors.As(result, &te))
+		assert.Equal(t, ErrResourceExhausted, te.Kind)
+	})
+
+	t.Run("wraps InvalidArgument error", func(t *testing.T) {
+		invalidErr := serviceerror.NewInvalidArgument("bad argument")
+		result := wrapTemporalError("Test", invalidErr, "", "")
+
+		var te *TemporalError
+		require.True(t, errors.As(result, &te))
+		assert.Equal(t, ErrInvalidArgument, te.Kind)
+	})
+
+	t.Run("wraps DeadlineExceeded service error", func(t *testing.T) {
+		dlErr := serviceerror.NewDeadlineExceeded("timed out")
+		result := wrapTemporalError("Test", dlErr, "", "")
+
+		var te *TemporalError
+		require.True(t, errors.As(result, &te))
+		assert.Equal(t, ErrDeadlineExceeded, te.Kind)
+	})
+
+	t.Run("wraps Unavailable error as connection failed", func(t *testing.T) {
+		unavailErr := serviceerror.NewUnavailable("server unavailable")
+		result := wrapTemporalError("Test", unavailErr, "", "")
+
+		var te *TemporalError
+		require.True(t, errors.As(result, &te))
+		assert.Equal(t, ErrConnectionFailed, te.Kind)
+	})
+
 	t.Run("wraps context.DeadlineExceeded", func(t *testing.T) {
 		result := wrapTemporalError("Test", context.DeadlineExceeded, "", "")
 
@@ -109,6 +208,18 @@ func TestWrapTemporalError(t *testing.T) {
 		var te *TemporalError
 		require.True(t, errors.As(result, &te))
 		assert.Equal(t, ErrConnectionFailed, te.Kind)
+	})
+
+	t.Run("preserves workflow ID and run ID", func(t *testing.T) {
+		err := errors.New("some error")
+		result := wrapTemporalError("StartReviewWorkflow", err, "wf-abc", "run-xyz")
+
+		var te *TemporalError
+		require.True(t, errors.As(result, &te))
+		assert.Equal(t, "StartReviewWorkflow", te.Op)
+		assert.Equal(t, "wf-abc", te.WorkflowID)
+		assert.Equal(t, "run-xyz", te.RunID)
+		assert.Equal(t, err, te.Err)
 	})
 }
 
@@ -192,6 +303,75 @@ func TestClientConfig(t *testing.T) {
 		assert.Equal(t, "localhost:7233", cfg.HostPort)
 		assert.Equal(t, "test-namespace", cfg.Namespace)
 		assert.Equal(t, "test-queue", cfg.TaskQueue)
+	})
+}
+
+func TestNewReviewWorkflowClient(t *testing.T) {
+	t.Run("sets task queue and default health check timeout", func(t *testing.T) {
+		rc := NewReviewWorkflowClient(nil, "my-task-queue")
+
+		require.NotNil(t, rc)
+		assert.Equal(t, "my-task-queue", rc.taskQueue)
+		assert.Equal(t, 5*time.Second, rc.healthCheckTimeout)
+		assert.Nil(t, rc.client)
+		assert.False(t, rc.closed)
+	})
+
+	t.Run("TaskQueue returns configured value", func(t *testing.T) {
+		rc := NewReviewWorkflowClient(nil, "literature-review-queue")
+
+		assert.Equal(t, "literature-review-queue", rc.TaskQueue())
+	})
+
+	t.Run("Client returns underlying client", func(t *testing.T) {
+		rc := NewReviewWorkflowClient(nil, "queue")
+
+		assert.Nil(t, rc.Client())
+	})
+}
+
+func TestNewReviewWorkflowClientWithConfig(t *testing.T) {
+	t.Run("uses config values", func(t *testing.T) {
+		cfg := ClientConfig{
+			TaskQueue:          "custom-queue",
+			HealthCheckTimeout: 10 * time.Second,
+		}
+		rc := NewReviewWorkflowClientWithConfig(nil, cfg)
+
+		require.NotNil(t, rc)
+		assert.Equal(t, "custom-queue", rc.taskQueue)
+		assert.Equal(t, 10*time.Second, rc.healthCheckTimeout)
+		assert.Nil(t, rc.client)
+		assert.False(t, rc.closed)
+	})
+
+	t.Run("defaults health check timeout to 5s when zero", func(t *testing.T) {
+		cfg := ClientConfig{
+			TaskQueue:          "another-queue",
+			HealthCheckTimeout: 0,
+		}
+		rc := NewReviewWorkflowClientWithConfig(nil, cfg)
+
+		require.NotNil(t, rc)
+		assert.Equal(t, 5*time.Second, rc.healthCheckTimeout)
+	})
+
+	t.Run("TaskQueue returns configured value from config", func(t *testing.T) {
+		cfg := ClientConfig{
+			TaskQueue: "config-queue",
+		}
+		rc := NewReviewWorkflowClientWithConfig(nil, cfg)
+
+		assert.Equal(t, "config-queue", rc.TaskQueue())
+	})
+
+	t.Run("Client returns the provided client", func(t *testing.T) {
+		cfg := ClientConfig{
+			TaskQueue: "queue",
+		}
+		rc := NewReviewWorkflowClientWithConfig(nil, cfg)
+
+		assert.Nil(t, rc.Client())
 	})
 }
 

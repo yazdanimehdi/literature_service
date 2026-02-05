@@ -161,6 +161,45 @@ func (r *PgPaperRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.
 	return paper, nil
 }
 
+// GetByIDs retrieves multiple papers by their internal UUIDs in a single query.
+// Returns only the papers that were found; missing IDs are silently skipped.
+// Returns nil, nil if the input slice is empty.
+func (r *PgPaperRepository) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*domain.Paper, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	query := `
+		SELECT id, canonical_id, title, abstract, authors,
+			publication_date, publication_year, venue, journal,
+			volume, issue, pages, citation_count, reference_count,
+			pdf_url, open_access, keywords_extracted, raw_metadata,
+			created_at, updated_at
+		FROM papers
+		WHERE id = ANY($1)`
+
+	rows, err := r.db.Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get papers by IDs: %w", err)
+	}
+	defer rows.Close()
+
+	papers := make([]*domain.Paper, 0, len(ids))
+	for rows.Next() {
+		paper, err := scanPaperFromRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan paper: %w", err)
+		}
+		papers = append(papers, paper)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating papers by IDs: %w", err)
+	}
+
+	return papers, nil
+}
+
 // FindByIdentifier searches for a paper by any of its external identifiers.
 func (r *PgPaperRepository) FindByIdentifier(ctx context.Context, idType domain.IdentifierType, value string) (*domain.Paper, error) {
 	if value == "" {

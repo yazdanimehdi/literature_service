@@ -27,6 +27,11 @@ type PaperRepository interface {
 	// Returns domain.ErrNotFound if no matching paper exists.
 	GetByID(ctx context.Context, id uuid.UUID) (*domain.Paper, error)
 
+	// GetByIDs retrieves multiple papers by their internal UUIDs.
+	// Returns only the papers that were found; missing IDs are silently skipped.
+	// Returns nil, nil if the input slice is empty.
+	GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*domain.Paper, error)
+
 	// FindByIdentifier searches for a paper by any of its external identifiers.
 	// The idType parameter specifies the identifier type (e.g., "doi", "arxiv_id").
 	// The value parameter is the identifier value to search for.

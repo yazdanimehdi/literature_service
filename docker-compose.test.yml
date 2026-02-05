@@ -1,0 +1,77 @@
+# Literature Service — Integration Test Infrastructure
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   docker compose -f docker-compose.test.yml down
+#
+# Port mappings are offset from defaults to avoid conflicts with dev services:
+#   Postgres  5433 -> 5432  (dev uses 5432)
+#   Temporal  7234 -> 7233  (dev uses 7233)
+#   Kafka     9093 -> 9092  (dev uses 9092)
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: litreview-test-postgres
+    environment:
+      POSTGRES_DB: literature_review_test
+      POSTGRES_USER: litreview_test
+      POSTGRES_PASSWORD: testpassword
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litreview_test -d literature_review_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - litreview-test-network
+
+  temporal-test:
+    image: temporalio/auto-setup:1.25.2
+    container_name: litreview-test-temporal
+    environment:
+      DB: sqlite
+    ports:
+      - "7234:7233"
+    healthcheck:
+      test: ["CMD", "tctl", "--address", "localhost:7233", "cluster", "health"]
+      interval: 5s
+      timeout: 10s
+      retries: 15
+      start_period: 15s
+    networks:
+      - litreview-test-network
+
+  kafka-test:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: litreview-test-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-test:29092,HOST://localhost:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,HOST://0.0.0.0:9092
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-test:29093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "9093:9092"
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 10s
+    networks:
+      - litreview-test-network
+
+networks:
+  litreview-test-network:
+    driver: bridge

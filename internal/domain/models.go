@@ -39,6 +39,9 @@ const (
 
 	// ReviewStatusCancelled indicates the review was cancelled by a user or system action.
 	ReviewStatusCancelled ReviewStatus = "cancelled"
+
+	// ReviewStatusPaused indicates the review has been paused by user or budget exhaustion.
+	ReviewStatusPaused ReviewStatus = "paused"
 )
 
 // IsTerminal returns true if the status represents a final state that will not change.

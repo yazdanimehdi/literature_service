@@ -235,6 +235,7 @@ func TestReviewStatus_IsTerminal(t *testing.T) {
 		{ReviewStatusSearching, false},
 		{ReviewStatusExpanding, false},
 		{ReviewStatusIngesting, false},
+		{ReviewStatusPaused, false},
 		{ReviewStatusCompleted, true},
 		{ReviewStatusPartial, true},
 		{ReviewStatusFailed, true},

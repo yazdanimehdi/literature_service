@@ -1,0 +1,13 @@
+{{- if .Values.podDisruptionBudget.worker.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "literature-review-service.fullname" . }}-worker
+  labels:
+    {{- include "literature-review-service.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.worker.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "literature-review-service.workerSelectorLabels" . | nindent 6 }}
+{{- end }}

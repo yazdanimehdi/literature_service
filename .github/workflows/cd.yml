@@ -1,0 +1,183 @@
+# .github/workflows/cd.yml
+name: CD
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  GO_VERSION: '1.25'
+  HELM_VERSION: '3.14.0'
+
+jobs:
+  validate-tag:
+    name: Validate Tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      is_prerelease: ${{ steps.check.outputs.is_prerelease }}
+    steps:
+      - name: Get version
+        id: get_version
+        env:
+          GIT_REF: ${{ github.ref }}
+        run: |
+          VERSION=${GIT_REF#refs/tags/v}
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Check prerelease
+        id: check
+        env:
+          GIT_REF: ${{ github.ref }}
+        run: |
+          if [[ "$GIT_REF" == *"-alpha"* ]] || \
+             [[ "$GIT_REF" == *"-beta"* ]] || \
+             [[ "$GIT_REF" == *"-rc"* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-image:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-latest
+    needs: validate-tag
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=
+            type=raw,value=latest,enable=${{ needs.validate-tag.outputs.is_prerelease == 'false' }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=${{ needs.validate-tag.outputs.version }}
+            COMMIT_SHA=${{ github.sha }}
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [validate-tag, build-image]
+    environment:
+      name: staging
+      url: https://literature-review.staging.helixir.dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - uses: azure/k8s-set-context@v4
+        with:
+          kubeconfig: ${{ secrets.STAGING_KUBECONFIG }}
+      - name: Deploy to staging
+        env:
+          IMAGE_REPO: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          helm upgrade --install literature-review-service \
+            ./deploy/helm/literature-review-service \
+            --namespace literature-review-staging \
+            --create-namespace \
+            --set "image.repository=$IMAGE_REPO" \
+            --set "image.tag=$IMAGE_TAG" \
+            --values ./deploy/helm/literature-review-service/values-staging.yaml \
+            --wait --timeout 10m
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/literature-review-service-server -n literature-review-staging --timeout=5m
+          kubectl rollout status deployment/literature-review-service-worker -n literature-review-staging --timeout=5m
+
+  smoke-test-staging:
+    name: Staging Smoke Test
+    runs-on: ubuntu-latest
+    needs: [validate-tag, deploy-staging]
+    environment: staging
+    steps:
+      - name: Health check
+        run: |
+          for i in {1..10}; do
+            if curl -sf "https://literature-review.staging.helixir.dev/health"; then
+              echo "Health check passed"
+              exit 0
+            fi
+            echo "Attempt $i failed, retrying..."
+            sleep 10
+          done
+          exit 1
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [validate-tag, build-image, smoke-test-staging]
+    if: needs.validate-tag.outputs.is_prerelease == 'false'
+    environment:
+      name: production
+      url: https://literature-review.helixir.dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - uses: azure/k8s-set-context@v4
+        with:
+          kubeconfig: ${{ secrets.PRODUCTION_KUBECONFIG }}
+      - name: Deploy to production
+        env:
+          IMAGE_REPO: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          IMAGE_TAG: ${{ needs.validate-tag.outputs.version }}
+        run: |
+          helm upgrade --install literature-review-service \
+            ./deploy/helm/literature-review-service \
+            --namespace literature-review-production \
+            --create-namespace \
+            --set "image.repository=$IMAGE_REPO" \
+            --set "image.tag=$IMAGE_TAG" \
+            --values ./deploy/helm/literature-review-service/values-production.yaml \
+            --wait --timeout 15m
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/literature-review-service-server -n literature-review-production --timeout=10m
+          kubectl rollout status deployment/literature-review-service-worker -n literature-review-production --timeout=10m
+
+  rollback:
+    name: Rollback on Failure
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.deploy-production.result == 'failure' }}
+    needs: [validate-tag, deploy-production]
+    environment: production
+    steps:
+      - uses: azure/k8s-set-context@v4
+        with:
+          kubeconfig: ${{ secrets.PRODUCTION_KUBECONFIG }}
+      - run: helm rollback literature-review-service -n literature-review-production

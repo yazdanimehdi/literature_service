@@ -1,0 +1,109 @@
+# deploy/helm/literature-review-service/values-staging.yaml
+
+server:
+  replicaCount: 2
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+worker:
+  replicaCount: 2
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
+image:
+  pullPolicy: Always
+
+autoscaling:
+  server:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPUUtilization: 70
+  worker:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+
+podDisruptionBudget:
+  server:
+    enabled: true
+    minAvailable: 1
+  worker:
+    enabled: true
+    minAvailable: 1
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+  hosts:
+    - host: literature-review.staging.helixir.dev
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: literature-review-staging-tls
+      hosts:
+        - literature-review.staging.helixir.dev
+
+config:
+  logging:
+    level: "debug"
+
+  tracing:
+    enabled: true
+    samplingRate: 0.5
+    environment: "staging"
+
+  database:
+    maxConns: 30
+    minConns: 5
+    sslMode: "require"
+
+externalSecrets:
+  enabled: true
+  secretStoreRef:
+    name: "aws-secretsmanager"
+    kind: ClusterSecretStore
+  refreshInterval: "30m"
+  target:
+    name: "literature-review-staging-secrets"
+    creationPolicy: Owner
+
+serviceMonitor:
+  enabled: true
+  interval: "30s"
+  labels:
+    release: prometheus
+
+networkPolicy:
+  enabled: false
+
+postgresql:
+  enabled: true
+  architecture: standalone
+  auth:
+    database: literature_review_staging
+  primary:
+    persistence:
+      size: 20Gi
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"

@@ -1,0 +1,10 @@
+Literature Review Service has been deployed.
+
+Server:
+  kubectl port-forward svc/{{ include "literature-review-service.fullname" . }}-server {{ .Values.service.httpPort }}:{{ .Values.service.httpPort }} -n {{ .Release.Namespace }}
+
+gRPC:
+  kubectl port-forward svc/{{ include "literature-review-service.fullname" . }}-server {{ .Values.service.grpcPort }}:{{ .Values.service.grpcPort }} -n {{ .Release.Namespace }}
+
+Metrics:
+  kubectl port-forward svc/{{ include "literature-review-service.fullname" . }}-server {{ .Values.service.metricsPort }}:{{ .Values.service.metricsPort }} -n {{ .Release.Namespace }}

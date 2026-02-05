@@ -1,0 +1,306 @@
+# Server deployment
+server:
+  replicaCount: 2
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+# Worker deployment
+worker:
+  replicaCount: 2
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
+image:
+  repository: ghcr.io/helixir/literature-review-service
+  pullPolicy: IfNotPresent
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9091"
+  prometheus.io/path: "/metrics"
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  httpPort: 8080
+  grpcPort: 9090
+  metricsPort: 9091
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: literature-review.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+autoscaling:
+  server:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPUUtilization: 70
+    targetMemoryUtilization: 80
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 300
+        policies:
+          - type: Percent
+            value: 10
+            periodSeconds: 60
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 15
+          - type: Pods
+            value: 4
+            periodSeconds: 15
+        selectPolicy: Max
+  worker:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilization: 75
+    targetMemoryUtilization: 85
+
+podDisruptionBudget:
+  server:
+    enabled: true
+    minAvailable: 1
+  worker:
+    enabled: true
+    minAvailable: 1
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 15
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+startupProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30
+
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - literature-review-service
+          topologyKey: kubernetes.io/hostname
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: literature-review-service
+
+terminationGracePeriodSeconds: 30
+
+# Application configuration (stored in ConfigMap)
+config:
+  server:
+    host: "0.0.0.0"
+    httpPort: 8080
+    grpcPort: 9090
+    metricsPort: 9091
+    shutdownTimeout: "30s"
+
+  logging:
+    level: "info"
+    format: "json"
+
+  database:
+    maxConns: 50
+    minConns: 10
+    maxConnLifetime: "30m"
+    maxConnIdleTime: "5m"
+    sslMode: "require"
+
+  temporal:
+    namespace: "literature-review"
+    taskQueue: "literature-review-tasks"
+
+  kafka:
+    enabled: true
+    topic: "events.outbox.literature_review_service"
+
+  outbox:
+    pollInterval: "1s"
+    batchSize: 100
+    workers: 4
+
+  metrics:
+    enabled: true
+
+  tracing:
+    enabled: false
+    endpoint: ""
+    samplingRate: 0.1
+    serviceName: "literature-review-service"
+
+  paperSources:
+    semanticScholar:
+      enabled: true
+      rps: 10
+      burst: 20
+    openalex:
+      enabled: true
+      rps: 10
+      burst: 20
+    pubmed:
+      enabled: true
+      rps: 3
+      burst: 5
+
+  llm:
+    provider: "openai"
+    model: "gpt-4-turbo"
+
+# Secrets (stored in Secret)
+secrets:
+  database:
+    host: ""
+    port: 5432
+    user: "litreview"
+    password: ""
+    name: "literature_review"
+  temporal:
+    hostPort: "temporal:7233"
+  kafka:
+    brokers: "kafka:9092"
+  llm:
+    openaiApiKey: ""
+    anthropicApiKey: ""
+  tls:
+    enabled: false
+    cert: ""
+    key: ""
+    ca: ""
+
+externalSecrets:
+  enabled: false
+  secretStoreRef:
+    name: ""
+    kind: ClusterSecretStore
+  refreshInterval: "1h"
+  target:
+    name: ""
+    creationPolicy: Owner
+
+serviceMonitor:
+  enabled: true
+  namespace: ""
+  labels: {}
+  interval: "30s"
+  scrapeTimeout: "10s"
+
+networkPolicy:
+  enabled: false
+  allowedNamespaces: []
+  allowedPodLabels: {}
+
+postgresql:
+  enabled: true
+  architecture: standalone
+  auth:
+    username: litreview
+    password: ""
+    database: literature_review
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+kafka:
+  topics:
+    - name: "events.outbox.literature_review_service"
+      partitions: 6
+      replicationFactor: 1
+      config:
+        retention.ms: "604800000"
+        cleanup.policy: "delete"
+
+priorityClassName: ""

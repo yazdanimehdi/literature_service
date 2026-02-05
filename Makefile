@@ -1,7 +1,9 @@
 # Literature Review Service Makefile
 
 .PHONY: all build test lint clean proto migrate \
-	test-race test-integration test-e2e test-chaos test-security test-fuzz test-load test-all
+	test-race test-integration test-e2e test-chaos test-security test-fuzz test-load test-all \
+	docker-build docker-push docker-run-server docker-run-worker \
+	compose-up compose-up-full compose-down compose-logs
 
 # Go parameters
 GOCMD=go
@@ -131,5 +133,62 @@ dev-setup:
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	go install github.com/bufbuild/buf/cmd/buf@latest
 	go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+# ---------------------------------------------------------------------------
+# Docker settings
+# ---------------------------------------------------------------------------
+DOCKER_REGISTRY ?= ghcr.io/helixir
+DOCKER_IMAGE := $(DOCKER_REGISTRY)/literature-review-service
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
+COMMIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+DOCKER_TAG ?= $(VERSION)
+
+## docker-build: Build Docker image (runs from monorepo root)
+docker-build:
+	cd .. && docker build \
+		-f literature_service/Dockerfile \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg BUILD_TIME=$(BUILD_TIME) \
+		--build-arg COMMIT_SHA=$(COMMIT_SHA) \
+		-t $(DOCKER_IMAGE):$(DOCKER_TAG) .
+	docker tag $(DOCKER_IMAGE):$(DOCKER_TAG) $(DOCKER_IMAGE):latest
+
+## docker-push: Push Docker image to registry
+docker-push:
+	docker push $(DOCKER_IMAGE):$(DOCKER_TAG)
+	docker push $(DOCKER_IMAGE):latest
+
+## docker-run-server: Run server container locally
+docker-run-server:
+	docker run --rm -p 8080:8080 -p 9090:9090 -p 9091:9091 \
+		-e LITREVIEW_DATABASE_HOST=host.docker.internal \
+		-e LITREVIEW_DATABASE_PASSWORD=devpassword \
+		$(DOCKER_IMAGE):$(DOCKER_TAG)
+
+## docker-run-worker: Run worker container locally
+docker-run-worker:
+	docker run --rm \
+		--entrypoint /app/literature-review-worker \
+		-e LITREVIEW_DATABASE_HOST=host.docker.internal \
+		-e LITREVIEW_DATABASE_PASSWORD=devpassword \
+		-e LITREVIEW_TEMPORAL_HOST_PORT=host.docker.internal:7233 \
+		$(DOCKER_IMAGE):$(DOCKER_TAG)
+
+## compose-up: Start infrastructure (postgres, temporal, kafka)
+compose-up:
+	POSTGRES_PASSWORD=devpassword docker compose up -d
+
+## compose-up-full: Start all services including server and worker
+compose-up-full:
+	POSTGRES_PASSWORD=devpassword docker compose --profile full up -d --build
+
+## compose-down: Stop all services
+compose-down:
+	docker compose --profile full down
+
+## compose-logs: Tail logs for all services
+compose-logs:
+	docker compose --profile full logs -f
 
 .DEFAULT_GOAL := all

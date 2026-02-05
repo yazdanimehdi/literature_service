@@ -1,0 +1,46 @@
+{{- if .Values.config.kafka.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "literature-review-service.fullname" . }}-kafka-topics
+  labels:
+    {{- include "literature-review-service.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        {{- include "literature-review-service.selectorLabels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: create-topics
+          image: confluentinc/cp-kafka:7.6.0
+          command:
+            - /bin/bash
+            - -c
+            - |
+              {{- range .Values.kafka.topics }}
+              echo "Creating topic {{ .name }}..."
+              kafka-topics --create \
+                --bootstrap-server $KAFKA_BROKERS \
+                --topic {{ .name }} \
+                --partitions {{ .partitions }} \
+                --replication-factor {{ .replicationFactor }} \
+                {{- range $key, $value := .config }}
+                --config {{ $key }}={{ $value }} \
+                {{- end }}
+                --if-not-exists
+              {{- end }}
+              echo "All topics created."
+          env:
+            - name: KAFKA_BROKERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "literature-review-service.secretName" . }}
+                  key: KAFKA_BROKERS
+{{- end }}

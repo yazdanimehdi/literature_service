@@ -1,0 +1,33 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "literature-review-service.fullname" . }}
+  labels:
+    {{- include "literature-review-service.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "literature-review-service.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        {{- range .Values.networkPolicy.allowedNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+        {{- end }}
+        {{- if .Values.networkPolicy.allowedPodLabels }}
+        - podSelector:
+            matchLabels:
+              {{- toYaml .Values.networkPolicy.allowedPodLabels | nindent 14 }}
+        {{- end }}
+      ports:
+        - port: {{ .Values.config.server.httpPort }}
+        - port: {{ .Values.config.server.grpcPort }}
+        - port: {{ .Values.config.server.metricsPort }}
+  egress:
+    - {}
+{{- end }}

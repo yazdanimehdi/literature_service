@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "literature-review-service.fullname" . }}
+  labels:
+    {{- include "literature-review-service.labels" . | nindent 4 }}
+data:
+  LITREVIEW_SERVER_HOST: {{ .Values.config.server.host | quote }}
+  LITREVIEW_SERVER_HTTP_PORT: {{ .Values.config.server.httpPort | quote }}
+  LITREVIEW_SERVER_GRPC_PORT: {{ .Values.config.server.grpcPort | quote }}
+  LITREVIEW_SERVER_METRICS_PORT: {{ .Values.config.server.metricsPort | quote }}
+  LITREVIEW_SERVER_SHUTDOWN_TIMEOUT: {{ .Values.config.server.shutdownTimeout | quote }}
+  LITREVIEW_DATABASE_MAX_CONNS: {{ .Values.config.database.maxConns | quote }}
+  LITREVIEW_DATABASE_MIN_CONNS: {{ .Values.config.database.minConns | quote }}
+  LITREVIEW_DATABASE_MAX_CONN_LIFETIME: {{ .Values.config.database.maxConnLifetime | quote }}
+  LITREVIEW_DATABASE_MAX_CONN_IDLE_TIME: {{ .Values.config.database.maxConnIdleTime | quote }}
+  LITREVIEW_DATABASE_SSL_MODE: {{ .Values.config.database.sslMode | quote }}
+  LITREVIEW_TEMPORAL_NAMESPACE: {{ .Values.config.temporal.namespace | quote }}
+  LITREVIEW_TEMPORAL_TASK_QUEUE: {{ .Values.config.temporal.taskQueue | quote }}
+  LITREVIEW_KAFKA_ENABLED: {{ .Values.config.kafka.enabled | quote }}
+  LITREVIEW_KAFKA_TOPIC: {{ .Values.config.kafka.topic | quote }}
+  LITREVIEW_OUTBOX_POLL_INTERVAL: {{ .Values.config.outbox.pollInterval | quote }}
+  LITREVIEW_OUTBOX_BATCH_SIZE: {{ .Values.config.outbox.batchSize | quote }}
+  LITREVIEW_OUTBOX_WORKERS: {{ .Values.config.outbox.workers | quote }}
+  LITREVIEW_LOGGING_LEVEL: {{ .Values.config.logging.level | quote }}
+  LITREVIEW_LOGGING_FORMAT: {{ .Values.config.logging.format | quote }}
+  LITREVIEW_METRICS_ENABLED: {{ .Values.config.metrics.enabled | quote }}
+  LITREVIEW_TRACING_ENABLED: {{ .Values.config.tracing.enabled | quote }}
+  LITREVIEW_TRACING_ENDPOINT: {{ .Values.config.tracing.endpoint | quote }}
+  LITREVIEW_TRACING_SAMPLING_RATE: {{ .Values.config.tracing.samplingRate | quote }}
+  LITREVIEW_TRACING_SERVICE_NAME: {{ .Values.config.tracing.serviceName | quote }}
+  LITREVIEW_LLM_PROVIDER: {{ .Values.config.llm.provider | quote }}
+  LITREVIEW_LLM_MODEL: {{ .Values.config.llm.model | quote }}
+  LITREVIEW_PAPER_SOURCES_SEMANTIC_SCHOLAR_ENABLED: {{ .Values.config.paperSources.semanticScholar.enabled | quote }}
+  LITREVIEW_PAPER_SOURCES_OPENALEX_ENABLED: {{ .Values.config.paperSources.openalex.enabled | quote }}
+  LITREVIEW_PAPER_SOURCES_PUBMED_ENABLED: {{ .Values.config.paperSources.pubmed.enabled | quote }}

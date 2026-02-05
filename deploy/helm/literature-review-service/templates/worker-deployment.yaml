@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "literature-review-service.fullname" . }}-worker
+  labels:
+    {{- include "literature-review-service.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  {{- if not .Values.autoscaling.worker.enabled }}
+  replicas: {{ .Values.worker.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "literature-review-service.workerSelectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 0
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "literature-review-service.labels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "literature-review-service.serviceAccountName" . }}
+      {{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: worker
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: {{ include "literature-review-service.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/app/literature-review-worker"]
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.config.server.metricsPort }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "literature-review-service.fullname" . }}
+          env:
+            - name: LITREVIEW_DATABASE_HOST
+              value: {{ include "literature-review-service.postgresql.host" . | quote }}
+            - name: LITREVIEW_DATABASE_PORT
+              value: {{ include "literature-review-service.postgresql.port" . | quote }}
+            - name: LITREVIEW_DATABASE_NAME
+              value: {{ include "literature-review-service.postgresql.database" . | quote }}
+            - name: LITREVIEW_DATABASE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "literature-review-service.secretName" . }}
+                  key: DATABASE_USER
+            - name: LITREVIEW_DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "literature-review-service.secretName" . }}
+                  key: DATABASE_PASSWORD
+            - name: LITREVIEW_TEMPORAL_HOST_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "literature-review-service.secretName" . }}
+                  key: TEMPORAL_HOST_PORT
+            - name: LITREVIEW_KAFKA_BROKERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "literature-review-service.secretName" . }}
+                  key: KAFKA_BROKERS
+            - name: LITREVIEW_LLM_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "literature-review-service.secretName" . }}
+                  key: LLM_OPENAI_API_KEY
+                  optional: true
+            - name: LITREVIEW_LLM_ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "literature-review-service.secretName" . }}
+                  key: LLM_ANTHROPIC_API_KEY
+                  optional: true
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,199 @@
+# deploy/helm/literature-review-service/values-production.yaml
+
+server:
+  replicaCount: 3
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "2000m"
+
+worker:
+  replicaCount: 4
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "4000m"
+
+image:
+  pullPolicy: IfNotPresent
+
+autoscaling:
+  server:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    targetCPUUtilization: 65
+    targetMemoryUtilization: 75
+    behavior:
+      scaleDown:
+        stabilizationWindowSeconds: 600
+        policies:
+          - type: Percent
+            value: 5
+            periodSeconds: 120
+      scaleUp:
+        stabilizationWindowSeconds: 60
+        policies:
+          - type: Percent
+            value: 50
+            periodSeconds: 60
+          - type: Pods
+            value: 4
+            periodSeconds: 60
+        selectPolicy: Max
+  worker:
+    enabled: true
+    minReplicas: 4
+    maxReplicas: 20
+    targetCPUUtilization: 70
+    targetMemoryUtilization: 80
+
+podDisruptionBudget:
+  server:
+    enabled: true
+    minAvailable: 2
+  worker:
+    enabled: true
+    minAvailable: 2
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "9091"
+  prometheus.io/path: "/metrics"
+  cluster-autoscaler.kubernetes.io/safe-to-evict: "false"
+
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: literature-review.helixir.dev
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: literature-review-tls
+      hosts:
+        - literature-review.helixir.dev
+
+affinity:
+  podAntiAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+            - key: app.kubernetes.io/name
+              operator: In
+              values:
+                - literature-review-service
+        topologyKey: kubernetes.io/hostname
+
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: DoNotSchedule
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: literature-review-service
+
+priorityClassName: "high-priority"
+terminationGracePeriodSeconds: 60
+
+config:
+  logging:
+    level: "info"
+
+  database:
+    maxConns: 100
+    minConns: 25
+    sslMode: "require"
+
+  outbox:
+    pollInterval: "500ms"
+    batchSize: 200
+    workers: 8
+
+  tracing:
+    enabled: true
+    samplingRate: 0.1
+    environment: "production"
+
+externalSecrets:
+  enabled: true
+  secretStoreRef:
+    name: "aws-secretsmanager"
+    kind: ClusterSecretStore
+  refreshInterval: "1h"
+  target:
+    name: "literature-review-production-secrets"
+    creationPolicy: Owner
+
+serviceMonitor:
+  enabled: true
+  interval: "15s"
+  labels:
+    release: prometheus
+
+networkPolicy:
+  enabled: true
+  allowedNamespaces:
+    - "default"
+    - "ingress-nginx"
+    - "monitoring"
+  allowedPodLabels:
+    app.kubernetes.io/part-of: helixir
+
+postgresql:
+  enabled: true
+  architecture: replication
+  auth:
+    database: literature_review
+  primary:
+    persistence:
+      enabled: true
+      size: 200Gi
+      storageClass: "gp3-encrypted"
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "1000m"
+      limits:
+        memory: "8Gi"
+        cpu: "4000m"
+    configuration: |
+      max_connections = 300
+      shared_buffers = 2GB
+      effective_cache_size = 6GB
+      maintenance_work_mem = 512MB
+      wal_buffers = 128MB
+      random_page_cost = 1.1
+  readReplicas:
+    replicaCount: 2
+    persistence:
+      enabled: true
+      size: 200Gi
+      storageClass: "gp3-encrypted"
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: true
+
+kafka:
+  topics:
+    - name: "events.outbox.literature_review_service"
+      partitions: 12
+      replicationFactor: 3
+      config:
+        retention.ms: "604800000"
+        cleanup.policy: "delete"
+        min.insync.replicas: "2"

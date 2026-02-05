@@ -3,9 +3,11 @@ package httpserver
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -1004,4 +1006,52 @@ func TestEncodeHTTPPageToken(t *testing.T) {
 	if token != "" {
 		t.Errorf("expected empty token at exact boundary, got %q", token)
 	}
+}
+
+func TestParsePaginationParams_EdgeCases(t *testing.T) {
+	t.Run("invalid non-numeric page_size uses default", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test?page_size=abc", nil)
+		limit, offset := parsePaginationParams(req)
+		if limit != defaultPageSize {
+			t.Errorf("expected default limit %d for non-numeric page_size, got %d", defaultPageSize, limit)
+		}
+		if offset != 0 {
+			t.Errorf("expected offset 0, got %d", offset)
+		}
+	})
+
+	t.Run("negative page_size uses default", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test?page_size=-5", nil)
+		limit, offset := parsePaginationParams(req)
+		if limit != defaultPageSize {
+			t.Errorf("expected default limit %d for negative page_size, got %d", defaultPageSize, limit)
+		}
+		if offset != 0 {
+			t.Errorf("expected offset 0, got %d", offset)
+		}
+	})
+
+	t.Run("valid page_token decodes to correct offset", func(t *testing.T) {
+		// Encode offset 75 as base64, simulating what encodeHTTPPageToken produces.
+		encodedToken := base64.StdEncoding.EncodeToString([]byte(strconv.Itoa(75)))
+		req := httptest.NewRequest(http.MethodGet, "/test?page_token="+encodedToken, nil)
+		limit, offset := parsePaginationParams(req)
+		if limit != defaultPageSize {
+			t.Errorf("expected default limit %d, got %d", defaultPageSize, limit)
+		}
+		if offset != 75 {
+			t.Errorf("expected offset 75 from decoded page_token, got %d", offset)
+		}
+	})
+
+	t.Run("invalid page_token keeps offset at zero", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test?page_token=not-valid-base64!!!", nil)
+		limit, offset := parsePaginationParams(req)
+		if limit != defaultPageSize {
+			t.Errorf("expected default limit %d, got %d", defaultPageSize, limit)
+		}
+		if offset != 0 {
+			t.Errorf("expected offset 0 for invalid page_token, got %d", offset)
+		}
+	})
 }

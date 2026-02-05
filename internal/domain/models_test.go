@@ -1493,6 +1493,60 @@ func TestPauseReason_String(t *testing.T) {
 	}
 }
 
+func TestLiteratureReviewRequest_PauseFields(t *testing.T) {
+	t.Run("pause fields are set correctly", func(t *testing.T) {
+		pausedAt := time.Now()
+		req := &LiteratureReviewRequest{
+			ID:            uuid.New(),
+			OrgID:         "org-123",
+			ProjectID:     "proj-456",
+			UserID:        "user-789",
+			Status:        ReviewStatusPaused,
+			PauseReason:   PauseReasonBudgetExhausted,
+			PausedAt:      &pausedAt,
+			PausedAtPhase: "searching",
+		}
+
+		assert.Equal(t, ReviewStatusPaused, req.Status)
+		assert.Equal(t, PauseReasonBudgetExhausted, req.PauseReason)
+		assert.NotNil(t, req.PausedAt)
+		assert.Equal(t, pausedAt, *req.PausedAt)
+		assert.Equal(t, "searching", req.PausedAtPhase)
+	})
+
+	t.Run("pause fields default to zero values", func(t *testing.T) {
+		req := &LiteratureReviewRequest{
+			ID:     uuid.New(),
+			Status: ReviewStatusPending,
+		}
+
+		assert.Equal(t, PauseReason(""), req.PauseReason)
+		assert.Nil(t, req.PausedAt)
+		assert.Equal(t, "", req.PausedAtPhase)
+	})
+
+	t.Run("user-initiated pause", func(t *testing.T) {
+		pausedAt := time.Now()
+		req := &LiteratureReviewRequest{
+			ID:            uuid.New(),
+			Status:        ReviewStatusPaused,
+			PauseReason:   PauseReasonUser,
+			PausedAt:      &pausedAt,
+			PausedAtPhase: "ingesting",
+		}
+
+		assert.Equal(t, PauseReasonUser, req.PauseReason)
+		assert.Equal(t, "ingesting", req.PausedAtPhase)
+	})
+
+	t.Run("paused status is not terminal", func(t *testing.T) {
+		req := &LiteratureReviewRequest{
+			Status: ReviewStatusPaused,
+		}
+		assert.True(t, req.IsActive())
+	})
+}
+
 func TestTenantFromIDs(t *testing.T) {
 	tests := []struct {
 		name      string

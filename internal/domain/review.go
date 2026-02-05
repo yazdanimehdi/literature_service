@@ -128,6 +128,11 @@ type LiteratureReviewRequest struct {
 	UpdatedAt   time.Time  `json:"updated_at"`
 	StartedAt   *time.Time `json:"started_at,omitempty"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`
+
+	// Pause state
+	PauseReason   PauseReason `json:"pause_reason,omitempty"`
+	PausedAt      *time.Time  `json:"paused_at,omitempty"`
+	PausedAtPhase string      `json:"paused_at_phase,omitempty"`
 }
 
 // Duration returns the duration of the review request.

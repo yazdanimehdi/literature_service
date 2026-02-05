@@ -142,3 +142,48 @@ func (c *Checker) Check(ctx context.Context, paper *domain.Paper) (*CheckResult,
 
 	return &CheckResult{}, nil
 }
+
+// CheckWithEmbedding determines whether a paper with a pre-computed embedding
+// is a duplicate of an existing paper in the vector store.
+//
+// This method is optimized for use in the concurrent pipeline where embeddings
+// have already been generated. Unlike Check(), this method:
+//   - Does NOT verify author overlap (not available with pre-computed embeddings).
+//   - Uses only the similarity threshold to determine duplicates.
+//   - Always upserts the embedding into the vector store.
+//
+// The method returns true if a duplicate is found (similarity above threshold).
+func (c *Checker) CheckWithEmbedding(ctx context.Context, paperID uuid.UUID, embedding []float32) (bool, error) {
+	if len(embedding) == 0 {
+		return false, nil
+	}
+
+	// Query vector store for similar papers.
+	candidates, err := c.store.Search(ctx, embedding, c.cfg.TopK)
+	if err != nil {
+		return false, fmt.Errorf("searching vector store for paper %s: %w", paperID, err)
+	}
+
+	// Always upsert the embedding into the vector store.
+	if err := c.store.Upsert(ctx, PaperEmbedding{
+		PaperID:   paperID,
+		Embedding: embedding,
+	}); err != nil {
+		return false, fmt.Errorf("upserting embedding for paper %s: %w", paperID, err)
+	}
+
+	// Evaluate candidates against similarity threshold only (no author overlap check).
+	for _, candidate := range candidates {
+		// Skip self-matches.
+		if candidate.PaperID == paperID {
+			continue
+		}
+
+		// Check if candidate exceeds similarity threshold.
+		if float64(candidate.Score) >= c.cfg.SimilarityThreshold {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}

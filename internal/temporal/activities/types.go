@@ -439,3 +439,27 @@ type SearchSingleSourceOutput struct {
 	// Error contains error message if the search failed.
 	Error string `json:"error"`
 }
+
+// PaperWithEmbedding contains paper data with its embedding for dedup.
+type PaperWithEmbedding struct {
+	// PaperID is the paper's internal UUID.
+	PaperID uuid.UUID `json:"paper_id"`
+	// CanonicalID is the paper's canonical identifier.
+	CanonicalID string `json:"canonical_id"`
+	// Embedding is the paper's abstract embedding.
+	Embedding []float32 `json:"embedding"`
+}
+
+// BatchDedupInput contains the parameters for batch dedup activity.
+type BatchDedupInput struct {
+	// Papers contains papers with embeddings to check for duplicates.
+	Papers []*PaperWithEmbedding `json:"papers"`
+}
+
+// BatchDedupOutput contains the results of batch dedup activity.
+type BatchDedupOutput struct {
+	// NonDuplicateIDs are paper IDs that passed the dedup check.
+	NonDuplicateIDs []uuid.UUID `json:"non_duplicate_ids"`
+	// DuplicateCount is the number of duplicates found.
+	DuplicateCount int `json:"duplicate_count"`
+}

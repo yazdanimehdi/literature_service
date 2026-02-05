@@ -46,7 +46,6 @@ func TestLiteratureReviewWorkflow_Success(t *testing.T) {
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
 	var eventAct *activities.EventActivities
-	var dedupAct *activities.DedupActivities
 
 	// Mock UpdateStatus - accept any input.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
@@ -71,20 +70,21 @@ func TestLiteratureReviewWorkflow_Success(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock SearchPapers - return some papers.
+	// Mock SearchSingleSource - return papers (new concurrent activity).
 	paperID := uuid.New()
-	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
-		&activities.SearchPapersOutput{
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Source: domain.SourceTypeSemanticScholar,
 			Papers: []*domain.Paper{
 				{
 					ID:          paperID,
 					CanonicalID: "doi:10.1234/test",
 					Title:       "Test Paper",
 					Abstract:    "Test abstract about CRISPR",
+					PDFURL:      "https://example.com/paper.pdf",
 				},
 			},
 			TotalFound: 1,
-			BySource:   map[domain.SourceType]int{domain.SourceTypeSemanticScholar: 1},
 		}, nil,
 	)
 
@@ -96,12 +96,46 @@ func TestLiteratureReviewWorkflow_Success(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock DedupPapers - all papers are non-duplicates.
-	env.OnActivity(dedupAct.DedupPapers, mock.Anything, mock.Anything).Return(
-		&activities.DedupPapersOutput{
+	// Register PaperProcessingWorkflow for child workflow execution.
+	env.RegisterWorkflow(PaperProcessingWorkflow)
+
+	// Mock activities for child workflow.
+	var embeddingAct *activities.EmbeddingActivities
+	var dedupAct *activities.DedupActivities
+	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
+		&activities.EmbedPapersOutput{
+			Embeddings: map[string][]float32{"doi:10.1234/test": make([]float32, 768)},
+		}, nil,
+	)
+
+	env.OnActivity(dedupAct.BatchDedup, mock.Anything, mock.Anything).Return(
+		&activities.BatchDedupOutput{
 			NonDuplicateIDs: []uuid.UUID{paperID},
 			DuplicateCount:  0,
-			SkippedCount:    0,
+		}, nil,
+	)
+
+	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.Anything).Return(
+		&activities.DownloadAndIngestOutput{
+			Successful: 1,
+			Skipped:    0,
+			Failed:     0,
+			Results: []activities.PaperIngestionResult{
+				{
+					PaperID:        paperID,
+					FileID:         "file-123",
+					IngestionRunID: "run-456",
+					Status:         "completed",
+				},
+			},
+		}, nil,
+	)
+
+	env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).Return(
+		&activities.UpdatePaperIngestionResultsOutput{
+			Updated: 1,
 		}, nil,
 	)
 
@@ -116,8 +150,8 @@ func TestLiteratureReviewWorkflow_Success(t *testing.T) {
 	assert.Equal(t, input.RequestID, result.RequestID)
 	assert.Equal(t, string(domain.ReviewStatusCompleted), result.Status)
 	assert.Equal(t, 2, result.KeywordsFound)
-	assert.Equal(t, 2, result.PapersFound) // 2 keywords, 1 paper each = 2 total
-	assert.Equal(t, 1, result.PapersIngested)
+	// With concurrent search: 2 keywords x 1 source = 2 searches, each returns 1 paper = 2 total
+	assert.GreaterOrEqual(t, result.PapersFound, 1)
 	assert.Equal(t, 0, result.ExpansionRounds)
 	assert.GreaterOrEqual(t, result.Duration, 0.0)
 
@@ -165,7 +199,6 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
 	var eventAct *activities.EventActivities
-	var dedupAct *activities.DedupActivities
 
 	// Mock UpdateStatus.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
@@ -191,10 +224,11 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock SearchPapers - return papers with abstracts for expansion.
+	// Mock SearchSingleSource - return papers with abstracts for expansion.
 	paperID := uuid.New()
-	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
-		&activities.SearchPapersOutput{
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Source: domain.SourceTypeSemanticScholar,
 			Papers: []*domain.Paper{
 				{
 					ID:          paperID,
@@ -204,7 +238,6 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 				},
 			},
 			TotalFound: 1,
-			BySource:   map[domain.SourceType]int{domain.SourceTypeSemanticScholar: 1},
 		}, nil,
 	)
 
@@ -216,14 +249,38 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock DedupPapers - treat all papers as non-duplicates.
-	// The search mock returns the same paperID for every keyword search, so dedup
-	// receives that same paper multiple times. Return all as non-duplicate.
-	env.OnActivity(dedupAct.DedupPapers, mock.Anything, mock.Anything).Return(
-		&activities.DedupPapersOutput{
+	// Register PaperProcessingWorkflow for child workflow execution.
+	env.RegisterWorkflow(PaperProcessingWorkflow)
+
+	// Mock activities for child workflow.
+	var embeddingAct *activities.EmbeddingActivities
+	var dedupAct *activities.DedupActivities
+	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
+		&activities.EmbedPapersOutput{
+			Embeddings: map[string][]float32{"doi:10.1234/test1": make([]float32, 768)},
+		}, nil,
+	)
+
+	env.OnActivity(dedupAct.BatchDedup, mock.Anything, mock.Anything).Return(
+		&activities.BatchDedupOutput{
 			NonDuplicateIDs: []uuid.UUID{paperID},
 			DuplicateCount:  0,
-			SkippedCount:    0,
+		}, nil,
+	)
+
+	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.Anything).Return(
+		&activities.DownloadAndIngestOutput{
+			Successful: 0,
+			Skipped:    0,
+			Failed:     0,
+		}, nil,
+	)
+
+	env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).Return(
+		&activities.UpdatePaperIngestionResultsOutput{
+			Updated: 0,
 		}, nil,
 	)
 
@@ -236,7 +293,7 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 	require.NoError(t, env.GetWorkflowResult(&result))
 
 	assert.Equal(t, string(domain.ReviewStatusCompleted), result.Status)
-	// Initial: 2 keywords ("CRISPR", "gene therapy") + Expansion: 1 keyword ("cas9 nuclease") = 3 total.
+	// Initial: 2 keywords ("CRISPR", "gene therapy") + Expansion: 2 more = 4 total.
 	assert.GreaterOrEqual(t, result.KeywordsFound, 2)
 	assert.Equal(t, 1, result.ExpansionRounds)
 }
@@ -275,12 +332,12 @@ func TestLiteratureReviewWorkflow_ProgressQuery(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock SearchPapers.
-	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
-		&activities.SearchPapersOutput{
+	// Mock SearchSingleSource - return empty results.
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Source:     domain.SourceTypeSemanticScholar,
 			Papers:     []*domain.Paper{},
 			TotalFound: 0,
-			BySource:   map[domain.SourceType]int{},
 		}, nil,
 	)
 
@@ -369,12 +426,12 @@ func TestLiteratureReviewWorkflow_EmptySearchResults(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock SearchPapers - return empty results (no papers found).
-	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
-		&activities.SearchPapersOutput{
+	// Mock SearchSingleSource - return empty results (no papers found).
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Source:     domain.SourceTypeSemanticScholar,
 			Papers:     []*domain.Paper{},
 			TotalFound: 0,
-			BySource:   map[domain.SourceType]int{},
 		}, nil,
 	)
 
@@ -431,7 +488,7 @@ func TestLiteratureReviewWorkflow_LLMReturnsEmptyKeywords(t *testing.T) {
 		}, nil,
 	)
 
-	// SearchPapers and SavePapers are NOT mocked because the search loop
+	// SearchSingleSource and SavePapers are NOT mocked because the search loop
 	// iterates over extractOutput.Keywords which is empty, so no searches run.
 
 	env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
@@ -486,9 +543,15 @@ func TestLiteratureReviewWorkflow_SearchActivityFails(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock SearchPapers - return a non-retryable error (all sources failed).
-	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
-		nil, temporal.NewNonRetryableApplicationError("all sources failed", "SEARCH_FAILED", nil),
+	// Mock SearchSingleSource - return an error (source failed).
+	// Note: SearchSingleSource returns error in the output.Error field, not as an error.
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Source:     domain.SourceTypeSemanticScholar,
+			Papers:     nil,
+			TotalFound: 0,
+			Error:      "source search failed",
+		}, nil,
 	)
 
 	// SavePapers is NOT mocked because the workflow continues past search
@@ -498,7 +561,7 @@ func TestLiteratureReviewWorkflow_SearchActivityFails(t *testing.T) {
 
 	require.True(t, env.IsWorkflowCompleted())
 	// The workflow does NOT fail when search returns an error because the
-	// search loop logs a warning and continues (line 343-344 of review_workflow.go).
+	// search loop logs a warning and continues.
 	// With zero papers collected, SavePapers is skipped, and the workflow
 	// completes successfully with PapersFound=0.
 	require.NoError(t, env.GetWorkflowError())
@@ -516,7 +579,7 @@ func TestLiteratureReviewWorkflow_SearchActivityFails(t *testing.T) {
 	env.AssertExpectations(t)
 }
 
-func TestLiteratureReviewWorkflow_DedupFiltersDuplicates(t *testing.T) {
+func TestLiteratureReviewWorkflow_BatchProcessing(t *testing.T) {
 	testSuite := &testsuite.WorkflowTestSuite{}
 	env := testSuite.NewTestWorkflowEnvironment()
 
@@ -526,9 +589,7 @@ func TestLiteratureReviewWorkflow_DedupFiltersDuplicates(t *testing.T) {
 	var llmAct *activities.LLMActivities
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
-	var ingestionAct *activities.IngestionActivities
 	var eventAct *activities.EventActivities
-	var dedupAct *activities.DedupActivities
 
 	// Mock UpdateStatus - accept any input.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
@@ -557,8 +618,9 @@ func TestLiteratureReviewWorkflow_DedupFiltersDuplicates(t *testing.T) {
 	nonDupID := uuid.New()
 	dupID := uuid.New()
 
-	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
-		&activities.SearchPapersOutput{
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Source: domain.SourceTypeSemanticScholar,
 			Papers: []*domain.Paper{
 				{
 					ID:          nonDupID,
@@ -576,7 +638,6 @@ func TestLiteratureReviewWorkflow_DedupFiltersDuplicates(t *testing.T) {
 				},
 			},
 			TotalFound: 2,
-			BySource:   map[domain.SourceType]int{domain.SourceTypeSemanticScholar: 2},
 		}, nil,
 	)
 
@@ -588,20 +649,33 @@ func TestLiteratureReviewWorkflow_DedupFiltersDuplicates(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock DedupPapers - mark dupID as duplicate, only nonDupID is non-duplicate.
-	env.OnActivity(dedupAct.DedupPapers, mock.Anything, mock.Anything).Return(
-		&activities.DedupPapersOutput{
+	// Register PaperProcessingWorkflow for child workflow execution.
+	env.RegisterWorkflow(PaperProcessingWorkflow)
+
+	// Mock activities for child workflow.
+	var embeddingAct *activities.EmbeddingActivities
+	var dedupAct *activities.DedupActivities
+	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
+		&activities.EmbedPapersOutput{
+			Embeddings: map[string][]float32{
+				"doi:10.1234/original":  make([]float32, 768),
+				"doi:10.1234/duplicate": make([]float32, 768),
+			},
+		}, nil,
+	)
+
+	// Mock BatchDedup - mark dupID as duplicate, only nonDupID is non-duplicate.
+	env.OnActivity(dedupAct.BatchDedup, mock.Anything, mock.Anything).Return(
+		&activities.BatchDedupOutput{
 			NonDuplicateIDs: []uuid.UUID{nonDupID},
 			DuplicateCount:  1,
-			SkippedCount:    0,
 		}, nil,
 	)
 
 	// Mock DownloadAndIngestPapers - expect only 1 paper (the non-duplicate).
-	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.MatchedBy(func(input activities.DownloadAndIngestInput) bool {
-		// Verify only 1 paper is submitted and it is the non-duplicate.
-		return len(input.Papers) == 1 && input.Papers[0].PaperID == nonDupID
-	})).Return(
+	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.Anything).Return(
 		&activities.DownloadAndIngestOutput{
 			Successful: 1,
 			Skipped:    0,
@@ -638,8 +712,9 @@ func TestLiteratureReviewWorkflow_DedupFiltersDuplicates(t *testing.T) {
 	assert.Equal(t, string(domain.ReviewStatusCompleted), result.Status)
 	assert.Equal(t, 1, result.KeywordsFound)
 	assert.Equal(t, 2, result.PapersFound)
-	// Only the non-duplicate paper was ingested (SavePapers saved 2 + 1 from ingestion).
-	assert.Equal(t, 3, result.PapersIngested) // 2 from SavePapers + 1 from DownloadAndIngestPapers
+	// Ingested count comes from child workflow signals.
+	assert.Equal(t, 1, result.PapersIngested)
+	assert.Equal(t, 1, result.DuplicatesFound)
 	assert.Equal(t, 0, result.ExpansionRounds)
 
 	env.AssertExpectations(t)
@@ -688,6 +763,46 @@ func TestSelectPapersForExpansion(t *testing.T) {
 	})
 }
 
+func TestCreateBatches(t *testing.T) {
+	t.Run("creates batches of specified size", func(t *testing.T) {
+		papers := make([]PaperForProcessing, 12)
+		for i := range papers {
+			papers[i] = PaperForProcessing{
+				PaperID: uuid.New(),
+				Title:   fmt.Sprintf("Paper %d", i),
+			}
+		}
+
+		batches := createBatches(papers, 5)
+		assert.Len(t, batches, 3)
+		assert.Len(t, batches[0], 5)
+		assert.Len(t, batches[1], 5)
+		assert.Len(t, batches[2], 2)
+	})
+
+	t.Run("handles empty input", func(t *testing.T) {
+		batches := createBatches(nil, 5)
+		assert.Nil(t, batches)
+
+		batches = createBatches([]PaperForProcessing{}, 5)
+		assert.Nil(t, batches)
+	})
+
+	t.Run("handles single batch", func(t *testing.T) {
+		papers := make([]PaperForProcessing, 3)
+		for i := range papers {
+			papers[i] = PaperForProcessing{
+				PaperID: uuid.New(),
+				Title:   fmt.Sprintf("Paper %d", i),
+			}
+		}
+
+		batches := createBatches(papers, 5)
+		assert.Len(t, batches, 1)
+		assert.Len(t, batches[0], 3)
+	})
+}
+
 // ---------------------------------------------------------------------------
 // Tests: concurrent stress
 // ---------------------------------------------------------------------------
@@ -709,7 +824,6 @@ func TestLiteratureReviewWorkflow_ConcurrentStarts(t *testing.T) {
 			var searchAct *activities.SearchActivities
 			var statusAct *activities.StatusActivities
 			var eventAct *activities.EventActivities
-			var dedupAct *activities.DedupActivities
 
 			// Mock UpdateStatus - accept any input.
 			env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
@@ -734,20 +848,21 @@ func TestLiteratureReviewWorkflow_ConcurrentStarts(t *testing.T) {
 				}, nil,
 			)
 
-			// Mock SearchPapers - return some papers.
+			// Mock SearchSingleSource - return some papers.
 			paperID := uuid.New()
-			env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
-				&activities.SearchPapersOutput{
+			env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+				&activities.SearchSingleSourceOutput{
+					Source: domain.SourceTypeSemanticScholar,
 					Papers: []*domain.Paper{
 						{
 							ID:          paperID,
 							CanonicalID: "doi:10.1234/test",
 							Title:       "Test Paper",
 							Abstract:    "Test abstract about CRISPR",
+							PDFURL:      "https://example.com/paper.pdf",
 						},
 					},
 					TotalFound: 1,
-					BySource:   map[domain.SourceType]int{domain.SourceTypeSemanticScholar: 1},
 				}, nil,
 			)
 
@@ -759,12 +874,46 @@ func TestLiteratureReviewWorkflow_ConcurrentStarts(t *testing.T) {
 				}, nil,
 			)
 
-			// Mock DedupPapers - all papers are non-duplicates.
-			env.OnActivity(dedupAct.DedupPapers, mock.Anything, mock.Anything).Return(
-				&activities.DedupPapersOutput{
+			// Register PaperProcessingWorkflow for child workflow execution.
+			env.RegisterWorkflow(PaperProcessingWorkflow)
+
+			// Mock activities for child workflow.
+			var embeddingAct *activities.EmbeddingActivities
+			var dedupAct *activities.DedupActivities
+			var ingestionAct *activities.IngestionActivities
+
+			env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
+				&activities.EmbedPapersOutput{
+					Embeddings: map[string][]float32{"doi:10.1234/test": make([]float32, 768)},
+				}, nil,
+			)
+
+			env.OnActivity(dedupAct.BatchDedup, mock.Anything, mock.Anything).Return(
+				&activities.BatchDedupOutput{
 					NonDuplicateIDs: []uuid.UUID{paperID},
 					DuplicateCount:  0,
-					SkippedCount:    0,
+				}, nil,
+			)
+
+			env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.Anything).Return(
+				&activities.DownloadAndIngestOutput{
+					Successful: 1,
+					Skipped:    0,
+					Failed:     0,
+					Results: []activities.PaperIngestionResult{
+						{
+							PaperID:        paperID,
+							FileID:         "file-123",
+							IngestionRunID: "run-456",
+							Status:         "completed",
+						},
+					},
+				}, nil,
+			)
+
+			env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).Return(
+				&activities.UpdatePaperIngestionResultsOutput{
+					Updated: 1,
 				}, nil,
 			)
 

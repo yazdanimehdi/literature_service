@@ -92,6 +92,7 @@ func run() error {
 		Temperature: cfg.LLM.Temperature,
 		Timeout:     cfg.LLM.Timeout,
 		MaxRetries:  cfg.LLM.MaxRetries,
+		RetryDelay:  cfg.LLM.RetryDelay,
 		OpenAI: llm.OpenAIConfig{
 			APIKey:  cfg.LLM.OpenAI.APIKey,
 			Model:   cfg.LLM.OpenAI.Model,

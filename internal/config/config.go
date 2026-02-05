@@ -4,6 +4,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -159,6 +160,8 @@ type LLMConfig struct {
 	Timeout time.Duration `mapstructure:"timeout"`
 	// MaxRetries is the maximum number of retries for failed calls.
 	MaxRetries int `mapstructure:"max_retries"`
+	// RetryDelay is the base delay between retries.
+	RetryDelay time.Duration `mapstructure:"retry_delay"`
 	// Temperature is the LLM temperature setting.
 	Temperature float64 `mapstructure:"temperature"`
 	// OpenAI contains OpenAI-specific settings.
@@ -201,8 +204,8 @@ type LLMResilienceConfig struct {
 
 // OpenAIConfig holds OpenAI-specific settings.
 type OpenAIConfig struct {
-	// APIKey is the OpenAI API key (use environment variable).
-	APIKey string `mapstructure:"api_key"`
+	// APIKey is the OpenAI API key (loaded from LITREVIEW_LLM_OPENAI_API_KEY env var).
+	APIKey string `mapstructure:"-"`
 	// Model is the OpenAI model to use.
 	Model string `mapstructure:"model"`
 	// BaseURL is the OpenAI API base URL (for custom endpoints).
@@ -211,8 +214,8 @@ type OpenAIConfig struct {
 
 // AnthropicConfig holds Anthropic-specific settings.
 type AnthropicConfig struct {
-	// APIKey is the Anthropic API key (use environment variable).
-	APIKey string `mapstructure:"api_key"`
+	// APIKey is the Anthropic API key (loaded from LITREVIEW_LLM_ANTHROPIC_API_KEY env var).
+	APIKey string `mapstructure:"-"`
 	// Model is the Anthropic model to use.
 	Model string `mapstructure:"model"`
 	// BaseURL is the Anthropic API base URL (for custom endpoints).
@@ -225,8 +228,8 @@ type AzureConfig struct {
 	ResourceName string `mapstructure:"resource_name"`
 	// DeploymentName is the Azure deployment name.
 	DeploymentName string `mapstructure:"deployment_name"`
-	// APIKey is the Azure OpenAI API key.
-	APIKey string `mapstructure:"api_key"`
+	// APIKey is the Azure OpenAI API key (loaded from LITREVIEW_LLM_AZURE_API_KEY env var).
+	APIKey string `mapstructure:"-"`
 	// APIVersion is the Azure OpenAI API version.
 	APIVersion string `mapstructure:"api_version"`
 	// Model is the model name for response metadata.
@@ -243,8 +246,8 @@ type BedrockConfig struct {
 
 // GeminiConfig holds Google Gemini/Vertex AI-specific settings.
 type GeminiConfig struct {
-	// APIKey is the Gemini API key (for Gemini API mode).
-	APIKey string `mapstructure:"api_key"`
+	// APIKey is the Gemini API key (loaded from LITREVIEW_LLM_GEMINI_API_KEY env var).
+	APIKey string `mapstructure:"-"`
 	// Project is the GCP project ID (for Vertex AI mode).
 	Project string `mapstructure:"project"`
 	// Location is the GCP location (for Vertex AI mode).
@@ -301,8 +304,8 @@ type PaperSourcesConfig struct {
 type PaperSourceConfig struct {
 	// Enabled controls whether this source is used.
 	Enabled bool `mapstructure:"enabled"`
-	// APIKey is the API key (if required).
-	APIKey string `mapstructure:"api_key"`
+	// APIKey is the API key (loaded from environment variable, e.g. LITREVIEW_PAPER_SOURCES_SEMANTIC_SCHOLAR_API_KEY).
+	APIKey string `mapstructure:"-"`
 	// BaseURL is the API base URL.
 	BaseURL string `mapstructure:"base_url"`
 	// Timeout is the timeout for API calls.
@@ -383,11 +386,33 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Load secrets exclusively from environment variables.
+	// These fields use mapstructure:"-" to prevent loading from config files.
+	loadSecrets(&cfg)
+
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 
 	return &cfg, nil
+}
+
+// loadSecrets populates secret fields exclusively from environment variables.
+// These fields are tagged with mapstructure:"-" to prevent loading from config files.
+func loadSecrets(cfg *Config) {
+	// LLM provider API keys.
+	cfg.LLM.OpenAI.APIKey = os.Getenv("LITREVIEW_LLM_OPENAI_API_KEY")
+	cfg.LLM.Anthropic.APIKey = os.Getenv("LITREVIEW_LLM_ANTHROPIC_API_KEY")
+	cfg.LLM.Azure.APIKey = os.Getenv("LITREVIEW_LLM_AZURE_API_KEY")
+	cfg.LLM.Gemini.APIKey = os.Getenv("LITREVIEW_LLM_GEMINI_API_KEY")
+
+	// Paper source API keys.
+	cfg.PaperSources.SemanticScholar.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_SEMANTIC_SCHOLAR_API_KEY")
+	cfg.PaperSources.OpenAlex.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_OPENALEX_API_KEY")
+	cfg.PaperSources.Scopus.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_SCOPUS_API_KEY")
+	cfg.PaperSources.PubMed.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_PUBMED_API_KEY")
+	cfg.PaperSources.BioRxiv.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_BIORXIV_API_KEY")
+	cfg.PaperSources.ArXiv.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_ARXIV_API_KEY")
 }
 
 // setDefaults sets default configuration values.
@@ -448,21 +473,19 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.expansion_depth", 2)
 	v.SetDefault("llm.timeout", "60s")
 	v.SetDefault("llm.max_retries", 3)
+	v.SetDefault("llm.retry_delay", "2s")
 	v.SetDefault("llm.temperature", 0.7)
-	v.SetDefault("llm.openai.api_key", "")
+	// API keys are loaded exclusively from environment variables (see loadSecrets).
 	v.SetDefault("llm.openai.model", "gpt-4-turbo")
 	v.SetDefault("llm.openai.base_url", "https://api.openai.com/v1")
-	v.SetDefault("llm.anthropic.api_key", "")
 	v.SetDefault("llm.anthropic.model", "claude-3-sonnet-20240229")
 	v.SetDefault("llm.anthropic.base_url", "https://api.anthropic.com")
 	v.SetDefault("llm.azure.resource_name", "")
 	v.SetDefault("llm.azure.deployment_name", "")
-	v.SetDefault("llm.azure.api_key", "")
 	v.SetDefault("llm.azure.api_version", "2024-08-01-preview")
 	v.SetDefault("llm.azure.model", "")
 	v.SetDefault("llm.bedrock.region", "us-east-1")
 	v.SetDefault("llm.bedrock.model", "")
-	v.SetDefault("llm.gemini.api_key", "")
 	v.SetDefault("llm.gemini.project", "")
 	v.SetDefault("llm.gemini.location", "us-central1")
 	v.SetDefault("llm.gemini.model", "gemini-2.0-flash")
@@ -494,8 +517,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("outbox.lease_duration", "30s")
 
 	// Paper sources defaults - Semantic Scholar
+	// API keys are loaded exclusively from environment variables (see loadSecrets).
 	v.SetDefault("paper_sources.semantic_scholar.enabled", true)
-	v.SetDefault("paper_sources.semantic_scholar.api_key", "")
 	v.SetDefault("paper_sources.semantic_scholar.base_url", "https://api.semanticscholar.org/graph/v1")
 	v.SetDefault("paper_sources.semantic_scholar.timeout", "30s")
 	v.SetDefault("paper_sources.semantic_scholar.rate_limit", 10.0)
@@ -503,7 +526,6 @@ func setDefaults(v *viper.Viper) {
 
 	// Paper sources defaults - OpenAlex
 	v.SetDefault("paper_sources.openalex.enabled", true)
-	v.SetDefault("paper_sources.openalex.api_key", "")
 	v.SetDefault("paper_sources.openalex.base_url", "https://api.openalex.org")
 	v.SetDefault("paper_sources.openalex.timeout", "30s")
 	v.SetDefault("paper_sources.openalex.rate_limit", 10.0)
@@ -511,7 +533,6 @@ func setDefaults(v *viper.Viper) {
 
 	// Paper sources defaults - Scopus (disabled by default, requires API key)
 	v.SetDefault("paper_sources.scopus.enabled", false)
-	v.SetDefault("paper_sources.scopus.api_key", "")
 	v.SetDefault("paper_sources.scopus.base_url", "https://api.elsevier.com/content")
 	v.SetDefault("paper_sources.scopus.timeout", "30s")
 	v.SetDefault("paper_sources.scopus.rate_limit", 5.0)
@@ -519,7 +540,6 @@ func setDefaults(v *viper.Viper) {
 
 	// Paper sources defaults - PubMed
 	v.SetDefault("paper_sources.pubmed.enabled", true)
-	v.SetDefault("paper_sources.pubmed.api_key", "")
 	v.SetDefault("paper_sources.pubmed.base_url", "https://eutils.ncbi.nlm.nih.gov/entrez/eutils")
 	v.SetDefault("paper_sources.pubmed.timeout", "30s")
 	v.SetDefault("paper_sources.pubmed.rate_limit", 3.0) // NCBI recommends max 3 req/sec without API key
@@ -527,7 +547,6 @@ func setDefaults(v *viper.Viper) {
 
 	// Paper sources defaults - bioRxiv
 	v.SetDefault("paper_sources.biorxiv.enabled", true)
-	v.SetDefault("paper_sources.biorxiv.api_key", "")
 	v.SetDefault("paper_sources.biorxiv.base_url", "https://api.biorxiv.org")
 	v.SetDefault("paper_sources.biorxiv.timeout", "30s")
 	v.SetDefault("paper_sources.biorxiv.rate_limit", 5.0)
@@ -535,7 +554,6 @@ func setDefaults(v *viper.Viper) {
 
 	// Paper sources defaults - arXiv
 	v.SetDefault("paper_sources.arxiv.enabled", true)
-	v.SetDefault("paper_sources.arxiv.api_key", "")
 	v.SetDefault("paper_sources.arxiv.base_url", "https://export.arxiv.org/api")
 	v.SetDefault("paper_sources.arxiv.timeout", "30s")
 	v.SetDefault("paper_sources.arxiv.rate_limit", 3.0) // arXiv recommends max 3 req/sec

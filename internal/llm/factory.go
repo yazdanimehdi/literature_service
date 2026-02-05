@@ -25,6 +25,8 @@ type FactoryConfig struct {
 	Timeout time.Duration
 	// MaxRetries is the maximum number of retries for failed calls.
 	MaxRetries int
+	// RetryDelay is the base delay between retries.
+	RetryDelay time.Duration
 	// OpenAI contains OpenAI-specific settings.
 	OpenAI OpenAIConfig
 	// Anthropic contains Anthropic-specific settings.
@@ -116,10 +118,14 @@ func NewKeywordExtractor(cfg FactoryConfig) (KeywordExtractor, error) {
 }
 
 func sharedClientConfig(cfg FactoryConfig) sharedllm.ClientConfig {
+	retryDelay := cfg.RetryDelay
+	if retryDelay == 0 {
+		retryDelay = 2 * time.Second
+	}
 	return sharedllm.ClientConfig{
 		Timeout:    cfg.Timeout,
 		MaxRetries: cfg.MaxRetries,
-		RetryDelay: 2 * time.Second,
+		RetryDelay: retryDelay,
 	}
 }
 

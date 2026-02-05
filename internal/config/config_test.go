@@ -257,6 +257,51 @@ func TestValidate_Tracing(t *testing.T) {
 	})
 }
 
+func TestLoad_APIKeysFromEnvOnly(t *testing.T) {
+	clearEnvVars(t)
+
+	// Set LLM API keys via environment variables.
+	t.Setenv("LITREVIEW_LLM_OPENAI_API_KEY", "sk-openai-test")
+	t.Setenv("LITREVIEW_LLM_ANTHROPIC_API_KEY", "sk-ant-test")
+	t.Setenv("LITREVIEW_LLM_AZURE_API_KEY", "azure-key-test")
+	t.Setenv("LITREVIEW_LLM_GEMINI_API_KEY", "gemini-key-test")
+
+	// Set paper source API keys via environment variables.
+	t.Setenv("LITREVIEW_PAPER_SOURCES_SEMANTIC_SCHOLAR_API_KEY", "ss-key-test")
+	t.Setenv("LITREVIEW_PAPER_SOURCES_SCOPUS_API_KEY", "scopus-key-test")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	// LLM provider API keys.
+	assert.Equal(t, "sk-openai-test", cfg.LLM.OpenAI.APIKey)
+	assert.Equal(t, "sk-ant-test", cfg.LLM.Anthropic.APIKey)
+	assert.Equal(t, "azure-key-test", cfg.LLM.Azure.APIKey)
+	assert.Equal(t, "gemini-key-test", cfg.LLM.Gemini.APIKey)
+
+	// Paper source API keys.
+	assert.Equal(t, "ss-key-test", cfg.PaperSources.SemanticScholar.APIKey)
+	assert.Equal(t, "scopus-key-test", cfg.PaperSources.Scopus.APIKey)
+
+	// Unset keys should be empty.
+	assert.Empty(t, cfg.PaperSources.PubMed.APIKey)
+}
+
+func TestLoad_APIKeysEmptyByDefault(t *testing.T) {
+	clearEnvVars(t)
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	// All API keys should be empty when no env vars are set.
+	assert.Empty(t, cfg.LLM.OpenAI.APIKey)
+	assert.Empty(t, cfg.LLM.Anthropic.APIKey)
+	assert.Empty(t, cfg.LLM.Azure.APIKey)
+	assert.Empty(t, cfg.LLM.Gemini.APIKey)
+	assert.Empty(t, cfg.PaperSources.SemanticScholar.APIKey)
+	assert.Empty(t, cfg.PaperSources.Scopus.APIKey)
+}
+
 func TestValidate_LLMConfig(t *testing.T) {
 	t.Run("max keywords zero", func(t *testing.T) {
 		cfg := validConfig()

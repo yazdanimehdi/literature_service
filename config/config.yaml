@@ -1,10 +1,13 @@
 # Literature Review Service Configuration
 #
-# This file contains default configuration values. Values can be overridden
+# This file contains non-secret configuration values. Values can be overridden
 # using environment variables with the LITREVIEW_ prefix.
 #
 # Example: LITREVIEW_DATABASE_HOST=db.example.com
 #          LITREVIEW_SERVER_HTTP_PORT=8888
+#
+# IMPORTANT: API keys and secrets must be set via environment variables only.
+# See .env.example for the full list of secret environment variables.
 
 # Server configuration
 server:
@@ -99,8 +102,9 @@ tracing:
   sample_rate: 0.1
 
 # LLM configuration for keyword extraction
+# API keys are loaded exclusively from environment variables (see .env.example).
 llm:
-  # LLM provider: openai, anthropic
+  # LLM provider: openai, anthropic, azure, bedrock, gemini, vertex
   provider: openai
   # Maximum number of keywords to extract
   max_keywords: 10
@@ -112,26 +116,63 @@ llm:
   timeout: 60s
   # Maximum retries for failed calls
   max_retries: 3
+  # Base delay between retries
+  retry_delay: 2s
   # LLM temperature setting
   temperature: 0.7
 
-  # OpenAI settings
+  # OpenAI settings (API key via LITREVIEW_LLM_OPENAI_API_KEY env var)
   openai:
-    # API key (use LITREVIEW_LLM_OPENAI_API_KEY env var)
-    api_key: ""
-    # Model to use
     model: gpt-4-turbo
-    # API base URL (for custom endpoints)
     base_url: https://api.openai.com/v1
 
-  # Anthropic settings
+  # Anthropic settings (API key via LITREVIEW_LLM_ANTHROPIC_API_KEY env var)
   anthropic:
-    # API key (use LITREVIEW_LLM_ANTHROPIC_API_KEY env var)
-    api_key: ""
-    # Model to use
     model: claude-3-sonnet-20240229
-    # API base URL (for custom endpoints)
     base_url: https://api.anthropic.com
+
+  # Azure OpenAI settings (API key via LITREVIEW_LLM_AZURE_API_KEY env var)
+  azure:
+    resource_name: ""
+    deployment_name: ""
+    api_version: "2024-08-01-preview"
+    model: ""
+
+  # AWS Bedrock settings (uses AWS credentials from environment/instance profile)
+  bedrock:
+    region: us-east-1
+    model: ""
+
+  # Google Gemini / Vertex AI settings (API key via LITREVIEW_LLM_GEMINI_API_KEY env var)
+  # For Vertex AI mode: set project + location and leave API key unset.
+  # For Gemini API mode: set API key.
+  gemini:
+    project: ""
+    location: us-central1
+    model: gemini-2.0-flash
+
+  # Resilience settings (rate limiter + circuit breaker)
+  resilience:
+    # Enable the resilience middleware
+    enabled: false
+    # Rate limiter: requests per second
+    rate_limit_rps: 10.0
+    # Rate limiter: burst size
+    rate_limit_burst: 20
+    # Rate limiter: minimum RPS during backoff
+    rate_limit_min_rps: 1.0
+    # Rate limiter: recovery window in seconds after backoff
+    rate_limit_recovery_sec: 60
+    # Circuit breaker: consecutive failures before circuit opens
+    cb_consecutive_threshold: 5
+    # Circuit breaker: failure rate (0.0-1.0) before circuit opens
+    cb_failure_rate_threshold: 0.5
+    # Circuit breaker: rolling window size for failure rate
+    cb_window_size: 20
+    # Circuit breaker: seconds to wait before probing after open
+    cb_cooldown_sec: 30
+    # Circuit breaker: probe requests in half-open state
+    cb_probe_count: 3
 
 # Kafka configuration for outbox pattern
 kafka:
@@ -161,11 +202,11 @@ outbox:
   lease_duration: 30s
 
 # Paper source API configurations
+# API keys are loaded exclusively from environment variables (see .env.example).
 paper_sources:
   # Semantic Scholar API
   semantic_scholar:
     enabled: true
-    api_key: ""
     base_url: https://api.semanticscholar.org/graph/v1
     timeout: 30s
     rate_limit: 10.0  # requests per second
@@ -174,7 +215,6 @@ paper_sources:
   # OpenAlex API
   openalex:
     enabled: true
-    api_key: ""
     base_url: https://api.openalex.org
     timeout: 30s
     rate_limit: 10.0
@@ -183,7 +223,6 @@ paper_sources:
   # Scopus API (disabled by default - requires API key)
   scopus:
     enabled: false
-    api_key: ""  # Required - use LITREVIEW_PAPER_SOURCES_SCOPUS_API_KEY
     base_url: https://api.elsevier.com/content
     timeout: 30s
     rate_limit: 5.0
@@ -192,7 +231,6 @@ paper_sources:
   # PubMed API (E-utilities)
   pubmed:
     enabled: true
-    api_key: ""  # Optional - increases rate limit if provided
     base_url: https://eutils.ncbi.nlm.nih.gov/entrez/eutils
     timeout: 30s
     rate_limit: 3.0  # NCBI recommends max 3 req/sec without API key
@@ -201,7 +239,6 @@ paper_sources:
   # bioRxiv API
   biorxiv:
     enabled: true
-    api_key: ""
     base_url: https://api.biorxiv.org
     timeout: 30s
     rate_limit: 5.0
@@ -210,7 +247,6 @@ paper_sources:
   # arXiv API
   arxiv:
     enabled: true
-    api_key: ""
     base_url: https://export.arxiv.org/api
     timeout: 30s
     rate_limit: 3.0  # arXiv recommends max 3 req/sec

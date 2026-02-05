@@ -310,6 +310,187 @@ func TestLiteratureReviewWorkflow_Cancellation(t *testing.T) {
 	assert.Contains(t, err.Error(), "extract_keywords")
 }
 
+func TestLiteratureReviewWorkflow_EmptySearchResults(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	input := newTestInput()
+
+	var llmAct *activities.LLMActivities
+	var searchAct *activities.SearchActivities
+	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
+
+	// Mock UpdateStatus - accept any input.
+	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock PublishEvent - fire-and-forget.
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock ExtractKeywords - return a single keyword.
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
+		&activities.ExtractKeywordsOutput{
+			Keywords:  []string{"CRISPR"},
+			Reasoning: "test",
+			Model:     "test-model",
+		}, nil,
+	)
+
+	// Mock SaveKeywords.
+	env.OnActivity(statusAct.SaveKeywords, mock.Anything, mock.Anything).Return(
+		&activities.SaveKeywordsOutput{
+			KeywordIDs: []uuid.UUID{uuid.New()},
+			NewCount:   1,
+		}, nil,
+	)
+
+	// Mock SearchPapers - return empty results (no papers found).
+	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
+		&activities.SearchPapersOutput{
+			Papers:     []*domain.Paper{},
+			TotalFound: 0,
+			BySource:   map[domain.SourceType]int{},
+		}, nil,
+	)
+
+	// SavePapers is NOT mocked because the workflow skips it when allPapers is empty.
+
+	env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	var result ReviewWorkflowResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+
+	assert.Equal(t, input.RequestID, result.RequestID)
+	assert.Equal(t, string(domain.ReviewStatusCompleted), result.Status)
+	assert.Equal(t, 1, result.KeywordsFound)
+	assert.Equal(t, 0, result.PapersFound)
+	assert.Equal(t, 0, result.PapersIngested)
+	assert.Equal(t, 0, result.ExpansionRounds)
+
+	env.AssertExpectations(t)
+}
+
+func TestLiteratureReviewWorkflow_LLMReturnsEmptyKeywords(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	input := newTestInput()
+
+	var llmAct *activities.LLMActivities
+	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
+
+	// Mock UpdateStatus - accept any input.
+	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock PublishEvent - fire-and-forget.
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock ExtractKeywords - return empty keywords (LLM found nothing relevant).
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
+		&activities.ExtractKeywordsOutput{
+			Keywords:  []string{},
+			Reasoning: "no keywords found",
+			Model:     "test-model",
+		}, nil,
+	)
+
+	// Mock SaveKeywords - called with empty keyword list.
+	env.OnActivity(statusAct.SaveKeywords, mock.Anything, mock.Anything).Return(
+		&activities.SaveKeywordsOutput{
+			KeywordIDs: []uuid.UUID{},
+			NewCount:   0,
+		}, nil,
+	)
+
+	// SearchPapers and SavePapers are NOT mocked because the search loop
+	// iterates over extractOutput.Keywords which is empty, so no searches run.
+
+	env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
+
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	var result ReviewWorkflowResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+
+	assert.Equal(t, input.RequestID, result.RequestID)
+	assert.Equal(t, string(domain.ReviewStatusCompleted), result.Status)
+	assert.Equal(t, 0, result.KeywordsFound)
+	assert.Equal(t, 0, result.PapersFound)
+	assert.Equal(t, 0, result.PapersIngested)
+	assert.Equal(t, 0, result.ExpansionRounds)
+
+	env.AssertExpectations(t)
+}
+
+func TestLiteratureReviewWorkflow_SearchActivityFails(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	input := newTestInput()
+
+	var llmAct *activities.LLMActivities
+	var searchAct *activities.SearchActivities
+	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
+
+	// Mock UpdateStatus - accept any input.
+	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock PublishEvent - fire-and-forget.
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
+
+	// Mock ExtractKeywords - return a single keyword.
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
+		&activities.ExtractKeywordsOutput{
+			Keywords:  []string{"CRISPR"},
+			Reasoning: "test",
+			Model:     "test-model",
+		}, nil,
+	)
+
+	// Mock SaveKeywords.
+	env.OnActivity(statusAct.SaveKeywords, mock.Anything, mock.Anything).Return(
+		&activities.SaveKeywordsOutput{
+			KeywordIDs: []uuid.UUID{uuid.New()},
+			NewCount:   1,
+		}, nil,
+	)
+
+	// Mock SearchPapers - return a non-retryable error (all sources failed).
+	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
+		nil, temporal.NewNonRetryableApplicationError("all sources failed", "SEARCH_FAILED", nil),
+	)
+
+	// SavePapers is NOT mocked because the workflow continues past search
+	// failures and ends up with zero papers collected.
+
+	env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
+
+	require.True(t, env.IsWorkflowCompleted())
+	// The workflow does NOT fail when search returns an error because the
+	// search loop logs a warning and continues (line 343-344 of review_workflow.go).
+	// With zero papers collected, SavePapers is skipped, and the workflow
+	// completes successfully with PapersFound=0.
+	require.NoError(t, env.GetWorkflowError())
+
+	var result ReviewWorkflowResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+
+	assert.Equal(t, input.RequestID, result.RequestID)
+	assert.Equal(t, string(domain.ReviewStatusCompleted), result.Status)
+	assert.Equal(t, 1, result.KeywordsFound)
+	assert.Equal(t, 0, result.PapersFound)
+	assert.Equal(t, 0, result.PapersIngested)
+	assert.Equal(t, 0, result.ExpansionRounds)
+
+	env.AssertExpectations(t)
+}
+
 func TestSelectPapersForExpansion(t *testing.T) {
 	t.Run("returns papers with abstracts up to max", func(t *testing.T) {
 		papers := []*domain.Paper{

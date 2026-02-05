@@ -11,27 +11,27 @@ import (
 	ingestionv1 "github.com/helixir/ingestion-service/api/gen/ingestion/v1"
 )
 
-func TestHashFromURL(t *testing.T) {
+func TestHashURL(t *testing.T) {
 	t.Run("returns 64-char hex string", func(t *testing.T) {
-		hash := hashFromURL("https://example.com/paper.pdf")
+		hash := hashURL("https://example.com/paper.pdf")
 		assert.Len(t, hash, 64, "SHA-256 hex digest must be 64 characters")
 	})
 
 	t.Run("different URLs produce different hashes", func(t *testing.T) {
-		hash1 := hashFromURL("https://example.com/paper1.pdf")
-		hash2 := hashFromURL("https://example.com/paper2.pdf")
+		hash1 := hashURL("https://example.com/paper1.pdf")
+		hash2 := hashURL("https://example.com/paper2.pdf")
 		assert.NotEqual(t, hash1, hash2, "different URLs should produce different hashes")
 	})
 
 	t.Run("same URL produces same hash (deterministic)", func(t *testing.T) {
 		url := "https://example.com/stable.pdf"
-		hash1 := hashFromURL(url)
-		hash2 := hashFromURL(url)
+		hash1 := hashURL(url)
+		hash2 := hashURL(url)
 		assert.Equal(t, hash1, hash2, "same URL must always produce the same hash")
 	})
 
 	t.Run("empty URL returns valid 64-char hex", func(t *testing.T) {
-		hash := hashFromURL("")
+		hash := hashURL("")
 		assert.Len(t, hash, 64, "even an empty URL should produce a 64-char hash")
 		assert.Regexp(t, regexp.MustCompile(`^[0-9a-f]{64}$`), hash, "hash must be lowercase hex")
 	})
@@ -46,7 +46,7 @@ func TestHashFromURL(t *testing.T) {
 		}
 		hexPattern := regexp.MustCompile(`^[0-9a-f]{64}$`)
 		for _, u := range urls {
-			hash := hashFromURL(u)
+			hash := hashURL(u)
 			assert.Regexp(t, hexPattern, hash, "hash for %q must be 64 lowercase hex chars", u)
 		}
 	})
@@ -135,11 +135,11 @@ func TestClient_Close(t *testing.T) {
 	})
 }
 
-func TestHashFromURL_LongURL(t *testing.T) {
+func TestHashURL_LongURL(t *testing.T) {
 	// Verify that a very long URL (10 000 bytes) still produces a valid
 	// 64-character lowercase hex SHA-256 digest.
 	longURL := "https://example.com/" + string(make([]byte, 10000))
-	hash := hashFromURL(longURL)
+	hash := hashURL(longURL)
 
 	assert.Len(t, hash, 64, "SHA-256 hex digest must be 64 characters even for very long URLs")
 	assert.Regexp(t, regexp.MustCompile(`^[0-9a-f]{64}$`), hash, "hash must be lowercase hex")
@@ -158,4 +158,111 @@ func TestClient_Close_Idempotent(t *testing.T) {
 	assert.NotPanics(t, func() {
 		_ = c.Close()
 	}, "second close must not panic")
+}
+
+func TestStartIngestionWithContentRequest(t *testing.T) {
+	t.Run("request struct has all expected fields", func(t *testing.T) {
+		req := StartIngestionWithContentRequest{
+			OrgID:          "org-123",
+			ProjectID:      "proj-456",
+			IdempotencyKey: "idem-key-789",
+			MimeType:       "application/pdf",
+			ContentHash:    "abc123def456",
+			FileSize:       1024,
+			SourceKind:     "literature_review",
+			Filename:       "paper.pdf",
+			Content:        []byte("test content"),
+		}
+
+		assert.Equal(t, "org-123", req.OrgID)
+		assert.Equal(t, "proj-456", req.ProjectID)
+		assert.Equal(t, "idem-key-789", req.IdempotencyKey)
+		assert.Equal(t, "application/pdf", req.MimeType)
+		assert.Equal(t, "abc123def456", req.ContentHash)
+		assert.Equal(t, int64(1024), req.FileSize)
+		assert.Equal(t, "literature_review", req.SourceKind)
+		assert.Equal(t, "paper.pdf", req.Filename)
+		assert.Equal(t, []byte("test content"), req.Content)
+	})
+
+	t.Run("empty content is valid", func(t *testing.T) {
+		req := StartIngestionWithContentRequest{
+			OrgID:          "org-123",
+			ProjectID:      "proj-456",
+			IdempotencyKey: "key",
+			MimeType:       "application/pdf",
+			ContentHash:    "abc123",
+			FileSize:       0,
+			SourceKind:     "literature_review",
+			Filename:       "empty.pdf",
+			Content:        []byte{},
+		}
+		assert.Empty(t, req.Content)
+		assert.Equal(t, int64(0), req.FileSize)
+	})
+}
+
+func TestStartIngestionWithContentResult(t *testing.T) {
+	t.Run("result struct has all expected fields", func(t *testing.T) {
+		result := StartIngestionWithContentResult{
+			RunID:      "run-123",
+			FileID:     "file-456",
+			Status:     "RUN_STATUS_PENDING",
+			IsExisting: false,
+		}
+
+		assert.Equal(t, "run-123", result.RunID)
+		assert.Equal(t, "file-456", result.FileID)
+		assert.Equal(t, "RUN_STATUS_PENDING", result.Status)
+		assert.False(t, result.IsExisting)
+	})
+
+	t.Run("result can represent idempotent hit", func(t *testing.T) {
+		result := StartIngestionWithContentResult{
+			RunID:      "existing-run",
+			FileID:     "existing-file",
+			Status:     "RUN_STATUS_EXECUTING",
+			IsExisting: true,
+		}
+
+		assert.True(t, result.IsExisting)
+	})
+}
+
+func TestStartIngestionResult_FileID(t *testing.T) {
+	t.Run("FileID field is present and can be populated", func(t *testing.T) {
+		result := StartIngestionResult{
+			RunID:      "run-123",
+			Status:     "RUN_STATUS_PENDING",
+			IsExisting: false,
+			FileID:     "file-abc-123",
+		}
+
+		assert.Equal(t, "file-abc-123", result.FileID)
+	})
+
+	t.Run("FileID can be empty string", func(t *testing.T) {
+		result := StartIngestionResult{
+			RunID:      "run-123",
+			Status:     "RUN_STATUS_PENDING",
+			IsExisting: false,
+			FileID:     "",
+		}
+
+		assert.Empty(t, result.FileID)
+	})
+}
+
+func TestStreamingConstants(t *testing.T) {
+	t.Run("chunk size is 32KB", func(t *testing.T) {
+		assert.Equal(t, 32*1024, streamingChunkSize)
+	})
+
+	t.Run("streaming timeout is 5 minutes", func(t *testing.T) {
+		assert.Equal(t, 5*time.Minute, streamingTimeout)
+	})
+
+	t.Run("max content size is 100MB", func(t *testing.T) {
+		assert.Equal(t, 100*1024*1024, maxContentSize)
+	})
 }

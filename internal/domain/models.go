@@ -54,6 +54,19 @@ func (s ReviewStatus) IsTerminal() bool {
 	}
 }
 
+// PauseReason indicates why a literature review workflow was paused.
+// These values must match the database enum pause_reason.
+type PauseReason string
+
+const (
+	// PauseReasonUser indicates the workflow was manually paused by a user.
+	PauseReasonUser PauseReason = "user"
+
+	// PauseReasonBudgetExhausted indicates the workflow was paused because
+	// the project ran out of LLM credits or budget allocation.
+	PauseReasonBudgetExhausted PauseReason = "budget_exhausted"
+)
+
 // SearchStatus represents the state of a keyword search operation.
 // These values must match the database enum search_status.
 type SearchStatus string

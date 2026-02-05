@@ -1477,6 +1477,22 @@ func TestNewExternalAPIError(t *testing.T) {
 // Tests for TenantFromIDs constructor
 // ---------------------------------------------------------------------------
 
+func TestPauseReason_String(t *testing.T) {
+	tests := []struct {
+		reason   PauseReason
+		expected string
+	}{
+		{PauseReasonUser, "user"},
+		{PauseReasonBudgetExhausted, "budget_exhausted"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			assert.Equal(t, tt.expected, string(tt.reason))
+		})
+	}
+}
+
 func TestTenantFromIDs(t *testing.T) {
 	tests := []struct {
 		name      string

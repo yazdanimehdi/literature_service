@@ -134,3 +134,28 @@ func TestClient_Close(t *testing.T) {
 		assert.NoError(t, err)
 	})
 }
+
+func TestHashFromURL_LongURL(t *testing.T) {
+	// Verify that a very long URL (10 000 bytes) still produces a valid
+	// 64-character lowercase hex SHA-256 digest.
+	longURL := "https://example.com/" + string(make([]byte, 10000))
+	hash := hashFromURL(longURL)
+
+	assert.Len(t, hash, 64, "SHA-256 hex digest must be 64 characters even for very long URLs")
+	assert.Regexp(t, regexp.MustCompile(`^[0-9a-f]{64}$`), hash, "hash must be lowercase hex")
+}
+
+func TestClient_Close_Idempotent(t *testing.T) {
+	// Calling Close() twice on the same client must not panic.
+	c, err := NewClient(Config{Address: "localhost:50051"})
+	require.NoError(t, err)
+	require.NotNil(t, c)
+
+	err = c.Close()
+	assert.NoError(t, err, "first close should succeed")
+
+	// Second close — gRPC conn may return an error, but it must not panic.
+	assert.NotPanics(t, func() {
+		_ = c.Close()
+	}, "second close must not panic")
+}

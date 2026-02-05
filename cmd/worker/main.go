@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	sharedllm "github.com/helixir/llm"
 	"github.com/rs/zerolog"
 	"go.temporal.io/sdk/client"
 
@@ -30,6 +31,32 @@ import (
 	"github.com/helixir/literature-review-service/internal/temporal/workflows"
 	outboxpg "github.com/helixir/outbox/postgres"
 )
+
+// Compile-time check that batchEmbedderAdapter implements activities.Embedder.
+var _ activities.Embedder = (*batchEmbedderAdapter)(nil)
+
+// batchEmbedderAdapter adapts the shared llm.Embedder to the activities.Embedder
+// interface for use in EmbeddingActivities.
+type batchEmbedderAdapter struct {
+	embedder sharedllm.Embedder
+}
+
+// EmbedBatch implements activities.Embedder by delegating to the underlying
+// llm.Embedder which natively supports batch embedding.
+func (a *batchEmbedderAdapter) EmbedBatch(ctx context.Context, texts []string) ([][]float32, error) {
+	if len(texts) == 0 {
+		return nil, nil
+	}
+
+	resp, err := a.embedder.Embed(ctx, sharedllm.EmbedRequest{
+		Input: texts,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("batch embed: %w", err)
+	}
+
+	return resp.Embeddings, nil
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -187,12 +214,15 @@ func run() error {
 
 	// Create dedup checker.
 	dedupAdapter := dedup.NewQdrantAdapter(qdrantClient, paperRepo)
-	embedderAdapter := dedup.NewEmbedderAdapter(embedder)
-	dedupChecker := dedup.NewChecker(dedupAdapter, embedderAdapter, dedup.CheckerConfig{
+	dedupEmbedderAdapter := dedup.NewEmbedderAdapter(embedder)
+	dedupChecker := dedup.NewChecker(dedupAdapter, dedupEmbedderAdapter, dedup.CheckerConfig{
 		SimilarityThreshold: cfg.Qdrant.SimilarityThreshold,
 		AuthorThreshold:     cfg.Qdrant.AuthorThreshold,
 		TopK:                cfg.Qdrant.TopK,
 	})
+
+	// Create batch embedder adapter for embedding activities.
+	embeddingAdapter := &batchEmbedderAdapter{embedder: embedder}
 
 	// Create outbox publisher for event activities.
 	outboxRepo := outboxpg.NewRepository(db.Pool(), nil)
@@ -227,8 +257,9 @@ func run() error {
 		return fmt.Errorf("create worker manager: %w", err)
 	}
 
-	// Register the workflow.
+	// Register workflows.
 	manager.RegisterWorkflow(workflows.LiteratureReviewWorkflow)
+	manager.RegisterWorkflow(workflows.PaperProcessingWorkflow)
 
 	// Create and register all activity structs.
 	budgetReporter := activities.NewOutboxBudgetReporter(db.Pool())
@@ -240,6 +271,7 @@ func run() error {
 	ingestionActivities := activities.NewIngestionActivities(ingestionClient, pdfDownloader, ingestionClient, metrics)
 	eventActivities := activities.NewEventActivities(publisher)
 	dedupActivities := activities.NewDedupActivities(dedupChecker)
+	embeddingActivities := activities.NewEmbeddingActivities(embeddingAdapter)
 
 	manager.RegisterActivity(llmActivities)
 	manager.RegisterActivity(searchActivities)
@@ -247,6 +279,7 @@ func run() error {
 	manager.RegisterActivity(ingestionActivities)
 	manager.RegisterActivity(eventActivities)
 	manager.RegisterActivity(dedupActivities)
+	manager.RegisterActivity(embeddingActivities)
 
 	logger.Info().
 		Str("task_queue", cfg.Temporal.TaskQueue).

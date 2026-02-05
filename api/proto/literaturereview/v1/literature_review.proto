@@ -30,6 +30,18 @@ service LiteratureReviewService {
 
   // StreamLiteratureReviewProgress streams real-time progress updates.
   rpc StreamLiteratureReviewProgress(StreamLiteratureReviewProgressRequest) returns (stream LiteratureReviewProgressEvent);
+
+  // PauseReview pauses a running review at the next checkpoint.
+  rpc PauseReview(PauseReviewRequest) returns (PauseReviewResponse);
+
+  // ResumeReview resumes a paused review.
+  rpc ResumeReview(ResumeReviewRequest) returns (ResumeReviewResponse);
+
+  // StopReview gracefully stops a review and saves partial results.
+  rpc StopReview(StopReviewRequest) returns (StopReviewResponse);
+
+  // ListPausedReviews returns all paused reviews for an org/project.
+  rpc ListPausedReviews(ListPausedReviewsRequest) returns (ListPausedReviewsResponse);
 }
 
 // Enums
@@ -45,6 +57,7 @@ enum ReviewStatus {
   REVIEW_STATUS_FAILED = 7;
   REVIEW_STATUS_CANCELLED = 8;
   REVIEW_STATUS_PARTIAL = 9;
+  REVIEW_STATUS_PAUSED = 10;
 }
 
 enum IngestionStatus {
@@ -192,6 +205,57 @@ message LiteratureReviewProgressEvent {
     IngestionProgressEvent ingestion_progress = 13;
     ErrorEvent error = 14;
   }
+}
+
+message PauseReviewRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string review_id = 3;
+}
+
+message PauseReviewResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ResumeReviewRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string review_id = 3;
+}
+
+message ResumeReviewResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message StopReviewRequest {
+  string org_id = 1;
+  string project_id = 2;
+  string review_id = 3;
+}
+
+message StopReviewResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message ListPausedReviewsRequest {
+  string org_id = 1;
+  string project_id = 2;  // Optional - filter by project
+  string pause_reason = 3; // Optional - "user" or "budget_exhausted"
+}
+
+message ListPausedReviewsResponse {
+  repeated PausedReview reviews = 1;
+}
+
+message PausedReview {
+  string review_id = 1;
+  string project_id = 2;
+  string pause_reason = 3;
+  google.protobuf.Timestamp paused_at = 4;
+  string paused_at_phase = 5;
 }
 
 // Domain messages

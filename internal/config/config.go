@@ -50,6 +50,8 @@ type Config struct {
 	IngestionService IngestionServiceConfig `mapstructure:"ingestion_service"`
 	// Qdrant contains Qdrant vector store settings for dedup.
 	Qdrant QdrantConfig `mapstructure:"qdrant"`
+	// Workflow contains workflow execution configuration.
+	Workflow WorkflowConfig `mapstructure:"workflow"`
 }
 
 // ServerConfig holds server configuration.
@@ -113,6 +115,100 @@ type TemporalConfig struct {
 	Namespace string `mapstructure:"namespace"`
 	// TaskQueue is the task queue name for literature review workflows.
 	TaskQueue string `mapstructure:"task_queue"`
+}
+
+// WorkflowConfig holds workflow execution configuration.
+type WorkflowConfig struct {
+	// Search contains search phase configuration.
+	Search SearchPhaseConfig `mapstructure:"search"`
+	// ChildWorkflow contains child workflow configuration.
+	ChildWorkflow ChildWorkflowConfig `mapstructure:"child_workflow"`
+	// Embedding contains embedding activity configuration.
+	Embedding ActivityConfig `mapstructure:"embedding"`
+	// Dedup contains dedup activity configuration.
+	Dedup DedupConfig `mapstructure:"dedup"`
+	// Ingestion contains ingestion activity configuration.
+	Ingestion IngestionConfig `mapstructure:"ingestion"`
+	// Timeouts contains various timeout settings.
+	Timeouts WorkflowTimeouts `mapstructure:"timeouts"`
+	// Batching contains paper batching configuration.
+	Batching BatchingConfig `mapstructure:"batching"`
+}
+
+// RetryPolicyConfig holds retry policy settings.
+type RetryPolicyConfig struct {
+	// InitialInterval is the first retry backoff interval.
+	InitialInterval time.Duration `mapstructure:"initial_interval"`
+	// BackoffCoefficient is the backoff multiplier.
+	BackoffCoefficient float64 `mapstructure:"backoff_coefficient"`
+	// MaximumInterval is the maximum retry backoff interval.
+	MaximumInterval time.Duration `mapstructure:"maximum_interval"`
+	// MaximumAttempts is the maximum number of attempts (0 = unlimited).
+	MaximumAttempts int32 `mapstructure:"maximum_attempts"`
+}
+
+// SearchPhaseConfig holds search phase configuration.
+type SearchPhaseConfig struct {
+	// RetryPolicy is the default retry policy for search activities.
+	RetryPolicy RetryPolicyConfig `mapstructure:"retry_policy"`
+	// PerSource contains per-source retry overrides.
+	PerSource map[string]RetryPolicyConfig `mapstructure:"per_source"`
+	// RateLimits contains per-source rate limits (requests per second).
+	RateLimits map[string]float64 `mapstructure:"rate_limits"`
+}
+
+// ChildWorkflowConfig holds child workflow configuration.
+type ChildWorkflowConfig struct {
+	// RetryPolicy is the retry policy for child workflows.
+	RetryPolicy RetryPolicyConfig `mapstructure:"retry_policy"`
+}
+
+// ActivityConfig holds generic activity configuration.
+type ActivityConfig struct {
+	// RetryPolicy is the retry policy for the activity.
+	RetryPolicy RetryPolicyConfig `mapstructure:"retry_policy"`
+}
+
+// DedupConfig holds dedup activity configuration.
+type DedupConfig struct {
+	// RetryPolicy is the retry policy for dedup activities.
+	RetryPolicy RetryPolicyConfig `mapstructure:"retry_policy"`
+	// SkipOnFailure continues without dedup if all retries exhausted.
+	SkipOnFailure bool `mapstructure:"skip_on_failure"`
+}
+
+// IngestionConfig holds ingestion activity configuration.
+type IngestionConfig struct {
+	// RetryPolicy is the retry policy for ingestion activities.
+	RetryPolicy RetryPolicyConfig `mapstructure:"retry_policy"`
+	// PDFDownloadAttempts is max retries for PDF download per paper.
+	PDFDownloadAttempts int32 `mapstructure:"pdf_download_attempts"`
+	// StreamUploadAttempts is max retries for stream upload per paper.
+	StreamUploadAttempts int32 `mapstructure:"stream_upload_attempts"`
+}
+
+// WorkflowTimeouts holds timeout settings.
+type WorkflowTimeouts struct {
+	// ChildWorkflowCompletion is max wait for child to signal completion.
+	ChildWorkflowCompletion time.Duration `mapstructure:"child_workflow_completion"`
+	// BatchAccumulation is time before flushing partial batch.
+	BatchAccumulation time.Duration `mapstructure:"batch_accumulation"`
+	// SearchActivity is timeout for search activities.
+	SearchActivity time.Duration `mapstructure:"search_activity"`
+	// EmbeddingActivity is timeout for embedding activities.
+	EmbeddingActivity time.Duration `mapstructure:"embedding_activity"`
+	// DedupActivity is timeout for dedup activities.
+	DedupActivity time.Duration `mapstructure:"dedup_activity"`
+	// IngestionActivity is timeout for ingestion activities.
+	IngestionActivity time.Duration `mapstructure:"ingestion_activity"`
+}
+
+// BatchingConfig holds paper batching configuration.
+type BatchingConfig struct {
+	// BatchSize is the number of papers per batch.
+	BatchSize int `mapstructure:"batch_size"`
+	// BatchTimeout is time to wait before flushing partial batch.
+	BatchTimeout time.Duration `mapstructure:"batch_timeout"`
 }
 
 // LoggingConfig holds logging configuration.
@@ -600,6 +696,48 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("qdrant.similarity_threshold", 0.95)
 	v.SetDefault("qdrant.author_threshold", 0.5)
 	v.SetDefault("qdrant.top_k", 5)
+
+	// Workflow defaults
+	v.SetDefault("workflow.search.retry_policy.initial_interval", "2s")
+	v.SetDefault("workflow.search.retry_policy.backoff_coefficient", 2.0)
+	v.SetDefault("workflow.search.retry_policy.maximum_interval", "1m")
+	v.SetDefault("workflow.search.retry_policy.maximum_attempts", 5)
+	v.SetDefault("workflow.search.rate_limits.semantic_scholar", 100.0)
+	v.SetDefault("workflow.search.rate_limits.openalex", 10.0)
+	v.SetDefault("workflow.search.rate_limits.pubmed", 3.0)
+
+	v.SetDefault("workflow.child_workflow.retry_policy.initial_interval", "5s")
+	v.SetDefault("workflow.child_workflow.retry_policy.backoff_coefficient", 2.0)
+	v.SetDefault("workflow.child_workflow.retry_policy.maximum_interval", "2m")
+	v.SetDefault("workflow.child_workflow.retry_policy.maximum_attempts", 3)
+
+	v.SetDefault("workflow.embedding.retry_policy.initial_interval", "1s")
+	v.SetDefault("workflow.embedding.retry_policy.backoff_coefficient", 2.0)
+	v.SetDefault("workflow.embedding.retry_policy.maximum_interval", "30s")
+	v.SetDefault("workflow.embedding.retry_policy.maximum_attempts", 5)
+
+	v.SetDefault("workflow.dedup.retry_policy.initial_interval", "500ms")
+	v.SetDefault("workflow.dedup.retry_policy.backoff_coefficient", 2.0)
+	v.SetDefault("workflow.dedup.retry_policy.maximum_interval", "10s")
+	v.SetDefault("workflow.dedup.retry_policy.maximum_attempts", 3)
+	v.SetDefault("workflow.dedup.skip_on_failure", true)
+
+	v.SetDefault("workflow.ingestion.retry_policy.initial_interval", "2s")
+	v.SetDefault("workflow.ingestion.retry_policy.backoff_coefficient", 2.0)
+	v.SetDefault("workflow.ingestion.retry_policy.maximum_interval", "1m")
+	v.SetDefault("workflow.ingestion.retry_policy.maximum_attempts", 5)
+	v.SetDefault("workflow.ingestion.pdf_download_attempts", 3)
+	v.SetDefault("workflow.ingestion.stream_upload_attempts", 3)
+
+	v.SetDefault("workflow.timeouts.child_workflow_completion", "10m")
+	v.SetDefault("workflow.timeouts.batch_accumulation", "5s")
+	v.SetDefault("workflow.timeouts.search_activity", "5m")
+	v.SetDefault("workflow.timeouts.embedding_activity", "2m")
+	v.SetDefault("workflow.timeouts.dedup_activity", "1m")
+	v.SetDefault("workflow.timeouts.ingestion_activity", "5m")
+
+	v.SetDefault("workflow.batching.batch_size", 5)
+	v.SetDefault("workflow.batching.batch_timeout", "5s")
 }
 
 // Validate validates the configuration.

@@ -139,6 +139,7 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/prometheus/common v0.66.1 // indirect
 	github.com/prometheus/procfs v0.17.0 // indirect
+	github.com/qdrant/go-client v1.16.2 // indirect
 	github.com/rcrowley/go-metrics v0.0.0-20250401214520-65e299d6c5c9 // indirect
 	github.com/robfig/cron v1.2.0 // indirect
 	github.com/sagikazarmark/locafero v0.11.0 // indirect

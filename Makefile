@@ -1,6 +1,7 @@
 # Literature Review Service Makefile
 
-.PHONY: all build test lint clean proto migrate
+.PHONY: all build test lint clean proto migrate \
+	test-race test-integration test-e2e test-chaos test-security test-fuzz test-load test-all
 
 # Go parameters
 GOCMD=go
@@ -44,6 +45,42 @@ test:
 test-coverage:
 	$(GOTEST) -v -race -coverprofile=coverage.out ./...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
+
+# Run tests with race detector (multiple passes for intermittent races)
+test-race:
+	$(GOTEST) -race -count=3 ./...
+
+# Run integration tests (requires docker-compose.test.yml services running)
+test-integration:
+	docker compose -f docker-compose.test.yml up -d --wait
+	$(GOTEST) -tags integration -v -count=1 ./tests/integration/... || (docker compose -f docker-compose.test.yml down && exit 1)
+	docker compose -f docker-compose.test.yml down
+
+# Run E2E tests (requires full stack running)
+test-e2e:
+	$(GOTEST) -tags e2e -v -count=1 ./tests/e2e/...
+
+# Run chaos tests
+test-chaos:
+	$(GOTEST) -race -v -count=1 ./tests/chaos/...
+
+# Run security tests
+test-security:
+	$(GOTEST) -v -count=1 ./internal/server/http/... -run "TestSQL|TestResponse|TestMaxQuery|TestXSS|TestWriteDomain|TestLIKE"
+	$(GOTEST) -v -count=1 ./internal/repository/... -run "TestPgKeywordRepository_LIKEPatternInjection"
+	$(GOTEST) -v -count=1 ./tests/security/...
+
+# Run fuzz tests (30 second fuzz time)
+test-fuzz:
+	$(GOTEST) -fuzz FuzzStartReviewQuery -fuzztime 30s ./tests/security/...
+
+# Run load tests (requires k6 and running server)
+test-load:
+	k6 run tests/loadtest/review_lifecycle.js
+	k6 run tests/loadtest/list_reviews.js
+
+# Run all test suites (unit + race + chaos + security)
+test-all: test test-race test-chaos test-security
 
 # Lint
 lint:

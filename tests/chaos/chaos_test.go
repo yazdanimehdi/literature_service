@@ -53,6 +53,10 @@ func TestChaos_LLMFailsThenRecovers(t *testing.T) {
 	testSuite := &testsuite.WorkflowTestSuite{}
 	env := testSuite.NewTestWorkflowEnvironment()
 
+	// Register workflows for child workflow support.
+	env.RegisterWorkflow(workflows.LiteratureReviewWorkflow)
+	env.RegisterWorkflow(workflows.PaperProcessingWorkflow)
+
 	input := newChaosInput()
 
 	// Activity nil-pointer references for method-based registration.
@@ -60,6 +64,9 @@ func TestChaos_LLMFailsThenRecovers(t *testing.T) {
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
 	var eventAct *activities.EventActivities
+	var embeddingAct *activities.EmbeddingActivities
+	var dedupAct *activities.DedupActivities
+	var ingestionAct *activities.IngestionActivities
 
 	// Mock UpdateStatus -- accept all calls.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
@@ -96,19 +103,20 @@ func TestChaos_LLMFailsThenRecovers(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock SearchPapers -- return a paper for each keyword.
-	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
-		&activities.SearchPapersOutput{
+	// Mock SearchSingleSource -- return a paper for each keyword.
+	paperID := uuid.New()
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Source: domain.SourceTypeSemanticScholar,
 			Papers: []*domain.Paper{
 				{
-					ID:          uuid.New(),
+					ID:          paperID,
 					CanonicalID: "doi:10.9999/chaos",
 					Title:       "Chaos Resilience Paper",
 					Abstract:    "Testing fault tolerance in distributed systems.",
 				},
 			},
 			TotalFound: 1,
-			BySource:   map[domain.SourceType]int{domain.SourceTypeSemanticScholar: 1},
 		}, nil,
 	)
 
@@ -119,6 +127,33 @@ func TestChaos_LLMFailsThenRecovers(t *testing.T) {
 			DuplicateCount: 0,
 		}, nil,
 	)
+
+	// Mock child workflow activities: EmbedPapers, BatchDedup, DownloadAndIngestPapers.
+	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
+		&activities.EmbedPapersOutput{
+			Embeddings: map[string][]float32{
+				"doi:10.9999/chaos": make([]float32, 768),
+			},
+		}, nil,
+	)
+
+	env.OnActivity(dedupAct.BatchDedup, mock.Anything, mock.Anything).Return(
+		&activities.BatchDedupOutput{
+			NonDuplicateIDs: []uuid.UUID{paperID},
+			DuplicateCount:  0,
+		}, nil,
+	)
+
+	// Papers don't have PDF URLs, so ingestion will be skipped.
+	// But mock it anyway in case the workflow calls it.
+	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.Anything).Return(
+		&activities.DownloadAndIngestOutput{
+			Successful: 0,
+			Failed:     0,
+			Skipped:    1,
+			Results:    nil,
+		}, nil,
+	).Maybe()
 
 	env.ExecuteWorkflow(workflows.LiteratureReviewWorkflow, input)
 
@@ -178,9 +213,9 @@ func TestChaos_SearchAllSourcesFail(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock SearchPapers -- return non-retryable error for all calls.
+	// Mock SearchSingleSource -- return non-retryable error for all calls.
 	// This simulates all paper sources being unavailable.
-	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
 		nil, temporal.NewNonRetryableApplicationError(
 			"all sources unavailable",
 			"SEARCH_FAILED",
@@ -190,6 +225,10 @@ func TestChaos_SearchAllSourcesFail(t *testing.T) {
 
 	// SavePapers is NOT mocked because the workflow skips it when no papers
 	// are collected (allPapers is empty).
+
+	// Register workflows for child workflow support.
+	env.RegisterWorkflow(workflows.LiteratureReviewWorkflow)
+	env.RegisterWorkflow(workflows.PaperProcessingWorkflow)
 
 	env.ExecuteWorkflow(workflows.LiteratureReviewWorkflow, input)
 
@@ -216,12 +255,16 @@ func TestChaos_SearchAllSourcesFail(t *testing.T) {
 // TestChaos_IngestionNonFatal verifies that the workflow completes
 // successfully when DownloadAndIngestPapers fails entirely.
 //
-// The ingestion phase is explicitly non-fatal: the workflow catches the error,
-// logs a warning, and proceeds to the completion phase. This test confirms that
-// paper discovery results are preserved even when PDF download/ingestion fails.
+// The ingestion phase is explicitly non-fatal: the child workflow catches the error,
+// logs a warning, and proceeds to completion. This test confirms that paper discovery
+// results are preserved even when PDF download/ingestion fails.
 func TestChaos_IngestionNonFatal(t *testing.T) {
 	testSuite := &testsuite.WorkflowTestSuite{}
 	env := testSuite.NewTestWorkflowEnvironment()
+
+	// Register workflows for child workflow support.
+	env.RegisterWorkflow(workflows.LiteratureReviewWorkflow)
+	env.RegisterWorkflow(workflows.PaperProcessingWorkflow)
 
 	input := newChaosInput()
 
@@ -231,6 +274,7 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 	var ingestionAct *activities.IngestionActivities
 	var eventAct *activities.EventActivities
 	var dedupAct *activities.DedupActivities
+	var embeddingAct *activities.EmbeddingActivities
 
 	// Mock UpdateStatus -- accept all calls.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
@@ -255,10 +299,11 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock SearchPapers -- return papers WITH PDF URLs to trigger ingestion.
+	// Mock SearchSingleSource -- return papers WITH PDF URLs to trigger ingestion.
 	paperID := uuid.New()
-	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
-		&activities.SearchPapersOutput{
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Source: domain.SourceTypeSemanticScholar,
 			Papers: []*domain.Paper{
 				{
 					ID:          paperID,
@@ -269,7 +314,6 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 				},
 			},
 			TotalFound: 1,
-			BySource:   map[domain.SourceType]int{domain.SourceTypeSemanticScholar: 1},
 		}, nil,
 	)
 
@@ -281,12 +325,20 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock DedupPapers -- all papers are non-duplicates.
-	env.OnActivity(dedupAct.DedupPapers, mock.Anything, mock.Anything).Return(
-		&activities.DedupPapersOutput{
+	// Mock EmbedPapers -- required by child workflow.
+	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
+		&activities.EmbedPapersOutput{
+			Embeddings: map[string][]float32{
+				"doi:10.9999/ingestion-chaos": make([]float32, 768),
+			},
+		}, nil,
+	)
+
+	// Mock BatchDedup -- all papers are non-duplicates.
+	env.OnActivity(dedupAct.BatchDedup, mock.Anything, mock.Anything).Return(
+		&activities.BatchDedupOutput{
 			NonDuplicateIDs: []uuid.UUID{paperID},
 			DuplicateCount:  0,
-			SkippedCount:    0,
 		}, nil,
 	)
 
@@ -314,9 +366,10 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 	assert.Equal(t, string(domain.ReviewStatusCompleted), result.Status)
 	assert.Equal(t, 1, result.KeywordsFound)
 	assert.Equal(t, 1, result.PapersFound)
-	// PapersIngested reflects only the SavePapers count since ingestion failed.
-	// The ingestion branch's downloadOutput.Successful is not added when ingestion errors.
-	assert.Equal(t, 1, result.PapersIngested, "SavePapers count is preserved despite ingestion failure")
+	// When ingestion fails completely, PapersIngested is 0 because no papers
+	// were actually ingested. PapersFailed should be 1.
+	assert.Equal(t, 0, result.PapersIngested, "no papers ingested due to ingestion failure")
+	assert.Equal(t, 1, result.PapersFailed, "paper failed due to ingestion error")
 
 	env.AssertExpectations(t)
 }

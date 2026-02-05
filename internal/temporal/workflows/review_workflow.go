@@ -10,6 +10,8 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
+	sharedllm "github.com/helixir/llm"
+
 	"github.com/helixir/literature-review-service/internal/domain"
 	litemporal "github.com/helixir/literature-review-service/internal/temporal"
 	"github.com/helixir/literature-review-service/internal/temporal/activities"
@@ -835,4 +837,9 @@ func extractAuthors(p *domain.Paper) []string {
 		}
 	}
 	return names
+}
+
+// isBudgetExhausted checks if an error is due to budget exhaustion.
+func isBudgetExhausted(err error) bool {
+	return sharedllm.ErrorKindOf(err) == sharedllm.ErrBudgetExceeded
 }

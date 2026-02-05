@@ -3,12 +3,14 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -92,6 +94,180 @@ func TestDatabaseConfig_DSN(t *testing.T) {
 func TestHealthCheckTimeout(t *testing.T) {
 	t.Run("health check timeout is 5 seconds", func(t *testing.T) {
 		assert.Equal(t, 5*time.Second, HealthCheckTimeout)
+	})
+}
+
+// TestHealthStatus_Fields verifies HealthStatus struct construction and JSON serialization.
+func TestHealthStatus_Fields(t *testing.T) {
+	t.Run("all fields populated", func(t *testing.T) {
+		hs := HealthStatus{
+			Status:            "unhealthy",
+			Error:             "connection refused",
+			TotalConns:        10,
+			AcquiredConns:     3,
+			IdleConns:         7,
+			ConstructingConns: 0,
+			MaxConns:          50,
+		}
+
+		assert.Equal(t, "unhealthy", hs.Status)
+		assert.Equal(t, "connection refused", hs.Error)
+		assert.Equal(t, int32(10), hs.TotalConns)
+		assert.Equal(t, int32(3), hs.AcquiredConns)
+		assert.Equal(t, int32(7), hs.IdleConns)
+		assert.Equal(t, int32(0), hs.ConstructingConns)
+		assert.Equal(t, int32(50), hs.MaxConns)
+
+		// Verify JSON includes error field when populated
+		data, err := json.Marshal(hs)
+		require.NoError(t, err)
+		assert.Contains(t, string(data), `"error":"connection refused"`)
+	})
+
+	t.Run("empty error field is omitted from JSON", func(t *testing.T) {
+		hs := HealthStatus{
+			Status:   "healthy",
+			Error:    "",
+			MaxConns: 50,
+		}
+
+		data, err := json.Marshal(hs)
+		require.NoError(t, err)
+
+		assert.NotContains(t, string(data), `"error"`)
+		assert.Contains(t, string(data), `"status":"healthy"`)
+	})
+
+	t.Run("empty error field round-trips through JSON", func(t *testing.T) {
+		original := HealthStatus{
+			Status:   "healthy",
+			MaxConns: 25,
+		}
+
+		data, err := json.Marshal(original)
+		require.NoError(t, err)
+
+		var decoded HealthStatus
+		err = json.Unmarshal(data, &decoded)
+		require.NoError(t, err)
+
+		assert.Equal(t, original.Status, decoded.Status)
+		assert.Equal(t, "", decoded.Error)
+		assert.Equal(t, original.MaxConns, decoded.MaxConns)
+	})
+}
+
+// TestDatabaseConfig_DSN_EdgeCases tests DSN generation with edge-case inputs.
+func TestDatabaseConfig_DSN_EdgeCases(t *testing.T) {
+	t.Run("special characters in password are URL-encoded", func(t *testing.T) {
+		cfg := &config.DatabaseConfig{
+			Host:     "localhost",
+			Port:     5432,
+			User:     "admin",
+			Password: "p@ss:w0rd!#$%^&*()",
+			Name:     "testdb",
+			SSLMode:  "disable",
+		}
+
+		dsn := cfg.DSN()
+
+		// The password must be URL-encoded in the DSN
+		assert.Contains(t, dsn, "postgres://")
+		// Verify the raw special characters are NOT present unescaped
+		assert.NotContains(t, dsn, "p@ss:w0rd")
+		// Verify the DSN is parseable by pgxpool
+		_, err := parseTestDSN(dsn)
+		assert.NoError(t, err)
+	})
+
+	t.Run("empty password produces valid DSN", func(t *testing.T) {
+		cfg := &config.DatabaseConfig{
+			Host:     "localhost",
+			Port:     5432,
+			User:     "admin",
+			Password: "",
+			Name:     "testdb",
+			SSLMode:  "disable",
+		}
+
+		dsn := cfg.DSN()
+
+		// Format: postgres://admin:@localhost:5432/testdb?...
+		assert.Contains(t, dsn, "admin:@localhost")
+		assert.Contains(t, dsn, "postgres://")
+		assert.Contains(t, dsn, "testdb")
+	})
+
+	t.Run("non-default port is included in DSN", func(t *testing.T) {
+		cfg := &config.DatabaseConfig{
+			Host:     "db.example.com",
+			Port:     15432,
+			User:     "user",
+			Password: "pass",
+			Name:     "mydb",
+			SSLMode:  "require",
+		}
+
+		dsn := cfg.DSN()
+
+		assert.Contains(t, dsn, "db.example.com:15432")
+		assert.Contains(t, dsn, "sslmode=require")
+	})
+
+	t.Run("connect timeout zero omits parameter", func(t *testing.T) {
+		cfg := &config.DatabaseConfig{
+			Host:           "localhost",
+			Port:           5432,
+			User:           "user",
+			Password:       "pass",
+			Name:           "testdb",
+			SSLMode:        "disable",
+			ConnectTimeout: 0,
+		}
+
+		dsn := cfg.DSN()
+
+		assert.NotContains(t, dsn, "connect_timeout")
+	})
+}
+
+// parseTestDSN is a helper that validates a DSN string is parseable by pgxpool.
+func parseTestDSN(dsn string) (interface{}, error) {
+	// Use pgxpool.ParseConfig to validate the DSN is well-formed.
+	return pgxpool.ParseConfig(dsn)
+}
+
+// TestNew_InvalidConfig tests that New returns an error for unreachable configurations.
+func TestNew_InvalidConfig(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	logger := zerolog.Nop()
+
+	t.Run("unreachable host returns error", func(t *testing.T) {
+		// 192.0.2.1 is TEST-NET-1 (RFC 5737), guaranteed unroutable.
+		cfg := &config.DatabaseConfig{
+			Host:              "192.0.2.1",
+			Port:              5432,
+			Name:              "testdb",
+			User:              "user",
+			Password:          "pass",
+			SSLMode:           "disable",
+			MaxConns:          5,
+			MinConns:          1,
+			MaxConnLifetime:   time.Hour,
+			MaxConnIdleTime:   30 * time.Minute,
+			HealthCheckPeriod: 30 * time.Second,
+			ConnectTimeout:    2 * time.Second,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		db, err := New(ctx, cfg, logger)
+		require.Error(t, err)
+		assert.Nil(t, db)
 	})
 }
 

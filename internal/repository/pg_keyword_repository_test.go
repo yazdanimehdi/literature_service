@@ -930,6 +930,109 @@ func TestPgKeywordRepository_ErrorHandling(t *testing.T) {
 	})
 }
 
+func TestPgKeywordRepository_LIKEPatternInjection(t *testing.T) {
+	testCases := []struct {
+		name           string
+		inputFilter    string
+		expectedArg    string
+		description    string
+	}{
+		{
+			name:        "percent sign",
+			inputFilter: "%",
+			expectedArg: "%\\%%",
+			description: "single % should be escaped to \\%",
+		},
+		{
+			name:        "multiple percent signs",
+			inputFilter: "%%",
+			expectedArg: "%\\%\\%%",
+			description: "multiple %% should be escaped to \\%\\%",
+		},
+		{
+			name:        "underscore and percent",
+			inputFilter: "_%",
+			expectedArg: "%\\_\\%%",
+			description: "_ and % should be escaped to \\_ and \\%",
+		},
+		{
+			name:        "percent with text",
+			inputFilter: "%admin%",
+			expectedArg: "%\\%admin\\%%",
+			description: "%admin% should be escaped to \\%admin\\%",
+		},
+		{
+			name:        "legitimate percentage text",
+			inputFilter: "100%",
+			expectedArg: "%100\\%%",
+			description: "100% should be escaped to 100\\%",
+		},
+		{
+			name:        "underscore alone",
+			inputFilter: "_ser",
+			expectedArg: "%\\_ser%",
+			description: "_ser should be escaped to \\_ser",
+		},
+		{
+			name:        "backslash",
+			inputFilter: "\\",
+			expectedArg: "%\\\\%",
+			description: "backslash should be escaped to \\\\",
+		},
+		{
+			name:        "backslash with percent",
+			inputFilter: "\\%",
+			expectedArg: "%\\\\\\%%",
+			description: "\\% should be escaped to \\\\\\%",
+		},
+		{
+			name:        "normal text no special chars",
+			inputFilter: "learning",
+			expectedArg: "%learning%",
+			description: "normal text should just get wrapped with %",
+		},
+		{
+			name:        "mixed special chars",
+			inputFilter: "test_%_pattern",
+			expectedArg: "%test\\_\\%\\_pattern%",
+			description: "test_%_pattern should have all special chars escaped",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock, err := pgxmock.NewPool()
+			require.NoError(t, err)
+			defer mock.Close()
+
+			repo := NewPgKeywordRepository(mock)
+			ctx := context.Background()
+
+			filter := KeywordFilter{
+				NormalizedContains: tc.inputFilter,
+				Limit:              10,
+			}
+
+			// Expect COUNT query with escaped LIKE pattern
+			mock.ExpectQuery(`SELECT COUNT\(\*\) FROM keywords k WHERE normalized_keyword ILIKE \$1`).
+				WithArgs(tc.expectedArg).
+				WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(0)))
+
+			// Expect SELECT query with escaped LIKE pattern
+			mock.ExpectQuery(`SELECT k.id, k.keyword, k.normalized_keyword, k.created_at FROM keywords k WHERE normalized_keyword ILIKE \$1`).
+				WithArgs(tc.expectedArg, 10, 0).
+				WillReturnRows(pgxmock.NewRows([]string{"id", "keyword", "normalized_keyword", "created_at"}))
+
+			_, _, err = repo.List(ctx, filter)
+			require.NoError(t, err, "Query should succeed for input: %s", tc.inputFilter)
+
+			// Verify the mock received the properly escaped argument
+			err = mock.ExpectationsWereMet()
+			assert.NoError(t, err, "Mock expectations not met for %s: expected arg %s", tc.description, tc.expectedArg)
+		})
+	}
+}
+
 // Helper functions for creating pointers
 func ptrSourceType(s domain.SourceType) *domain.SourceType {
 	return &s

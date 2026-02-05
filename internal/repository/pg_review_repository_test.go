@@ -457,12 +457,14 @@ func TestPgReviewRepository_Get(t *testing.T) {
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
 			"configuration", "source_filters",
 			"created_at", "updated_at", "started_at", "completed_at",
+			"pause_reason", "paused_at", "paused_at_phase",
 		}).AddRow(
 			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 			configJSON, sourceFiltersJSON,
 			review.CreatedAt, review.UpdatedAt, nil, nil,
+			nil, nil, nil,
 		)
 
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3").
@@ -532,12 +534,14 @@ func TestPgReviewRepository_GetByWorkflowID(t *testing.T) {
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
 			"configuration", "source_filters",
 			"created_at", "updated_at", "started_at", "completed_at",
+			"pause_reason", "paused_at", "paused_at_phase",
 		}).AddRow(
 			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 			&review.TemporalWorkflowID, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 			configJSON, sourceFiltersJSON,
 			review.CreatedAt, review.UpdatedAt, nil, nil,
+			nil, nil, nil,
 		)
 
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE temporal_workflow_id = \\$1").
@@ -615,18 +619,30 @@ func TestPgReviewRepository_Update(t *testing.T) {
 		configJSON, _ := json.Marshal(review.Configuration)
 		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
 
+		var pauseReason *string
+		if review.PauseReason != "" {
+			r := string(review.PauseReason)
+			pauseReason = &r
+		}
+		var pausedAtPhase *string
+		if review.PausedAtPhase != "" {
+			pausedAtPhase = &review.PausedAtPhase
+		}
+
 		return pgxmock.NewRows([]string{
 			"id", "org_id", "project_id", "user_id", "original_query",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
 			"configuration", "source_filters",
 			"created_at", "updated_at", "started_at", "completed_at",
+			"pause_reason", "paused_at", "paused_at_phase",
 		}).AddRow(
 			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 			configJSON, sourceFiltersJSON,
 			review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
+			pauseReason, review.PausedAt, pausedAtPhase,
 		)
 	}
 
@@ -680,6 +696,7 @@ func TestPgReviewRepository_Update(t *testing.T) {
 				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
 				"configuration", "source_filters",
 				"created_at", "updated_at", "started_at", "completed_at",
+				"pause_reason", "paused_at", "paused_at_phase",
 			})) // Empty rows
 
 		err = repo.Update(ctx, "org-123", "proj-456", id, func(r *domain.LiteratureReviewRequest) error {
@@ -743,18 +760,30 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 		configJSON, _ := json.Marshal(review.Configuration)
 		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
 
+		var pauseReason *string
+		if review.PauseReason != "" {
+			r := string(review.PauseReason)
+			pauseReason = &r
+		}
+		var pausedAtPhase *string
+		if review.PausedAtPhase != "" {
+			pausedAtPhase = &review.PausedAtPhase
+		}
+
 		return pgxmock.NewRows([]string{
 			"id", "org_id", "project_id", "user_id", "original_query",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
 			"configuration", "source_filters",
 			"created_at", "updated_at", "started_at", "completed_at",
+			"pause_reason", "paused_at", "paused_at_phase",
 		}).AddRow(
 			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 			configJSON, sourceFiltersJSON,
 			review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
+			pauseReason, review.PausedAt, pausedAtPhase,
 		)
 	}
 
@@ -854,6 +883,7 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
 				"configuration", "source_filters",
 				"created_at", "updated_at", "started_at", "completed_at",
+				"pause_reason", "paused_at", "paused_at_phase",
 			})) // Empty rows
 
 		err = repo.UpdateStatus(ctx, "org-123", "proj-456", id,
@@ -907,12 +937,14 @@ func TestPgReviewRepository_List(t *testing.T) {
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
 			"configuration", "source_filters",
 			"created_at", "updated_at", "started_at", "completed_at",
+			"pause_reason", "paused_at", "paused_at_phase",
 		}).AddRow(
 			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 			configJSON, sourceFiltersJSON,
 			review.CreatedAt, review.UpdatedAt, nil, nil,
+			nil, nil, nil,
 		)
 
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE org_id = \\$1 ORDER BY created_at DESC LIMIT \\$2 OFFSET \\$3").
@@ -954,6 +986,7 @@ func TestPgReviewRepository_List(t *testing.T) {
 				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
 				"configuration", "source_filters",
 				"created_at", "updated_at", "started_at", "completed_at",
+				"pause_reason", "paused_at", "paused_at_phase",
 			}))
 
 		filter := ReviewFilter{
@@ -971,12 +1004,179 @@ func TestPgReviewRepository_List(t *testing.T) {
 	})
 }
 
+func TestPgReviewRepository_FindPausedByReason(t *testing.T) {
+	ctx := context.Background()
+
+	// Helper to create a paused review for testing
+	newPausedReview := func(orgID, projectID string, reason domain.PauseReason, pausedAt time.Time) *domain.LiteratureReviewRequest {
+		review := newTestReview()
+		review.OrgID = orgID
+		review.ProjectID = projectID
+		review.Status = domain.ReviewStatusPaused
+		review.PauseReason = reason
+		review.PausedAt = &pausedAt
+		review.PausedAtPhase = "searching"
+		return review
+	}
+
+	// Helper to create mock rows with pause fields
+	createPausedRows := func(reviews []*domain.LiteratureReviewRequest) *pgxmock.Rows {
+		rows := pgxmock.NewRows([]string{
+			"id", "org_id", "project_id", "user_id", "original_query",
+			"temporal_workflow_id", "temporal_run_id", "status",
+			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
+			"configuration", "source_filters",
+			"created_at", "updated_at", "started_at", "completed_at",
+			"pause_reason", "paused_at", "paused_at_phase",
+		})
+
+		for _, review := range reviews {
+			configJSON, _ := json.Marshal(review.Configuration)
+			sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
+
+			var pauseReason *string
+			if review.PauseReason != "" {
+				r := string(review.PauseReason)
+				pauseReason = &r
+			}
+			var pausedAtPhase *string
+			if review.PausedAtPhase != "" {
+				pausedAtPhase = &review.PausedAtPhase
+			}
+
+			rows.AddRow(
+				review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+				nil, nil, review.Status,
+				review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
+				configJSON, sourceFiltersJSON,
+				review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
+				pauseReason, review.PausedAt, pausedAtPhase,
+			)
+		}
+		return rows
+	}
+
+	t.Run("returns validation error for empty org_id", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		result, err := repo.FindPausedByReason(ctx, "", "proj-456", domain.PauseReasonBudgetExhausted)
+
+		assert.Nil(t, result)
+		var validationErr *domain.ValidationError
+		assert.True(t, errors.As(err, &validationErr))
+		assert.Equal(t, "org_id", validationErr.Field)
+	})
+
+	t.Run("returns paused reviews for org with specific reason", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		pausedAt := time.Now().UTC().Add(-1 * time.Hour)
+		review := newPausedReview("org-123", "proj-456", domain.PauseReasonBudgetExhausted, pausedAt)
+
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE org_id = \\$1").
+			WithArgs("org-123", "proj-456", string(domain.PauseReasonBudgetExhausted)).
+			WillReturnRows(createPausedRows([]*domain.LiteratureReviewRequest{review}))
+
+		results, err := repo.FindPausedByReason(ctx, "org-123", "proj-456", domain.PauseReasonBudgetExhausted)
+		require.NoError(t, err)
+		assert.Len(t, results, 1)
+		assert.Equal(t, review.ID, results[0].ID)
+		assert.Equal(t, domain.ReviewStatusPaused, results[0].Status)
+		assert.Equal(t, domain.PauseReasonBudgetExhausted, results[0].PauseReason)
+		assert.Equal(t, "searching", results[0].PausedAtPhase)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns all paused reviews when reason is empty", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		pausedAt1 := time.Now().UTC().Add(-2 * time.Hour)
+		pausedAt2 := time.Now().UTC().Add(-1 * time.Hour)
+		review1 := newPausedReview("org-123", "proj-456", domain.PauseReasonBudgetExhausted, pausedAt1)
+		review2 := newPausedReview("org-123", "proj-456", domain.PauseReasonUser, pausedAt2)
+
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE org_id = \\$1").
+			WithArgs("org-123", "proj-456", "").
+			WillReturnRows(createPausedRows([]*domain.LiteratureReviewRequest{review1, review2}))
+
+		results, err := repo.FindPausedByReason(ctx, "org-123", "proj-456", "")
+		require.NoError(t, err)
+		assert.Len(t, results, 2)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns all paused reviews for org when project is empty", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+		pausedAt := time.Now().UTC().Add(-1 * time.Hour)
+		review1 := newPausedReview("org-123", "proj-456", domain.PauseReasonBudgetExhausted, pausedAt)
+		review2 := newPausedReview("org-123", "proj-789", domain.PauseReasonBudgetExhausted, pausedAt.Add(30*time.Minute))
+
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE org_id = \\$1").
+			WithArgs("org-123", "", string(domain.PauseReasonBudgetExhausted)).
+			WillReturnRows(createPausedRows([]*domain.LiteratureReviewRequest{review1, review2}))
+
+		results, err := repo.FindPausedByReason(ctx, "org-123", "", domain.PauseReasonBudgetExhausted)
+		require.NoError(t, err)
+		assert.Len(t, results, 2)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns empty slice when no paused reviews exist", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE org_id = \\$1").
+			WithArgs("org-123", "proj-456", string(domain.PauseReasonBudgetExhausted)).
+			WillReturnRows(createPausedRows([]*domain.LiteratureReviewRequest{}))
+
+		results, err := repo.FindPausedByReason(ctx, "org-123", "proj-456", domain.PauseReasonBudgetExhausted)
+		require.NoError(t, err)
+		assert.Empty(t, results)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns error when query fails", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgReviewRepository(mock)
+
+		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE org_id = \\$1").
+			WithArgs("org-123", "proj-456", string(domain.PauseReasonBudgetExhausted)).
+			WillReturnError(errors.New("database error"))
+
+		results, err := repo.FindPausedByReason(ctx, "org-123", "proj-456", domain.PauseReasonBudgetExhausted)
+		assert.Nil(t, results)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to query paused reviews")
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestReviewScanDest(t *testing.T) {
 	t.Run("destinations returns correct number of pointers", func(t *testing.T) {
 		var dest reviewScanDest
 		dests := dest.destinations()
-		// Should have exactly 18 destination pointers matching the SELECT columns
-		assert.Len(t, dests, 18)
+		// Should have exactly 21 destination pointers matching the SELECT columns
+		// (18 original + 3 pause fields: pause_reason, paused_at, paused_at_phase)
+		assert.Len(t, dests, 21)
 	})
 
 	t.Run("finalize handles nullable fields", func(t *testing.T) {

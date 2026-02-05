@@ -57,6 +57,12 @@ type ReviewRepository interface {
 	// This is useful for correlating workflow events back to review requests.
 	// Returns domain.ErrNotFound if no matching review exists.
 	GetByWorkflowID(ctx context.Context, workflowID string) (*domain.LiteratureReviewRequest, error)
+
+	// FindPausedByReason returns all paused reviews matching the given org, project, and reason.
+	// If projectID is empty, returns paused reviews for all projects in the org.
+	// If reason is empty, returns all paused reviews regardless of reason.
+	// Results are ordered by paused_at ascending (oldest paused first).
+	FindPausedByReason(ctx context.Context, orgID, projectID string, reason domain.PauseReason) ([]*domain.LiteratureReviewRequest, error)
 }
 
 // ReviewFilter specifies criteria for listing literature review requests.

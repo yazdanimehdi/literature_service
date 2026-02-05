@@ -137,7 +137,8 @@ func (r *PgReviewRepository) Get(ctx context.Context, orgID, projectID string, i
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
 			config_snapshot, source_filters,
-			created_at, updated_at, started_at, completed_at
+			created_at, updated_at, started_at, completed_at,
+			pause_reason, paused_at, paused_at_phase
 		FROM literature_review_requests
 		WHERE id = $1 AND org_id = $2 AND project_id = $3`
 
@@ -188,7 +189,8 @@ func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
 			config_snapshot, source_filters,
-			created_at, updated_at, started_at, completed_at
+			created_at, updated_at, started_at, completed_at,
+			pause_reason, paused_at, paused_at_phase
 		FROM literature_review_requests
 		WHERE id = $1 AND org_id = $2 AND project_id = $3
 		FOR UPDATE`
@@ -344,7 +346,8 @@ func (r *PgReviewRepository) List(ctx context.Context, filter ReviewFilter) ([]*
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
 			config_snapshot, source_filters,
-			created_at, updated_at, started_at, completed_at
+			created_at, updated_at, started_at, completed_at,
+			pause_reason, paused_at, paused_at_phase
 		FROM literature_review_requests
 		WHERE %s
 		ORDER BY created_at DESC
@@ -413,7 +416,8 @@ func (r *PgReviewRepository) GetByWorkflowID(ctx context.Context, workflowID str
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
 			config_snapshot, source_filters,
-			created_at, updated_at, started_at, completed_at
+			created_at, updated_at, started_at, completed_at,
+			pause_reason, paused_at, paused_at_phase
 		FROM literature_review_requests
 		WHERE temporal_workflow_id = $1`
 
@@ -427,6 +431,48 @@ func (r *PgReviewRepository) GetByWorkflowID(ctx context.Context, workflowID str
 	}
 
 	return review, nil
+}
+
+// FindPausedByReason returns all paused reviews matching the given org, project, and reason.
+func (r *PgReviewRepository) FindPausedByReason(ctx context.Context, orgID, projectID string, reason domain.PauseReason) ([]*domain.LiteratureReviewRequest, error) {
+	if orgID == "" {
+		return nil, domain.NewValidationError("org_id", "organization ID is required")
+	}
+
+	query := `
+		SELECT id, org_id, project_id, user_id, original_query,
+			temporal_workflow_id, temporal_run_id, status,
+			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
+			config_snapshot, source_filters,
+			created_at, updated_at, started_at, completed_at,
+			pause_reason, paused_at, paused_at_phase
+		FROM literature_review_requests
+		WHERE org_id = $1
+		  AND ($2 = '' OR project_id = $2)
+		  AND status = 'paused'
+		  AND ($3 = '' OR pause_reason = $3)
+		ORDER BY paused_at ASC`
+
+	rows, err := r.db.Query(ctx, query, orgID, projectID, string(reason))
+	if err != nil {
+		return nil, fmt.Errorf("failed to query paused reviews: %w", err)
+	}
+	defer rows.Close()
+
+	var reviews []*domain.LiteratureReviewRequest
+	for rows.Next() {
+		review, err := scanReviewFromRows(rows)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan paused review: %w", err)
+		}
+		reviews = append(reviews, review)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating paused reviews: %w", err)
+	}
+
+	return reviews, nil
 }
 
 // isValidStatusTransition validates that a status transition is allowed.
@@ -467,6 +513,8 @@ type reviewScanDest struct {
 	sourceFiltersJSON  []byte
 	temporalWorkflowID *string
 	temporalRunID      *string
+	pauseReason        *string
+	pausedAtPhase      *string
 }
 
 // destinations returns the slice of pointers for Scan operations.
@@ -477,6 +525,7 @@ func (d *reviewScanDest) destinations() []interface{} {
 		&d.review.KeywordsFoundCount, &d.review.PapersFoundCount, &d.review.PapersIngestedCount, &d.review.PapersFailedCount,
 		&d.configJSON, &d.sourceFiltersJSON,
 		&d.review.CreatedAt, &d.review.UpdatedAt, &d.review.StartedAt, &d.review.CompletedAt,
+		&d.pauseReason, &d.review.PausedAt, &d.pausedAtPhase,
 	}
 }
 
@@ -487,6 +536,12 @@ func (d *reviewScanDest) finalize() (*domain.LiteratureReviewRequest, error) {
 	}
 	if d.temporalRunID != nil {
 		d.review.TemporalRunID = *d.temporalRunID
+	}
+	if d.pauseReason != nil {
+		d.review.PauseReason = domain.PauseReason(*d.pauseReason)
+	}
+	if d.pausedAtPhase != nil {
+		d.review.PausedAtPhase = *d.pausedAtPhase
 	}
 
 	if len(d.configJSON) > 0 {

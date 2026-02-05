@@ -258,3 +258,95 @@ ingestion_service:
   address: localhost:9095
   # Timeout for gRPC calls
   timeout: 30s
+  # Enable TLS for gRPC connection
+  tls: false
+
+# Qdrant vector store configuration for semantic dedup
+qdrant:
+  # Qdrant gRPC address
+  address: localhost:6334
+  # Collection name for paper embeddings
+  collection_name: paper_embeddings
+  # Embedding vector size (must match embedding model)
+  vector_size: 1536
+  # Cosine similarity threshold for dedup (0.0-1.0)
+  similarity_threshold: 0.95
+  # Author overlap threshold for dedup (0.0-1.0)
+  author_threshold: 0.5
+  # Number of candidates to check
+  top_k: 5
+
+# Workflow execution configuration
+workflow:
+  # Search phase configuration
+  search:
+    retry_policy:
+      initial_interval: 2s
+      backoff_coefficient: 2.0
+      maximum_interval: 1m
+      maximum_attempts: 5
+    # Per-source rate limits (requests per second)
+    rate_limits:
+      semantic_scholar: 100.0
+      openalex: 10.0
+      pubmed: 3.0
+
+  # Child workflow configuration
+  child_workflow:
+    retry_policy:
+      initial_interval: 5s
+      backoff_coefficient: 2.0
+      maximum_interval: 2m
+      maximum_attempts: 3
+
+  # Embedding activity configuration
+  embedding:
+    retry_policy:
+      initial_interval: 1s
+      backoff_coefficient: 2.0
+      maximum_interval: 30s
+      maximum_attempts: 5
+
+  # Dedup activity configuration
+  dedup:
+    retry_policy:
+      initial_interval: 500ms
+      backoff_coefficient: 2.0
+      maximum_interval: 10s
+      maximum_attempts: 3
+    # Continue without dedup if all retries exhausted
+    skip_on_failure: true
+
+  # Ingestion activity configuration
+  ingestion:
+    retry_policy:
+      initial_interval: 2s
+      backoff_coefficient: 2.0
+      maximum_interval: 1m
+      maximum_attempts: 5
+    # Max retries for PDF download per paper
+    pdf_download_attempts: 3
+    # Max retries for stream upload per paper
+    stream_upload_attempts: 3
+
+  # Timeout settings
+  timeouts:
+    # Max wait for child workflow to signal completion
+    child_workflow_completion: 10m
+    # Time before flushing partial batch
+    batch_accumulation: 5s
+    # Timeout for search activities
+    search_activity: 5m
+    # Timeout for embedding activities
+    embedding_activity: 2m
+    # Timeout for dedup activities
+    dedup_activity: 1m
+    # Timeout for ingestion activities
+    ingestion_activity: 5m
+
+  # Paper batching configuration
+  batching:
+    # Number of papers per batch
+    batch_size: 5
+    # Time to wait before flushing partial batch
+    batch_timeout: 5s

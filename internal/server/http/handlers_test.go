@@ -111,6 +111,9 @@ func (m *mockPaperRepo) MarkKeywordsExtracted(_ context.Context, _ uuid.UUID) er
 func (m *mockPaperRepo) BulkUpsert(_ context.Context, _ []*domain.Paper) ([]*domain.Paper, error) {
 	return nil, nil
 }
+func (m *mockPaperRepo) GetByIDs(_ context.Context, _ []uuid.UUID) ([]*domain.Paper, error) {
+	return nil, nil
+}
 
 // mockKeywordRepo implements repository.KeywordRepository for HTTP handler tests.
 type mockKeywordRepo struct {

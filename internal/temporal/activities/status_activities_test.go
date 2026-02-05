@@ -230,6 +230,14 @@ func (m *mockPaperRepository) BulkUpsert(ctx context.Context, papers []*domain.P
 	return args.Get(0).([]*domain.Paper), args.Error(1)
 }
 
+func (m *mockPaperRepository) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*domain.Paper, error) {
+	args := m.Called(ctx, ids)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.Paper), args.Error(1)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

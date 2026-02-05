@@ -99,6 +99,10 @@ func (m *paperTestPaperRepo) BulkUpsert(_ context.Context, _ []*domain.Paper) ([
 	return nil, nil
 }
 
+func (m *paperTestPaperRepo) GetByIDs(_ context.Context, _ []uuid.UUID) ([]*domain.Paper, error) {
+	return nil, nil
+}
+
 // paperTestKeywordRepo is a mock KeywordRepository for paper handler tests.
 type paperTestKeywordRepo struct {
 	listFunc func(ctx context.Context, filter repository.KeywordFilter) ([]*domain.Keyword, int64, error)

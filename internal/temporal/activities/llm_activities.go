@@ -8,24 +8,56 @@ import (
 
 	"go.temporal.io/sdk/activity"
 
+	sharedllm "github.com/helixir/llm"
+
 	"github.com/helixir/literature-review-service/internal/llm"
 	"github.com/helixir/literature-review-service/internal/observability"
 )
 
+// BudgetUsageReporter emits budget usage events after successful LLM calls.
+type BudgetUsageReporter interface {
+	ReportUsage(ctx context.Context, params BudgetUsageParams) error
+}
+
+// BudgetUsageParams contains the data needed to emit a budget usage event.
+type BudgetUsageParams struct {
+	LeaseID      string
+	OrgID        string
+	ProjectID    string
+	Model        string
+	InputTokens  int
+	OutputTokens int
+	TotalTokens  int
+	CostUSD      float64
+}
+
 // LLMActivities provides Temporal activities for LLM-based operations.
 // Methods on this struct are registered as Temporal activities via the worker.
 type LLMActivities struct {
-	extractor llm.KeywordExtractor
-	metrics   *observability.Metrics
+	extractor      llm.KeywordExtractor
+	metrics        *observability.Metrics
+	budgetReporter BudgetUsageReporter // nil = budget reporting disabled
+}
+
+// LLMActivitiesOption configures optional LLMActivities dependencies.
+type LLMActivitiesOption func(*LLMActivities)
+
+// WithBudgetReporter attaches a budget usage reporter to the LLM activities.
+func WithBudgetReporter(reporter BudgetUsageReporter) LLMActivitiesOption {
+	return func(a *LLMActivities) { a.budgetReporter = reporter }
 }
 
 // NewLLMActivities creates a new LLMActivities instance with the given dependencies.
 // The metrics parameter may be nil (metrics recording will be skipped).
-func NewLLMActivities(extractor llm.KeywordExtractor, metrics *observability.Metrics) *LLMActivities {
-	return &LLMActivities{
+func NewLLMActivities(extractor llm.KeywordExtractor, metrics *observability.Metrics, opts ...LLMActivitiesOption) *LLMActivities {
+	a := &LLMActivities{
 		extractor: extractor,
 		metrics:   metrics,
 	}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a
 }
 
 // ExtractKeywords extracts research keywords from text using an LLM.
@@ -82,6 +114,27 @@ func (a *LLMActivities) ExtractKeywords(ctx context.Context, input ExtractKeywor
 		a.metrics.RecordKeywordsExtracted(input.Mode, len(result.Keywords))
 	}
 
+	// Emit budget usage event if lease info is available.
+	if a.budgetReporter != nil && input.LeaseID != "" {
+		cost := sharedllm.EstimateCost(result.Model, result.InputTokens, result.OutputTokens)
+		if reportErr := a.budgetReporter.ReportUsage(ctx, BudgetUsageParams{
+			LeaseID:      input.LeaseID,
+			OrgID:        input.OrgID,
+			ProjectID:    input.ProjectID,
+			Model:        result.Model,
+			InputTokens:  result.InputTokens,
+			OutputTokens: result.OutputTokens,
+			TotalTokens:  result.InputTokens + result.OutputTokens,
+			CostUSD:      cost,
+		}); reportErr != nil {
+			// Log but don't fail the activity - budget reporting is best-effort.
+			logger.Warn("failed to report budget usage",
+				"error", reportErr,
+				"leaseID", input.LeaseID,
+			)
+		}
+	}
+
 	return &ExtractKeywordsOutput{
 		Keywords:     result.Keywords,
 		Reasoning:    result.Reasoning,
@@ -94,6 +147,19 @@ func (a *LLMActivities) ExtractKeywords(ctx context.Context, input ExtractKeywor
 // errorType classifies an error for metrics labeling.
 // Uses errors.As to correctly unwrap wrapped errors.
 func errorType(err error) string {
+	// Check for shared llm.Error first (from shared providers via ResilientClient).
+	var llmErr *sharedllm.Error
+	if errors.As(err, &llmErr) {
+		if llmErr.Kind != "" {
+			return string(llmErr.Kind)
+		}
+		if llmErr.StatusCode > 0 {
+			return fmt.Sprintf("http_%d", llmErr.StatusCode)
+		}
+		return "unknown"
+	}
+
+	// Fall back to legacy APIError (for backwards compatibility during transition).
 	var apiErr *llm.APIError
 	if errors.As(err, &apiErr) {
 		if apiErr.Type != "" {
@@ -101,5 +167,6 @@ func errorType(err error) string {
 		}
 		return fmt.Sprintf("http_%d", apiErr.StatusCode)
 	}
+
 	return "unknown"
 }

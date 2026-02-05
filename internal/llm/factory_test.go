@@ -27,16 +27,8 @@ func TestNewKeywordExtractor_OpenAI(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, extractor)
-
-	// Verify the returned extractor is an OpenAIProvider.
-	openaiProvider, ok := extractor.(*OpenAIProvider)
-	require.True(t, ok, "expected *OpenAIProvider, got %T", extractor)
-
-	assert.Equal(t, "openai", openaiProvider.Provider())
-	assert.Equal(t, "gpt-4o", openaiProvider.Model())
-	assert.Equal(t, 0.7, openaiProvider.temperature)
-	assert.Equal(t, 3, openaiProvider.maxRetries)
-	assert.Equal(t, "sk-test-key", openaiProvider.apiKey)
+	assert.Equal(t, "openai", extractor.Provider())
+	assert.Equal(t, "gpt-4o", extractor.Model())
 }
 
 func TestNewKeywordExtractor_Anthropic(t *testing.T) {
@@ -58,16 +50,8 @@ func TestNewKeywordExtractor_Anthropic(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, extractor)
-
-	// Verify the returned extractor is an AnthropicProvider.
-	anthropicProvider, ok := extractor.(*AnthropicProvider)
-	require.True(t, ok, "expected *AnthropicProvider, got %T", extractor)
-
-	assert.Equal(t, "anthropic", anthropicProvider.Provider())
-	assert.Equal(t, "claude-3-sonnet-20240229", anthropicProvider.Model())
-	assert.Equal(t, 0.5, anthropicProvider.temperature)
-	assert.Equal(t, 2, anthropicProvider.maxRetries)
-	assert.Equal(t, "sk-ant-test-key", anthropicProvider.apiKey)
+	assert.Equal(t, "anthropic", extractor.Provider())
+	assert.Equal(t, "claude-3-sonnet-20240229", extractor.Model())
 }
 
 func TestNewKeywordExtractor_Unknown(t *testing.T) {
@@ -97,4 +81,52 @@ func TestNewKeywordExtractor_EmptyProvider(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, extractor)
 	assert.Contains(t, err.Error(), "unsupported LLM provider")
+}
+
+func TestNewKeywordExtractor_WithResilience(t *testing.T) {
+	t.Parallel()
+
+	cfg := FactoryConfig{
+		Provider: "openai",
+		Timeout:  30 * time.Second,
+		OpenAI:   OpenAIConfig{APIKey: "sk-test", Model: "gpt-4o"},
+		Resilience: &ResilienceConfig{
+			RateLimitRPS:           10,
+			RateLimitBurst:         20,
+			RateLimitMinRPS:        1.0,
+			RateLimitRecoverySec:   60,
+			CBConsecutiveThreshold: 5,
+			CBFailureRateThreshold: 0.5,
+			CBWindowSize:           20,
+			CBCooldownSec:          30,
+			CBProbeCount:           3,
+		},
+	}
+
+	extractor, err := NewKeywordExtractor(cfg)
+
+	require.NoError(t, err)
+	require.NotNil(t, extractor)
+	assert.Equal(t, "openai", extractor.Provider())
+	assert.Equal(t, "gpt-4o", extractor.Model())
+}
+
+func TestNewKeywordExtractor_WithoutResilience(t *testing.T) {
+	t.Parallel()
+
+	cfg := FactoryConfig{
+		Provider: "anthropic",
+		Timeout:  30 * time.Second,
+		Anthropic: AnthropicConfig{
+			APIKey: "sk-ant-test",
+			Model:  "claude-3-sonnet-20240229",
+		},
+		Resilience: nil,
+	}
+
+	extractor, err := NewKeywordExtractor(cfg)
+
+	require.NoError(t, err)
+	require.NotNil(t, extractor)
+	assert.Equal(t, "anthropic", extractor.Provider())
 }

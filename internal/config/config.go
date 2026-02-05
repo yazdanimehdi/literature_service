@@ -171,6 +171,32 @@ type LLMConfig struct {
 	Bedrock BedrockConfig `mapstructure:"bedrock"`
 	// Gemini contains Google Gemini/Vertex AI-specific settings.
 	Gemini GeminiConfig `mapstructure:"gemini"`
+	// Resilience contains rate limiter and circuit breaker settings.
+	Resilience LLMResilienceConfig `mapstructure:"resilience"`
+}
+
+// LLMResilienceConfig holds rate limiter and circuit breaker settings for LLM calls.
+type LLMResilienceConfig struct {
+	// Enabled enables the resilience middleware (rate limiter + circuit breaker).
+	Enabled bool `mapstructure:"enabled"`
+	// RateLimitRPS is the requests per second limit.
+	RateLimitRPS float64 `mapstructure:"rate_limit_rps"`
+	// RateLimitBurst is the burst size for the rate limiter.
+	RateLimitBurst int `mapstructure:"rate_limit_burst"`
+	// RateLimitMinRPS is the minimum RPS during backoff.
+	RateLimitMinRPS float64 `mapstructure:"rate_limit_min_rps"`
+	// RateLimitRecoverySec is the recovery window in seconds after backoff.
+	RateLimitRecoverySec int `mapstructure:"rate_limit_recovery_sec"`
+	// CBConsecutiveThreshold is consecutive failures before circuit opens.
+	CBConsecutiveThreshold int `mapstructure:"cb_consecutive_threshold"`
+	// CBFailureRateThreshold is the failure rate (0.0-1.0) before circuit opens.
+	CBFailureRateThreshold float64 `mapstructure:"cb_failure_rate_threshold"`
+	// CBWindowSize is the rolling window size for failure rate calculation.
+	CBWindowSize int `mapstructure:"cb_window_size"`
+	// CBCooldownSec is seconds to wait before probing after circuit opens.
+	CBCooldownSec int `mapstructure:"cb_cooldown_sec"`
+	// CBProbeCount is the number of probe requests in half-open state.
+	CBProbeCount int `mapstructure:"cb_probe_count"`
 }
 
 // OpenAIConfig holds OpenAI-specific settings.
@@ -440,6 +466,18 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.gemini.project", "")
 	v.SetDefault("llm.gemini.location", "us-central1")
 	v.SetDefault("llm.gemini.model", "gemini-2.0-flash")
+
+	// LLM resilience defaults
+	v.SetDefault("llm.resilience.enabled", false)
+	v.SetDefault("llm.resilience.rate_limit_rps", 10.0)
+	v.SetDefault("llm.resilience.rate_limit_burst", 20)
+	v.SetDefault("llm.resilience.rate_limit_min_rps", 1.0)
+	v.SetDefault("llm.resilience.rate_limit_recovery_sec", 60)
+	v.SetDefault("llm.resilience.cb_consecutive_threshold", 5)
+	v.SetDefault("llm.resilience.cb_failure_rate_threshold", 0.5)
+	v.SetDefault("llm.resilience.cb_window_size", 20)
+	v.SetDefault("llm.resilience.cb_cooldown_sec", 30)
+	v.SetDefault("llm.resilience.cb_probe_count", 3)
 
 	// Kafka defaults
 	v.SetDefault("kafka.enabled", false)

@@ -6,11 +6,11 @@ import (
 	"time"
 
 	sharedllm "github.com/helixir/llm"
-	sharedanthropic "github.com/helixir/llm/anthropic"
+	"github.com/helixir/llm/anthropic"
 	"github.com/helixir/llm/azure"
 	"github.com/helixir/llm/bedrock"
 	"github.com/helixir/llm/gemini"
-	sharedopenai "github.com/helixir/llm/openai"
+	"github.com/helixir/llm/openai"
 )
 
 // FactoryConfig holds the parameters needed to create a KeywordExtractor.
@@ -35,6 +35,42 @@ type FactoryConfig struct {
 	Bedrock BedrockConfig
 	// Gemini contains Google Gemini/Vertex AI-specific settings.
 	Gemini GeminiConfig
+	// Resilience holds optional rate limiter + circuit breaker configuration.
+	// If nil or disabled, no resilience wrapper is applied.
+	Resilience *ResilienceConfig
+}
+
+// ResilienceConfig holds rate limiter and circuit breaker settings for the factory.
+type ResilienceConfig struct {
+	RateLimitRPS           float64
+	RateLimitBurst         int
+	RateLimitMinRPS        float64
+	RateLimitRecoverySec   int
+	CBConsecutiveThreshold int
+	CBFailureRateThreshold float64
+	CBWindowSize           int
+	CBCooldownSec          int
+	CBProbeCount           int
+}
+
+// OpenAIConfig holds OpenAI-specific settings.
+type OpenAIConfig struct {
+	// APIKey is the OpenAI API key.
+	APIKey string
+	// Model is the model identifier (e.g., "gpt-4-turbo").
+	Model string
+	// BaseURL is the API base URL (empty means default).
+	BaseURL string
+}
+
+// AnthropicConfig holds Anthropic-specific settings.
+type AnthropicConfig struct {
+	// APIKey is the Anthropic API key.
+	APIKey string
+	// Model is the model identifier (e.g., "claude-3-sonnet-20240229").
+	Model string
+	// BaseURL is the API base URL.
+	BaseURL string
 }
 
 // AzureConfig holds Azure OpenAI-specific settings.
@@ -61,25 +97,22 @@ type GeminiConfig struct {
 }
 
 // NewKeywordExtractor creates a KeywordExtractor based on the configuration.
-// Supports "openai", "anthropic", "azure", "bedrock", "gemini", and "vertex" providers.
-// Returns an error for unsupported or empty provider values.
+// All providers use the shared llm package. If Resilience config is provided,
+// the client is wrapped with rate limiting and circuit breaking.
 func NewKeywordExtractor(cfg FactoryConfig) (KeywordExtractor, error) {
-	switch cfg.Provider {
-	case "openai":
-		return NewOpenAIProvider(cfg.OpenAI, cfg.Temperature, cfg.Timeout, cfg.MaxRetries), nil
-	case "anthropic":
-		return NewAnthropicProvider(cfg.Anthropic, cfg.Temperature, cfg.Timeout, cfg.MaxRetries), nil
-	case "azure":
-		return newAzureExtractor(cfg)
-	case "bedrock":
-		return newBedrockExtractor(cfg)
-	case "gemini":
-		return newGeminiExtractor(cfg, false)
-	case "vertex":
-		return newGeminiExtractor(cfg, true)
-	default:
-		return nil, fmt.Errorf("unsupported LLM provider: %q", cfg.Provider)
+	// Step 1: Create the base shared client for the selected provider.
+	client, err := createClient(cfg)
+	if err != nil {
+		return nil, err
 	}
+
+	// Step 2: Optionally wrap with resilience (rate limiter + circuit breaker).
+	if cfg.Resilience != nil {
+		client = wrapWithResilience(client, cfg.Resilience)
+	}
+
+	// Step 3: Adapt shared Client to KeywordExtractor interface.
+	return NewKeywordExtractorFromClient(client), nil
 }
 
 func sharedClientConfig(cfg FactoryConfig) sharedllm.ClientConfig {
@@ -90,74 +123,66 @@ func sharedClientConfig(cfg FactoryConfig) sharedllm.ClientConfig {
 	}
 }
 
-func newAzureExtractor(cfg FactoryConfig) (KeywordExtractor, error) {
-	client, err := azure.New(azure.Config{
-		ResourceName:   cfg.Azure.ResourceName,
-		DeploymentName: cfg.Azure.DeploymentName,
-		APIKey:         cfg.Azure.APIKey,
-		APIVersion:     cfg.Azure.APIVersion,
-		Model:          cfg.Azure.Model,
-	}, sharedClientConfig(cfg))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Azure OpenAI client: %w", err)
+func createClient(cfg FactoryConfig) (sharedllm.Client, error) {
+	cc := sharedClientConfig(cfg)
+	switch cfg.Provider {
+	case "openai":
+		return openai.New(openai.Config{
+			APIKey:  cfg.OpenAI.APIKey,
+			Model:   cfg.OpenAI.Model,
+			BaseURL: cfg.OpenAI.BaseURL,
+		}, cc)
+	case "anthropic":
+		return anthropic.New(anthropic.Config{
+			APIKey:  cfg.Anthropic.APIKey,
+			Model:   cfg.Anthropic.Model,
+			BaseURL: cfg.Anthropic.BaseURL,
+		}, cc)
+	case "azure":
+		return azure.New(azure.Config{
+			ResourceName:   cfg.Azure.ResourceName,
+			DeploymentName: cfg.Azure.DeploymentName,
+			APIKey:         cfg.Azure.APIKey,
+			APIVersion:     cfg.Azure.APIVersion,
+			Model:          cfg.Azure.Model,
+		}, cc)
+	case "bedrock":
+		return bedrock.New(context.Background(), bedrock.Config{
+			Region: cfg.Bedrock.Region,
+			Model:  cfg.Bedrock.Model,
+		}, cc)
+	case "gemini":
+		return createGeminiClient(cfg, false)
+	case "vertex":
+		return createGeminiClient(cfg, true)
+	default:
+		return nil, fmt.Errorf("unsupported LLM provider: %q", cfg.Provider)
 	}
-	return NewKeywordExtractorFromClient(client), nil
 }
 
-func newBedrockExtractor(cfg FactoryConfig) (KeywordExtractor, error) {
-	client, err := bedrock.New(context.Background(), bedrock.Config{
-		Region: cfg.Bedrock.Region,
-		Model:  cfg.Bedrock.Model,
-	}, sharedClientConfig(cfg))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Bedrock client: %w", err)
-	}
-	return NewKeywordExtractorFromClient(client), nil
-}
-
-func newGeminiExtractor(cfg FactoryConfig, forceVertex bool) (KeywordExtractor, error) {
-	geminiCfg := gemini.Config{
-		Model: cfg.Gemini.Model,
-	}
-
+func createGeminiClient(cfg FactoryConfig, forceVertex bool) (sharedllm.Client, error) {
+	geminiCfg := gemini.Config{Model: cfg.Gemini.Model}
 	if forceVertex || (cfg.Gemini.Project != "" && cfg.Gemini.APIKey == "") {
 		geminiCfg.Project = cfg.Gemini.Project
 		geminiCfg.Location = cfg.Gemini.Location
 	} else {
 		geminiCfg.APIKey = cfg.Gemini.APIKey
 	}
-
-	client, err := gemini.New(context.Background(), geminiCfg, sharedClientConfig(cfg))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Gemini client: %w", err)
-	}
-	return NewKeywordExtractorFromClient(client), nil
+	return gemini.New(context.Background(), geminiCfg, sharedClientConfig(cfg))
 }
 
-// newSharedOpenAIExtractor creates a KeywordExtractor using the shared OpenAI client.
-// This is available as an alternative to the built-in OpenAI provider.
-func newSharedOpenAIExtractor(cfg FactoryConfig) (KeywordExtractor, error) {
-	client, err := sharedopenai.New(sharedopenai.Config{
-		APIKey:  cfg.OpenAI.APIKey,
-		Model:   cfg.OpenAI.Model,
-		BaseURL: cfg.OpenAI.BaseURL,
-	}, sharedClientConfig(cfg))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create shared OpenAI client: %w", err)
+func wrapWithResilience(client sharedllm.Client, cfg *ResilienceConfig) sharedllm.Client {
+	sharedCfg := &sharedllm.Config{
+		RateLimitRPS:           cfg.RateLimitRPS,
+		RateLimitBurst:         cfg.RateLimitBurst,
+		RateLimitMinRPS:        cfg.RateLimitMinRPS,
+		RateLimitRecoverySec:   cfg.RateLimitRecoverySec,
+		CBConsecutiveThreshold: cfg.CBConsecutiveThreshold,
+		CBFailureRateThreshold: cfg.CBFailureRateThreshold,
+		CBWindowSize:           cfg.CBWindowSize,
+		CBCooldownSec:          cfg.CBCooldownSec,
+		CBProbeCount:           cfg.CBProbeCount,
+		BudgetEnabled:          false, // budget handled at activity layer
 	}
-	return NewKeywordExtractorFromClient(client), nil
-}
-
-// newSharedAnthropicExtractor creates a KeywordExtractor using the shared Anthropic client.
-// This is available as an alternative to the built-in Anthropic provider.
-func newSharedAnthropicExtractor(cfg FactoryConfig) (KeywordExtractor, error) {
-	client, err := sharedanthropic.New(sharedanthropic.Config{
-		APIKey:  cfg.Anthropic.APIKey,
-		Model:   cfg.Anthropic.Model,
-		BaseURL: cfg.Anthropic.BaseURL,
-	}, sharedClientConfig(cfg))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create shared Anthropic client: %w", err)
-	}
-	return NewKeywordExtractorFromClient(client), nil
+	return sharedllm.NewResilientClientFromConfig(client, sharedCfg, nil, sharedllm.BudgetKey{})
 }

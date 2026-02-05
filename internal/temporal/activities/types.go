@@ -31,6 +31,16 @@ type ExtractKeywordsInput struct {
 
 	// Context provides additional context about the research domain.
 	Context string
+
+	// OrgID is the organization ID for budget tracking (optional).
+	OrgID string
+
+	// ProjectID is the project ID for budget tracking (optional).
+	ProjectID string
+
+	// LeaseID is the budget lease ID for usage reporting (optional).
+	// When set, budget usage events are emitted via the outbox after successful extraction.
+	LeaseID string
 }
 
 // ExtractKeywordsOutput contains the results of the keyword extraction activity.

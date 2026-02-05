@@ -70,6 +70,22 @@ func run() error {
 	paperRepo := repository.NewPgPaperRepository(db)
 	keywordRepo := repository.NewPgKeywordRepository(db)
 
+	// Build resilience config if enabled.
+	var resilienceCfg *llm.ResilienceConfig
+	if cfg.LLM.Resilience.Enabled {
+		resilienceCfg = &llm.ResilienceConfig{
+			RateLimitRPS:           cfg.LLM.Resilience.RateLimitRPS,
+			RateLimitBurst:         cfg.LLM.Resilience.RateLimitBurst,
+			RateLimitMinRPS:        cfg.LLM.Resilience.RateLimitMinRPS,
+			RateLimitRecoverySec:   cfg.LLM.Resilience.RateLimitRecoverySec,
+			CBConsecutiveThreshold: cfg.LLM.Resilience.CBConsecutiveThreshold,
+			CBFailureRateThreshold: cfg.LLM.Resilience.CBFailureRateThreshold,
+			CBWindowSize:           cfg.LLM.Resilience.CBWindowSize,
+			CBCooldownSec:          cfg.LLM.Resilience.CBCooldownSec,
+			CBProbeCount:           cfg.LLM.Resilience.CBProbeCount,
+		}
+	}
+
 	// Create LLM keyword extractor.
 	extractor, err := llm.NewKeywordExtractor(llm.FactoryConfig{
 		Provider:    cfg.LLM.Provider,
@@ -103,6 +119,7 @@ func run() error {
 			Location: cfg.LLM.Gemini.Location,
 			Model:    cfg.LLM.Gemini.Model,
 		},
+		Resilience: resilienceCfg,
 	})
 	if err != nil {
 		return fmt.Errorf("create LLM extractor: %w", err)
@@ -160,7 +177,10 @@ func run() error {
 	manager.RegisterWorkflow(workflows.LiteratureReviewWorkflow)
 
 	// Create and register all activity structs.
-	llmActivities := activities.NewLLMActivities(extractor, metrics)
+	budgetReporter := activities.NewOutboxBudgetReporter(db.Pool())
+	llmActivities := activities.NewLLMActivities(extractor, metrics,
+		activities.WithBudgetReporter(budgetReporter),
+	)
 	searchActivities := activities.NewSearchActivities(registry, metrics)
 	statusActivities := activities.NewStatusActivities(reviewRepo, keywordRepo, paperRepo, metrics)
 	ingestionActivities := activities.NewIngestionActivities(ingestionClient, metrics)

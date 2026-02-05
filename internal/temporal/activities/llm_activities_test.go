@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/testsuite"
 
+	sharedllm "github.com/helixir/llm"
+
 	"github.com/helixir/literature-review-service/internal/llm"
 )
 
@@ -175,6 +177,31 @@ func TestErrorType(t *testing.T) {
 			name:     "wrapped APIError without Type",
 			err:      fmt.Errorf("call failed: %w", &llm.APIError{Provider: "anthropic", StatusCode: 503}),
 			expected: "http_503",
+		},
+		{
+			name:     "shared llm.Error with Kind",
+			err:      &sharedllm.Error{Provider: "openai", Kind: sharedllm.ErrRateLimit, StatusCode: 429, Message: "too many requests"},
+			expected: "rate_limit",
+		},
+		{
+			name:     "shared llm.Error with circuit open",
+			err:      &sharedllm.Error{Kind: sharedllm.ErrCircuitOpen, Message: "circuit breaker open"},
+			expected: "circuit_open",
+		},
+		{
+			name:     "shared llm.Error with budget exceeded",
+			err:      &sharedllm.Error{Kind: sharedllm.ErrBudgetExceeded, Message: "token budget exceeded"},
+			expected: "budget_exceeded",
+		},
+		{
+			name:     "shared llm.Error with StatusCode only",
+			err:      &sharedllm.Error{Provider: "anthropic", StatusCode: 503},
+			expected: "http_503",
+		},
+		{
+			name:     "wrapped shared llm.Error",
+			err:      fmt.Errorf("keyword extraction via openai failed: %w", &sharedllm.Error{Kind: sharedllm.ErrRateLimit}),
+			expected: "rate_limit",
 		},
 		{
 			name:     "non-APIError returns unknown",

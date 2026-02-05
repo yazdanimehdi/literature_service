@@ -103,6 +103,10 @@ func (m *paperTestPaperRepo) GetByIDs(_ context.Context, _ []uuid.UUID) ([]*doma
 	return nil, nil
 }
 
+func (m *paperTestPaperRepo) UpdateIngestionResult(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ string) error {
+	return nil
+}
+
 // paperTestKeywordRepo is a mock KeywordRepository for paper handler tests.
 type paperTestKeywordRepo struct {
 	listFunc func(ctx context.Context, filter repository.KeywordFilter) ([]*domain.Keyword, int64, error)

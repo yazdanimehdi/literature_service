@@ -71,6 +71,11 @@ type PaperRepository interface {
 	//   - For existing papers (matched by canonical_id), the returned paper contains the merged/updated
 	//     data reflecting the final database state after the upsert.
 	BulkUpsert(ctx context.Context, papers []*domain.Paper) ([]*domain.Paper, error)
+
+	// UpdateIngestionResult updates a paper's file_id and ingestion_run_id after
+	// successful PDF download and ingestion submission.
+	// Returns domain.ErrNotFound if the paper does not exist.
+	UpdateIngestionResult(ctx context.Context, paperID uuid.UUID, fileID uuid.UUID, ingestionRunID string) error
 }
 
 // PaperFilter specifies criteria for listing papers.

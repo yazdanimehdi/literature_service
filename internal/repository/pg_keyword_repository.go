@@ -465,8 +465,9 @@ func (r *PgKeywordRepository) GetPapersForKeyword(ctx context.Context, keywordID
 		SELECT p.id, p.canonical_id, p.title, p.abstract, p.authors,
 			p.publication_date, p.publication_year, p.venue, p.journal,
 			p.volume, p.issue, p.pages, p.citation_count, p.reference_count,
-			p.pdf_url, p.open_access, p.keywords_extracted, p.raw_metadata,
-			p.created_at, p.updated_at
+			p.pdf_url, p.open_access, p.keywords_extracted,
+			p.file_id, p.ingestion_run_id,
+			p.raw_metadata, p.created_at, p.updated_at
 		FROM papers p
 		INNER JOIN keyword_paper_mappings kpm ON p.id = kpm.paper_id
 		WHERE kpm.keyword_id = $1

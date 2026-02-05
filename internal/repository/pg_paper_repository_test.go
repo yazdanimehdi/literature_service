@@ -141,14 +141,16 @@ func TestPgPaperRepository_GetByCanonicalID(t *testing.T) {
 			"id", "canonical_id", "title", "abstract", "authors",
 			"publication_date", "publication_year", "venue", "journal",
 			"volume", "issue", "pages", "citation_count", "reference_count",
-			"pdf_url", "open_access", "keywords_extracted", "raw_metadata",
-			"created_at", "updated_at",
+			"pdf_url", "open_access", "keywords_extracted",
+			"file_id", "ingestion_run_id",
+			"raw_metadata", "created_at", "updated_at",
 		}).AddRow(
 			paper.ID, paper.CanonicalID, paper.Title, paper.Abstract, authorsJSON,
 			paper.PublicationDate, paper.PublicationYear, paper.Venue, paper.Journal,
 			paper.Volume, paper.Issue, paper.Pages, paper.CitationCount, paper.ReferenceCount,
-			paper.PDFURL, paper.OpenAccess, paper.KeywordsExtracted, metadataJSON,
-			paper.CreatedAt, paper.UpdatedAt,
+			paper.PDFURL, paper.OpenAccess, paper.KeywordsExtracted,
+			paper.FileID, paper.IngestionRunID,
+			metadataJSON, paper.CreatedAt, paper.UpdatedAt,
 		)
 
 		mock.ExpectQuery("SELECT .* FROM papers WHERE canonical_id = \\$1").
@@ -214,14 +216,16 @@ func TestPgPaperRepository_GetByID(t *testing.T) {
 			"id", "canonical_id", "title", "abstract", "authors",
 			"publication_date", "publication_year", "venue", "journal",
 			"volume", "issue", "pages", "citation_count", "reference_count",
-			"pdf_url", "open_access", "keywords_extracted", "raw_metadata",
-			"created_at", "updated_at",
+			"pdf_url", "open_access", "keywords_extracted",
+			"file_id", "ingestion_run_id",
+			"raw_metadata", "created_at", "updated_at",
 		}).AddRow(
 			paper.ID, paper.CanonicalID, paper.Title, paper.Abstract, authorsJSON,
 			paper.PublicationDate, paper.PublicationYear, paper.Venue, paper.Journal,
 			paper.Volume, paper.Issue, paper.Pages, paper.CitationCount, paper.ReferenceCount,
-			paper.PDFURL, paper.OpenAccess, paper.KeywordsExtracted, metadataJSON,
-			paper.CreatedAt, paper.UpdatedAt,
+			paper.PDFURL, paper.OpenAccess, paper.KeywordsExtracted,
+			paper.FileID, paper.IngestionRunID,
+			metadataJSON, paper.CreatedAt, paper.UpdatedAt,
 		)
 
 		mock.ExpectQuery("SELECT .* FROM papers WHERE id = \\$1").
@@ -285,14 +289,16 @@ func TestPgPaperRepository_FindByIdentifier(t *testing.T) {
 			"id", "canonical_id", "title", "abstract", "authors",
 			"publication_date", "publication_year", "venue", "journal",
 			"volume", "issue", "pages", "citation_count", "reference_count",
-			"pdf_url", "open_access", "keywords_extracted", "raw_metadata",
-			"created_at", "updated_at",
+			"pdf_url", "open_access", "keywords_extracted",
+			"file_id", "ingestion_run_id",
+			"raw_metadata", "created_at", "updated_at",
 		}).AddRow(
 			paper.ID, paper.CanonicalID, paper.Title, paper.Abstract, authorsJSON,
 			paper.PublicationDate, paper.PublicationYear, paper.Venue, paper.Journal,
 			paper.Volume, paper.Issue, paper.Pages, paper.CitationCount, paper.ReferenceCount,
-			paper.PDFURL, paper.OpenAccess, paper.KeywordsExtracted, metadataJSON,
-			paper.CreatedAt, paper.UpdatedAt,
+			paper.PDFURL, paper.OpenAccess, paper.KeywordsExtracted,
+			paper.FileID, paper.IngestionRunID,
+			metadataJSON, paper.CreatedAt, paper.UpdatedAt,
 		)
 
 		mock.ExpectQuery("SELECT .* FROM papers p INNER JOIN paper_identifiers pi").
@@ -474,14 +480,16 @@ func TestPgPaperRepository_List(t *testing.T) {
 			"id", "canonical_id", "title", "abstract", "authors",
 			"publication_date", "publication_year", "venue", "journal",
 			"volume", "issue", "pages", "citation_count", "reference_count",
-			"pdf_url", "open_access", "keywords_extracted", "raw_metadata",
-			"created_at", "updated_at",
+			"pdf_url", "open_access", "keywords_extracted",
+			"file_id", "ingestion_run_id",
+			"raw_metadata", "created_at", "updated_at",
 		}).AddRow(
 			paper.ID, paper.CanonicalID, paper.Title, paper.Abstract, authorsJSON,
 			paper.PublicationDate, paper.PublicationYear, paper.Venue, paper.Journal,
 			paper.Volume, paper.Issue, paper.Pages, paper.CitationCount, paper.ReferenceCount,
-			paper.PDFURL, paper.OpenAccess, paper.KeywordsExtracted, metadataJSON,
-			paper.CreatedAt, paper.UpdatedAt,
+			paper.PDFURL, paper.OpenAccess, paper.KeywordsExtracted,
+			paper.FileID, paper.IngestionRunID,
+			metadataJSON, paper.CreatedAt, paper.UpdatedAt,
 		)
 
 		mock.ExpectQuery("SELECT .* FROM papers p\\s+ORDER BY p.created_at DESC LIMIT \\$1 OFFSET \\$2").
@@ -519,8 +527,9 @@ func TestPgPaperRepository_List(t *testing.T) {
 				"id", "canonical_id", "title", "abstract", "authors",
 				"publication_date", "publication_year", "venue", "journal",
 				"volume", "issue", "pages", "citation_count", "reference_count",
-				"pdf_url", "open_access", "keywords_extracted", "raw_metadata",
-				"created_at", "updated_at",
+				"pdf_url", "open_access", "keywords_extracted",
+				"file_id", "ingestion_run_id",
+				"raw_metadata", "created_at", "updated_at",
 			}))
 
 		hasPDF := true
@@ -683,8 +692,9 @@ func TestPaperScanDest(t *testing.T) {
 	t.Run("destinations returns correct number of pointers", func(t *testing.T) {
 		var dest paperScanDest
 		dests := dest.destinations()
-		// Should have exactly 20 destination pointers matching the SELECT columns
-		assert.Len(t, dests, 20)
+		// Should have exactly 22 destination pointers matching the SELECT columns
+		// (includes file_id and ingestion_run_id)
+		assert.Len(t, dests, 22)
 	})
 
 	t.Run("finalize handles authors JSON", func(t *testing.T) {
@@ -737,5 +747,67 @@ func TestPaperScanDest(t *testing.T) {
 		assert.Nil(t, result)
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to unmarshal metadata")
+	})
+}
+
+func TestPgPaperRepository_UpdateIngestionResult(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("updates ingestion result successfully", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgPaperRepository(mock)
+		paperID := uuid.New()
+		fileID := uuid.New()
+		ingestionRunID := "run-12345"
+
+		mock.ExpectExec("UPDATE papers SET file_id = \\$1, ingestion_run_id = \\$2, updated_at = \\$3 WHERE id = \\$4").
+			WithArgs(fileID, ingestionRunID, pgxmock.AnyArg(), paperID).
+			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
+
+		err = repo.UpdateIngestionResult(ctx, paperID, fileID, ingestionRunID)
+		assert.NoError(t, err)
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns not found error when paper doesn't exist", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgPaperRepository(mock)
+		paperID := uuid.New()
+		fileID := uuid.New()
+		ingestionRunID := "run-12345"
+
+		mock.ExpectExec("UPDATE papers SET file_id = \\$1, ingestion_run_id = \\$2, updated_at = \\$3 WHERE id = \\$4").
+			WithArgs(fileID, ingestionRunID, pgxmock.AnyArg(), paperID).
+			WillReturnResult(pgxmock.NewResult("UPDATE", 0))
+
+		err = repo.UpdateIngestionResult(ctx, paperID, fileID, ingestionRunID)
+		assert.True(t, errors.Is(err, domain.ErrNotFound))
+		assert.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("returns error on database failure", func(t *testing.T) {
+		mock, err := pgxmock.NewPool()
+		require.NoError(t, err)
+		defer mock.Close()
+
+		repo := NewPgPaperRepository(mock)
+		paperID := uuid.New()
+		fileID := uuid.New()
+		ingestionRunID := "run-12345"
+
+		mock.ExpectExec("UPDATE papers SET file_id = \\$1, ingestion_run_id = \\$2, updated_at = \\$3 WHERE id = \\$4").
+			WithArgs(fileID, ingestionRunID, pgxmock.AnyArg(), paperID).
+			WillReturnError(errors.New("database error"))
+
+		err = repo.UpdateIngestionResult(ctx, paperID, fileID, ingestionRunID)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "update ingestion result")
+		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 }

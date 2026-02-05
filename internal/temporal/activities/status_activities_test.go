@@ -238,6 +238,11 @@ func (m *mockPaperRepository) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]
 	return args.Get(0).([]*domain.Paper), args.Error(1)
 }
 
+func (m *mockPaperRepository) UpdateIngestionResult(ctx context.Context, paperID uuid.UUID, fileID uuid.UUID, ingestionRunID string) error {
+	args := m.Called(ctx, paperID, fileID, ingestionRunID)
+	return args.Error(0)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

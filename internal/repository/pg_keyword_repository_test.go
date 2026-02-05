@@ -730,14 +730,16 @@ func TestPgKeywordRepository_GetPapersForKeyword(t *testing.T) {
 				"id", "canonical_id", "title", "abstract", "authors",
 				"publication_date", "publication_year", "venue", "journal",
 				"volume", "issue", "pages", "citation_count", "reference_count",
-				"pdf_url", "open_access", "keywords_extracted", "raw_metadata",
-				"created_at", "updated_at",
+				"pdf_url", "open_access", "keywords_extracted",
+				"file_id", "ingestion_run_id",
+				"raw_metadata", "created_at", "updated_at",
 			}).AddRow(
 				paperID, "doi:10.1234/test", "Test Paper", "Abstract", []byte(`[{"name":"Author"}]`),
 				nil, 2024, "Venue", "Journal",
 				nil, nil, nil, 10, 5,
-				nil, false, false, nil,
-				now, now,
+				nil, false, false,
+				nil, nil,
+				nil, now, now,
 			))
 
 		papers, total, err := repo.GetPapersForKeyword(ctx, keywordID, 10, 0)
@@ -768,8 +770,9 @@ func TestPgKeywordRepository_GetPapersForKeyword(t *testing.T) {
 				"id", "canonical_id", "title", "abstract", "authors",
 				"publication_date", "publication_year", "venue", "journal",
 				"volume", "issue", "pages", "citation_count", "reference_count",
-				"pdf_url", "open_access", "keywords_extracted", "raw_metadata",
-				"created_at", "updated_at",
+				"pdf_url", "open_access", "keywords_extracted",
+				"file_id", "ingestion_run_id",
+				"raw_metadata", "created_at", "updated_at",
 			}))
 
 		_, _, err = repo.GetPapersForKeyword(ctx, keywordID, 0, -1)

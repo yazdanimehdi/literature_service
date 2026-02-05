@@ -121,8 +121,9 @@ func (r *PgPaperRepository) GetByCanonicalID(ctx context.Context, canonicalID st
 		SELECT id, canonical_id, title, abstract, authors,
 			publication_date, publication_year, venue, journal,
 			volume, issue, pages, citation_count, reference_count,
-			pdf_url, open_access, keywords_extracted, raw_metadata,
-			created_at, updated_at
+			pdf_url, open_access, keywords_extracted,
+			file_id, ingestion_run_id,
+			raw_metadata, created_at, updated_at
 		FROM papers
 		WHERE canonical_id = $1`
 
@@ -144,8 +145,9 @@ func (r *PgPaperRepository) GetByID(ctx context.Context, id uuid.UUID) (*domain.
 		SELECT id, canonical_id, title, abstract, authors,
 			publication_date, publication_year, venue, journal,
 			volume, issue, pages, citation_count, reference_count,
-			pdf_url, open_access, keywords_extracted, raw_metadata,
-			created_at, updated_at
+			pdf_url, open_access, keywords_extracted,
+			file_id, ingestion_run_id,
+			raw_metadata, created_at, updated_at
 		FROM papers
 		WHERE id = $1`
 
@@ -173,8 +175,9 @@ func (r *PgPaperRepository) GetByIDs(ctx context.Context, ids []uuid.UUID) ([]*d
 		SELECT id, canonical_id, title, abstract, authors,
 			publication_date, publication_year, venue, journal,
 			volume, issue, pages, citation_count, reference_count,
-			pdf_url, open_access, keywords_extracted, raw_metadata,
-			created_at, updated_at
+			pdf_url, open_access, keywords_extracted,
+			file_id, ingestion_run_id,
+			raw_metadata, created_at, updated_at
 		FROM papers
 		WHERE id = ANY($1)`
 
@@ -210,8 +213,9 @@ func (r *PgPaperRepository) FindByIdentifier(ctx context.Context, idType domain.
 		SELECT p.id, p.canonical_id, p.title, p.abstract, p.authors,
 			p.publication_date, p.publication_year, p.venue, p.journal,
 			p.volume, p.issue, p.pages, p.citation_count, p.reference_count,
-			p.pdf_url, p.open_access, p.keywords_extracted, p.raw_metadata,
-			p.created_at, p.updated_at
+			p.pdf_url, p.open_access, p.keywords_extracted,
+			p.file_id, p.ingestion_run_id,
+			p.raw_metadata, p.created_at, p.updated_at
 		FROM papers p
 		INNER JOIN paper_identifiers pi ON p.id = pi.paper_id
 		WHERE pi.identifier_type = $1 AND pi.identifier_value = $2`
@@ -357,8 +361,9 @@ func (r *PgPaperRepository) List(ctx context.Context, filter PaperFilter) ([]*do
 		SELECT p.id, p.canonical_id, p.title, p.abstract, p.authors,
 			p.publication_date, p.publication_year, p.venue, p.journal,
 			p.volume, p.issue, p.pages, p.citation_count, p.reference_count,
-			p.pdf_url, p.open_access, p.keywords_extracted, p.raw_metadata,
-			p.created_at, p.updated_at
+			p.pdf_url, p.open_access, p.keywords_extracted,
+			p.file_id, p.ingestion_run_id,
+			p.raw_metadata, p.created_at, p.updated_at
 		FROM papers p
 		%s
 		ORDER BY p.created_at DESC
@@ -405,6 +410,20 @@ func (r *PgPaperRepository) MarkKeywordsExtracted(ctx context.Context, id uuid.U
 		return domain.NewNotFoundError("paper", id.String())
 	}
 
+	return nil
+}
+
+// UpdateIngestionResult updates a paper's file_id and ingestion_run_id after
+// successful PDF download and ingestion submission.
+func (r *PgPaperRepository) UpdateIngestionResult(ctx context.Context, paperID uuid.UUID, fileID uuid.UUID, ingestionRunID string) error {
+	query := `UPDATE papers SET file_id = $1, ingestion_run_id = $2, updated_at = $3 WHERE id = $4`
+	result, err := r.db.Exec(ctx, query, fileID, ingestionRunID, time.Now().UTC(), paperID)
+	if err != nil {
+		return fmt.Errorf("update ingestion result: %w", err)
+	}
+	if result.RowsAffected() == 0 {
+		return domain.NewNotFoundError("paper", paperID.String())
+	}
 	return nil
 }
 
@@ -525,8 +544,9 @@ func (d *paperScanDest) destinations() []interface{} {
 		&d.paper.ID, &d.paper.CanonicalID, &d.paper.Title, &d.paper.Abstract, &d.authorsJSON,
 		&d.paper.PublicationDate, &d.paper.PublicationYear, &d.paper.Venue, &d.paper.Journal,
 		&d.paper.Volume, &d.paper.Issue, &d.paper.Pages, &d.paper.CitationCount, &d.paper.ReferenceCount,
-		&d.paper.PDFURL, &d.paper.OpenAccess, &d.paper.KeywordsExtracted, &d.metadataJSON,
-		&d.paper.CreatedAt, &d.paper.UpdatedAt,
+		&d.paper.PDFURL, &d.paper.OpenAccess, &d.paper.KeywordsExtracted,
+		&d.paper.FileID, &d.paper.IngestionRunID,
+		&d.metadataJSON, &d.paper.CreatedAt, &d.paper.UpdatedAt,
 	}
 }
 

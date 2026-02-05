@@ -154,6 +154,12 @@ type Paper struct {
 	// KeywordsExtracted indicates whether the LLM has already extracted keywords from this paper.
 	KeywordsExtracted bool
 
+	// FileID is the file_service UUID for the downloaded PDF (populated after ingestion).
+	FileID *uuid.UUID
+
+	// IngestionRunID is the ingestion service run ID (populated after ingestion).
+	IngestionRunID *string
+
 	// RawMetadata holds the unprocessed metadata from the source API as a JSON object.
 	RawMetadata map[string]interface{}
 

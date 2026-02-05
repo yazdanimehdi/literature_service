@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -1054,4 +1055,39 @@ func TestParsePaginationParams_EdgeCases(t *testing.T) {
 			t.Errorf("expected offset 0 for invalid page_token, got %d", offset)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Tests: concurrent stress
+// ---------------------------------------------------------------------------
+
+func TestListReviews_ConcurrentRequests(t *testing.T) {
+	repo := &mockReviewRepo{
+		listFn: func(_ context.Context, _ repository.ReviewFilter) ([]*domain.LiteratureReviewRequest, int64, error) {
+			return []*domain.LiteratureReviewRequest{}, 0, nil
+		},
+	}
+	srv := newTestHTTPServer(nil, repo, &mockPaperRepo{}, &mockKeywordRepo{})
+
+	const concurrency = 50
+	errs := make(chan error, concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			req := httptest.NewRequest(http.MethodGet, buildPath("org-1", "proj-1", ""), nil)
+			rr := httptest.NewRecorder()
+			srv.router.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				errs <- fmt.Errorf("expected 200, got %d: %s", rr.Code, rr.Body.String())
+				return
+			}
+			errs <- nil
+		}()
+	}
+
+	for i := 0; i < concurrency; i++ {
+		if err := <-errs; err != nil {
+			t.Errorf("goroutine %d: %v", i, err)
+		}
+	}
 }

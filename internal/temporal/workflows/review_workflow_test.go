@@ -1,6 +1,7 @@
 package workflows
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/google/uuid"
@@ -532,4 +533,89 @@ func TestSelectPapersForExpansion(t *testing.T) {
 		selected := selectPapersForExpansion(nil, 5)
 		assert.Empty(t, selected)
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Tests: concurrent stress
+// ---------------------------------------------------------------------------
+
+func TestLiteratureReviewWorkflow_ConcurrentStarts(t *testing.T) {
+	const concurrency = 5
+	errs := make(chan error, concurrency)
+
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			testSuite := &testsuite.WorkflowTestSuite{}
+			env := testSuite.NewTestWorkflowEnvironment()
+
+			input := newTestInput()
+			input.RequestID = uuid.New()
+
+			// Activity nil-pointer references matching the workflow pattern.
+			var llmAct *activities.LLMActivities
+			var searchAct *activities.SearchActivities
+			var statusAct *activities.StatusActivities
+			var eventAct *activities.EventActivities
+
+			// Mock UpdateStatus - accept any input.
+			env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+
+			// Mock PublishEvent - fire-and-forget.
+			env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
+
+			// Mock ExtractKeywords - return test keywords.
+			env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
+				&activities.ExtractKeywordsOutput{
+					Keywords:  []string{"CRISPR", "gene therapy"},
+					Reasoning: "test",
+					Model:     "test-model",
+				}, nil,
+			)
+
+			// Mock SaveKeywords.
+			env.OnActivity(statusAct.SaveKeywords, mock.Anything, mock.Anything).Return(
+				&activities.SaveKeywordsOutput{
+					KeywordIDs: []uuid.UUID{uuid.New(), uuid.New()},
+					NewCount:   2,
+				}, nil,
+			)
+
+			// Mock SearchPapers - return some papers.
+			env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
+				&activities.SearchPapersOutput{
+					Papers: []*domain.Paper{
+						{
+							ID:          uuid.New(),
+							CanonicalID: "doi:10.1234/test",
+							Title:       "Test Paper",
+							Abstract:    "Test abstract about CRISPR",
+						},
+					},
+					TotalFound: 1,
+					BySource:   map[domain.SourceType]int{domain.SourceTypeSemanticScholar: 1},
+				}, nil,
+			)
+
+			// Mock SavePapers.
+			env.OnActivity(statusAct.SavePapers, mock.Anything, mock.Anything).Return(
+				&activities.SavePapersOutput{
+					SavedCount:     1,
+					DuplicateCount: 0,
+				}, nil,
+			)
+
+			env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
+
+			if !env.IsWorkflowCompleted() {
+				errs <- fmt.Errorf("workflow did not complete")
+				return
+			}
+			errs <- env.GetWorkflowError()
+		}()
+	}
+
+	for i := 0; i < concurrency; i++ {
+		err := <-errs
+		assert.NoError(t, err, "concurrent workflow %d failed", i)
+	}
 }

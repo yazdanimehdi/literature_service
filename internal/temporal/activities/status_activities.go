@@ -217,3 +217,48 @@ func (a *StatusActivities) IncrementCounters(ctx context.Context, input Incremen
 
 	return nil
 }
+
+// UpdatePaperIngestionResults updates papers with their file_id and ingestion_run_id
+// after successful download and ingestion. Failures are non-fatal.
+func (a *StatusActivities) UpdatePaperIngestionResults(ctx context.Context, input UpdatePaperIngestionResultsInput) (*UpdatePaperIngestionResultsOutput, error) {
+	logger := activity.GetLogger(ctx)
+	logger.Info("updating paper ingestion results", "count", len(input.Results))
+
+	output := &UpdatePaperIngestionResultsOutput{}
+
+	for _, result := range input.Results {
+		if result.FileID == "" || result.IngestionRunID == "" {
+			output.Skipped++
+			continue
+		}
+
+		activity.RecordHeartbeat(ctx, fmt.Sprintf("updating paper %s", result.PaperID))
+
+		fileID, err := uuid.Parse(result.FileID)
+		if err != nil {
+			logger.Warn("invalid file_id, skipping", "paperID", result.PaperID, "fileID", result.FileID)
+			output.Failed++
+			continue
+		}
+
+		err = a.paperRepo.UpdateIngestionResult(ctx, result.PaperID, fileID, result.IngestionRunID)
+		if err != nil {
+			logger.Warn("failed to update paper ingestion result",
+				"paperID", result.PaperID,
+				"error", err,
+			)
+			output.Failed++
+			continue
+		}
+
+		output.Updated++
+	}
+
+	logger.Info("paper ingestion results updated",
+		"updated", output.Updated,
+		"skipped", output.Skipped,
+		"failed", output.Failed,
+	)
+
+	return output, nil
+}

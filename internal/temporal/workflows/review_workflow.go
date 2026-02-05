@@ -565,28 +565,47 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			return handleFailure(fmt.Errorf("update status to ingesting: %w", err))
 		}
 
-		var submitOutput activities.SubmitPapersForIngestionOutput
-		err = workflow.ExecuteActivity(ingestionCtx, ingestionAct.SubmitPapersForIngestion, activities.SubmitPapersForIngestionInput{
+		var downloadOutput activities.DownloadAndIngestOutput
+		err = workflow.ExecuteActivity(ingestionCtx, ingestionAct.DownloadAndIngestPapers, activities.DownloadAndIngestInput{
 			OrgID:     input.OrgID,
 			ProjectID: input.ProjectID,
 			RequestID: input.RequestID,
 			Papers:    papersForIngestion,
-		}).Get(cancelCtx, &submitOutput)
+		}).Get(cancelCtx, &downloadOutput)
 		if err != nil {
 			// Ingestion failure is non-fatal: log it and continue to completion.
-			logger.Warn("paper ingestion submission failed, completing with partial results",
+			logger.Warn("paper download and ingestion failed, completing with partial results",
 				"error", err,
 			)
 		} else {
-			totalPapersSaved += submitOutput.Submitted
-			progress.PapersIngested = submitOutput.Submitted
-			progress.PapersFailed = submitOutput.Failed
+			totalPapersSaved += downloadOutput.Successful
+			progress.PapersIngested = downloadOutput.Successful
+			progress.PapersFailed = downloadOutput.Failed
 
-			logger.Info("paper ingestion completed",
-				"submitted", submitOutput.Submitted,
-				"skipped", submitOutput.Skipped,
-				"failed", submitOutput.Failed,
+			logger.Info("paper download and ingestion completed",
+				"successful", downloadOutput.Successful,
+				"skipped", downloadOutput.Skipped,
+				"failed", downloadOutput.Failed,
 			)
+
+			// Save file_id and ingestion_run_id to paper records
+			if len(downloadOutput.Results) > 0 {
+				var updateOutput activities.UpdatePaperIngestionResultsOutput
+				err = workflow.ExecuteActivity(ingestionCtx, statusAct.UpdatePaperIngestionResults, activities.UpdatePaperIngestionResultsInput{
+					Results: downloadOutput.Results,
+				}).Get(cancelCtx, &updateOutput)
+				if err != nil {
+					logger.Warn("failed to update paper ingestion results",
+						"error", err,
+					)
+				} else {
+					logger.Info("paper ingestion results saved",
+						"updated", updateOutput.Updated,
+						"skipped", updateOutput.Skipped,
+						"failed", updateOutput.Failed,
+					)
+				}
+			}
 		}
 	} else {
 		logger.Info("no papers with PDF URLs found, skipping ingestion phase")

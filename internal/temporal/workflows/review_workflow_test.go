@@ -597,15 +597,32 @@ func TestLiteratureReviewWorkflow_DedupFiltersDuplicates(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock SubmitPapersForIngestion - expect only 1 paper (the non-duplicate).
-	env.OnActivity(ingestionAct.SubmitPapersForIngestion, mock.Anything, mock.MatchedBy(func(input activities.SubmitPapersForIngestionInput) bool {
+	// Mock DownloadAndIngestPapers - expect only 1 paper (the non-duplicate).
+	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.MatchedBy(func(input activities.DownloadAndIngestInput) bool {
 		// Verify only 1 paper is submitted and it is the non-duplicate.
 		return len(input.Papers) == 1 && input.Papers[0].PaperID == nonDupID
 	})).Return(
-		&activities.SubmitPapersForIngestionOutput{
-			Submitted: 1,
-			Skipped:   0,
-			Failed:    0,
+		&activities.DownloadAndIngestOutput{
+			Successful: 1,
+			Skipped:    0,
+			Failed:     0,
+			Results: []activities.PaperIngestionResult{
+				{
+					PaperID:        nonDupID,
+					FileID:         uuid.New().String(),
+					IngestionRunID: "run-123",
+					Status:         "RUN_STATUS_PENDING",
+				},
+			},
+		}, nil,
+	)
+
+	// Mock UpdatePaperIngestionResults - called after successful ingestion.
+	env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).Return(
+		&activities.UpdatePaperIngestionResultsOutput{
+			Updated: 1,
+			Skipped: 0,
+			Failed:  0,
 		}, nil,
 	)
 
@@ -621,8 +638,8 @@ func TestLiteratureReviewWorkflow_DedupFiltersDuplicates(t *testing.T) {
 	assert.Equal(t, string(domain.ReviewStatusCompleted), result.Status)
 	assert.Equal(t, 1, result.KeywordsFound)
 	assert.Equal(t, 2, result.PapersFound)
-	// Only the non-duplicate paper was ingested.
-	assert.Equal(t, 3, result.PapersIngested) // 2 from SavePapers + 1 from ingestion submit
+	// Only the non-duplicate paper was ingested (SavePapers saved 2 + 1 from ingestion).
+	assert.Equal(t, 3, result.PapersIngested) // 2 from SavePapers + 1 from DownloadAndIngestPapers
 	assert.Equal(t, 0, result.ExpansionRounds)
 
 	env.AssertExpectations(t)

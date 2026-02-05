@@ -22,6 +22,7 @@ import (
 	"github.com/helixir/literature-review-service/internal/papersources/openalex"
 	"github.com/helixir/literature-review-service/internal/papersources/pubmed"
 	"github.com/helixir/literature-review-service/internal/papersources/semanticscholar"
+	"github.com/helixir/literature-review-service/internal/pdf"
 	"github.com/helixir/literature-review-service/internal/qdrant"
 	"github.com/helixir/literature-review-service/internal/repository"
 	"github.com/helixir/literature-review-service/internal/temporal"
@@ -144,6 +145,14 @@ func run() error {
 	defer ingestionClient.Close()
 	logger.Info().Str("address", cfg.IngestionService.Address).Msg("ingestion service client created")
 
+	// Create PDF downloader.
+	pdfDownloader := pdf.NewDownloader(pdf.Config{
+		Timeout:   cfg.IngestionService.Timeout,
+		MaxSize:   100 * 1024 * 1024, // 100MB
+		UserAgent: "Helixir-LitReview/1.0",
+	})
+	logger.Info().Msg("PDF downloader created")
+
 	// Create Qdrant client for dedup.
 	qdrantClient, err := qdrant.NewClient(qdrant.Config{
 		Address:        cfg.Qdrant.Address,
@@ -228,7 +237,7 @@ func run() error {
 	)
 	searchActivities := activities.NewSearchActivities(registry, metrics)
 	statusActivities := activities.NewStatusActivities(reviewRepo, keywordRepo, paperRepo, metrics)
-	ingestionActivities := activities.NewIngestionActivities(ingestionClient, metrics)
+	ingestionActivities := activities.NewIngestionActivities(ingestionClient, pdfDownloader, ingestionClient, metrics)
 	eventActivities := activities.NewEventActivities(publisher)
 	dedupActivities := activities.NewDedupActivities(dedupChecker)
 

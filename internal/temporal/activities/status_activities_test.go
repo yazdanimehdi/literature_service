@@ -664,3 +664,245 @@ func TestIncrementCounters_Success(t *testing.T) {
 
 	reviewRepo.AssertExpectations(t)
 }
+
+func TestUpdatePaperIngestionResults_Success(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	paperID := uuid.New()
+	fileID := uuid.New()
+
+	paperRepo.On("UpdateIngestionResult", mock.Anything, paperID, fileID, "run-123").
+		Return(nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdatePaperIngestionResults)
+
+	input := UpdatePaperIngestionResultsInput{
+		Results: []PaperIngestionResult{
+			{
+				PaperID:        paperID,
+				FileID:         fileID.String(),
+				IngestionRunID: "run-123",
+				Status:         "RUN_STATUS_PENDING",
+			},
+		},
+	}
+
+	result, err := env.ExecuteActivity(act.UpdatePaperIngestionResults, input)
+	require.NoError(t, err)
+
+	var output UpdatePaperIngestionResultsOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.Equal(t, 1, output.Updated)
+	assert.Equal(t, 0, output.Skipped)
+	assert.Equal(t, 0, output.Failed)
+
+	paperRepo.AssertExpectations(t)
+}
+
+func TestUpdatePaperIngestionResults_SkipsWithoutFileID(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdatePaperIngestionResults)
+
+	input := UpdatePaperIngestionResultsInput{
+		Results: []PaperIngestionResult{
+			{
+				PaperID:        uuid.New(),
+				FileID:         "",
+				IngestionRunID: "run-123",
+			},
+		},
+	}
+
+	result, err := env.ExecuteActivity(act.UpdatePaperIngestionResults, input)
+	require.NoError(t, err)
+
+	var output UpdatePaperIngestionResultsOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.Equal(t, 0, output.Updated)
+	assert.Equal(t, 1, output.Skipped)
+	assert.Equal(t, 0, output.Failed)
+
+	// Verify repo was not called
+	paperRepo.AssertNotCalled(t, "UpdateIngestionResult", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestUpdatePaperIngestionResults_SkipsWithoutIngestionRunID(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdatePaperIngestionResults)
+
+	input := UpdatePaperIngestionResultsInput{
+		Results: []PaperIngestionResult{
+			{
+				PaperID:        uuid.New(),
+				FileID:         uuid.New().String(),
+				IngestionRunID: "",
+			},
+		},
+	}
+
+	result, err := env.ExecuteActivity(act.UpdatePaperIngestionResults, input)
+	require.NoError(t, err)
+
+	var output UpdatePaperIngestionResultsOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.Equal(t, 0, output.Updated)
+	assert.Equal(t, 1, output.Skipped)
+	assert.Equal(t, 0, output.Failed)
+
+	paperRepo.AssertNotCalled(t, "UpdateIngestionResult", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestUpdatePaperIngestionResults_InvalidFileID(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdatePaperIngestionResults)
+
+	input := UpdatePaperIngestionResultsInput{
+		Results: []PaperIngestionResult{
+			{
+				PaperID:        uuid.New(),
+				FileID:         "not-a-uuid",
+				IngestionRunID: "run-123",
+			},
+		},
+	}
+
+	result, err := env.ExecuteActivity(act.UpdatePaperIngestionResults, input)
+	require.NoError(t, err)
+
+	var output UpdatePaperIngestionResultsOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.Equal(t, 0, output.Updated)
+	assert.Equal(t, 0, output.Skipped)
+	assert.Equal(t, 1, output.Failed)
+
+	paperRepo.AssertNotCalled(t, "UpdateIngestionResult", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestUpdatePaperIngestionResults_RepoError(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	paperID := uuid.New()
+	fileID := uuid.New()
+
+	paperRepo.On("UpdateIngestionResult", mock.Anything, paperID, fileID, "run-123").
+		Return(assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdatePaperIngestionResults)
+
+	input := UpdatePaperIngestionResultsInput{
+		Results: []PaperIngestionResult{
+			{
+				PaperID:        paperID,
+				FileID:         fileID.String(),
+				IngestionRunID: "run-123",
+			},
+		},
+	}
+
+	result, err := env.ExecuteActivity(act.UpdatePaperIngestionResults, input)
+	require.NoError(t, err) // Activity should not fail, just count as failed
+
+	var output UpdatePaperIngestionResultsOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.Equal(t, 0, output.Updated)
+	assert.Equal(t, 0, output.Skipped)
+	assert.Equal(t, 1, output.Failed)
+
+	paperRepo.AssertExpectations(t)
+}
+
+func TestUpdatePaperIngestionResults_MixedResults(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	paper1ID := uuid.New()
+	paper2ID := uuid.New()
+	paper3ID := uuid.New()
+	file1ID := uuid.New()
+	file3ID := uuid.New()
+
+	// Paper 1: success
+	paperRepo.On("UpdateIngestionResult", mock.Anything, paper1ID, file1ID, "run-1").
+		Return(nil)
+	// Paper 3: repo error
+	paperRepo.On("UpdateIngestionResult", mock.Anything, paper3ID, file3ID, "run-3").
+		Return(assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdatePaperIngestionResults)
+
+	input := UpdatePaperIngestionResultsInput{
+		Results: []PaperIngestionResult{
+			{
+				PaperID:        paper1ID,
+				FileID:         file1ID.String(),
+				IngestionRunID: "run-1",
+			},
+			{
+				// Paper 2: skip (no file_id)
+				PaperID:        paper2ID,
+				FileID:         "",
+				IngestionRunID: "run-2",
+			},
+			{
+				PaperID:        paper3ID,
+				FileID:         file3ID.String(),
+				IngestionRunID: "run-3",
+			},
+		},
+	}
+
+	result, err := env.ExecuteActivity(act.UpdatePaperIngestionResults, input)
+	require.NoError(t, err)
+
+	var output UpdatePaperIngestionResultsOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.Equal(t, 1, output.Updated)
+	assert.Equal(t, 1, output.Skipped)
+	assert.Equal(t, 1, output.Failed)
+
+	paperRepo.AssertExpectations(t)
+}

@@ -214,12 +214,11 @@ func TestChaos_SearchAllSourcesFail(t *testing.T) {
 }
 
 // TestChaos_IngestionNonFatal verifies that the workflow completes
-// successfully when SubmitPapersForIngestion fails entirely.
+// successfully when DownloadAndIngestPapers fails entirely.
 //
 // The ingestion phase is explicitly non-fatal: the workflow catches the error,
-// logs a warning, and proceeds to the completion phase (review_workflow.go
-// lines 519-524). This test confirms that paper discovery results are
-// preserved even when the ingestion service is unavailable.
+// logs a warning, and proceeds to the completion phase. This test confirms that
+// paper discovery results are preserved even when PDF download/ingestion fails.
 func TestChaos_IngestionNonFatal(t *testing.T) {
 	testSuite := &testsuite.WorkflowTestSuite{}
 	env := testSuite.NewTestWorkflowEnvironment()
@@ -231,6 +230,7 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 	var statusAct *activities.StatusActivities
 	var ingestionAct *activities.IngestionActivities
 	var eventAct *activities.EventActivities
+	var dedupAct *activities.DedupActivities
 
 	// Mock UpdateStatus -- accept all calls.
 	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
@@ -256,11 +256,12 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 	)
 
 	// Mock SearchPapers -- return papers WITH PDF URLs to trigger ingestion.
+	paperID := uuid.New()
 	env.OnActivity(searchAct.SearchPapers, mock.Anything, mock.Anything).Return(
 		&activities.SearchPapersOutput{
 			Papers: []*domain.Paper{
 				{
-					ID:          uuid.New(),
+					ID:          paperID,
 					CanonicalID: "doi:10.9999/ingestion-chaos",
 					Title:       "Paper With PDF",
 					Abstract:    "This paper has a PDF URL for ingestion testing.",
@@ -280,9 +281,18 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock SubmitPapersForIngestion -- return a non-retryable error.
+	// Mock DedupPapers -- all papers are non-duplicates.
+	env.OnActivity(dedupAct.DedupPapers, mock.Anything, mock.Anything).Return(
+		&activities.DedupPapersOutput{
+			NonDuplicateIDs: []uuid.UUID{paperID},
+			DuplicateCount:  0,
+			SkippedCount:    0,
+		}, nil,
+	)
+
+	// Mock DownloadAndIngestPapers -- return a non-retryable error.
 	// This simulates the ingestion service being completely unavailable.
-	env.OnActivity(ingestionAct.SubmitPapersForIngestion, mock.Anything, mock.Anything).Return(
+	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.Anything).Return(
 		nil, temporal.NewNonRetryableApplicationError(
 			"ingestion service unavailable",
 			"INGESTION_FAILED",
@@ -305,7 +315,7 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 	assert.Equal(t, 1, result.KeywordsFound)
 	assert.Equal(t, 1, result.PapersFound)
 	// PapersIngested reflects only the SavePapers count since ingestion failed.
-	// The ingestion branch's submitOutput.Submitted is not added when ingestion errors.
+	// The ingestion branch's downloadOutput.Successful is not added when ingestion errors.
 	assert.Equal(t, 1, result.PapersIngested, "SavePapers count is preserved despite ingestion failure")
 
 	env.AssertExpectations(t)

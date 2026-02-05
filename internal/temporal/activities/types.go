@@ -363,3 +363,21 @@ type PaperIngestionResult struct {
 	// Error contains the error message if processing failed.
 	Error string
 }
+
+// UpdatePaperIngestionResultsInput contains the parameters for updating paper ingestion results.
+type UpdatePaperIngestionResultsInput struct {
+	// Results contains the per-paper ingestion results to save.
+	Results []PaperIngestionResult
+}
+
+// UpdatePaperIngestionResultsOutput contains the results of updating paper ingestion results.
+type UpdatePaperIngestionResultsOutput struct {
+	// Updated is the count of papers successfully updated.
+	Updated int
+
+	// Skipped is the count of papers skipped (no file_id or ingestion_run_id).
+	Skipped int
+
+	// Failed is the count of papers that failed to update.
+	Failed int
+}

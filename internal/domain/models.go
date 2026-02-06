@@ -158,6 +158,21 @@ const (
 	SourceTypeArXiv SourceType = "arxiv"
 )
 
+// validSourceTypes is the set of known source types for validation.
+var validSourceTypes = map[SourceType]bool{
+	SourceTypeSemanticScholar: true,
+	SourceTypeOpenAlex:        true,
+	SourceTypeScopus:          true,
+	SourceTypePubMed:          true,
+	SourceTypeBioRxiv:         true,
+	SourceTypeArXiv:           true,
+}
+
+// IsValidSourceType returns true if st is a recognized source type.
+func IsValidSourceType(st SourceType) bool {
+	return validSourceTypes[st]
+}
+
 // IdentifierType represents the type of academic paper identifier.
 // These values must match the database enum identifier_type.
 type IdentifierType string

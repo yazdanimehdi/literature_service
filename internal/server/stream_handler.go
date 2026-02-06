@@ -100,6 +100,24 @@ func (s *LiteratureReviewServer) StreamLiteratureReviewProgress(req *pb.StreamLi
 				return domainErrToGRPC(err)
 			}
 
+			if currentReview.Status.IsTerminal() {
+				// Send only the final event to avoid duplicate terminal events.
+				finalEvent := &pb.LiteratureReviewProgressEvent{
+					ReviewId:  currentReview.ID.String(),
+					EventType: "completed",
+					Status:    reviewStatusToProto(currentReview.Status),
+					Message:   "review completed with status: " + string(currentReview.Status),
+					Timestamp: timestamppb.Now(),
+					Progress: &pb.ReviewProgress{
+						PapersFound:    int32(currentReview.PapersFoundCount),
+						PapersIngested: int32(currentReview.PapersIngestedCount),
+						PapersFailed:   int32(currentReview.PapersFailedCount),
+					},
+				}
+				_ = stream.Send(finalEvent)
+				return nil
+			}
+
 			event := &pb.LiteratureReviewProgressEvent{
 				ReviewId:  currentReview.ID.String(),
 				EventType: "progress_update",
@@ -115,24 +133,6 @@ func (s *LiteratureReviewServer) StreamLiteratureReviewProgress(req *pb.StreamLi
 
 			if err := stream.Send(event); err != nil {
 				return err
-			}
-
-			if currentReview.Status.IsTerminal() {
-				// Send final event.
-				finalEvent := &pb.LiteratureReviewProgressEvent{
-					ReviewId:  currentReview.ID.String(),
-					EventType: "completed",
-					Status:    reviewStatusToProto(currentReview.Status),
-					Message:   "review completed with status: " + string(currentReview.Status),
-					Timestamp: timestamppb.Now(),
-					Progress: &pb.ReviewProgress{
-						PapersFound:    int32(currentReview.PapersFoundCount),
-						PapersIngested: int32(currentReview.PapersIngestedCount),
-						PapersFailed:   int32(currentReview.PapersFailedCount),
-					},
-				}
-				_ = stream.Send(finalEvent)
-				return nil
 			}
 		}
 	}

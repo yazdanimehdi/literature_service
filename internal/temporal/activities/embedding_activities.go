@@ -149,14 +149,16 @@ func cosineSimilarity(a, b []float32) float64 {
 	if len(a) != len(b) || len(a) == 0 {
 		return 0
 	}
-	var dot, magA, magB float64
+	// Accumulate in float32 to avoid per-element float32→float64 conversions.
+	// Only convert to float64 for the final division and sqrt.
+	var dot, magA, magB float32
 	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-		magA += float64(a[i]) * float64(a[i])
-		magB += float64(b[i]) * float64(b[i])
+		dot += a[i] * b[i]
+		magA += a[i] * a[i]
+		magB += b[i] * b[i]
 	}
 	if magA == 0 || magB == 0 {
 		return 0
 	}
-	return dot / (math.Sqrt(magA) * math.Sqrt(magB))
+	return float64(dot) / math.Sqrt(float64(magA)*float64(magB))
 }

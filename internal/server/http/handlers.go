@@ -96,18 +96,35 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 	// Build configuration from defaults with optional overrides.
 	cfg := domain.DefaultReviewConfiguration()
 	if req.InitialKeywordCount != nil {
+		if *req.InitialKeywordCount < 1 || *req.InitialKeywordCount > 100 {
+			writeError(w, http.StatusBadRequest, "initial_keyword_count must be between 1 and 100")
+			return
+		}
 		cfg.MaxKeywordsPerRound = *req.InitialKeywordCount
 	}
 	if req.PaperKeywordCount != nil {
+		if *req.PaperKeywordCount < 1 || *req.PaperKeywordCount > 50 {
+			writeError(w, http.StatusBadRequest, "paper_keyword_count must be between 1 and 50")
+			return
+		}
 		cfg.PaperKeywordCount = *req.PaperKeywordCount
 	}
 	if req.MaxExpansionDepth != nil {
+		if *req.MaxExpansionDepth < 0 || *req.MaxExpansionDepth > 10 {
+			writeError(w, http.StatusBadRequest, "max_expansion_depth must be between 0 and 10")
+			return
+		}
 		cfg.MaxExpansionDepth = *req.MaxExpansionDepth
 	}
 	if len(req.SourceFilters) > 0 {
 		sources := make([]domain.SourceType, len(req.SourceFilters))
 		for i, sf := range req.SourceFilters {
-			sources[i] = domain.SourceType(sf)
+			st := domain.SourceType(sf)
+			if !domain.IsValidSourceType(st) {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("unsupported source: %s", sf))
+				return
+			}
+			sources[i] = st
 		}
 		cfg.Sources = sources
 	}
@@ -351,10 +368,11 @@ func writeDomainError(w http.ResponseWriter, err error) {
 
 // parseUUID parses a UUID from a string, writing a 400 error response if invalid.
 // Returns the parsed UUID and true on success, or uuid.Nil and false on failure.
+// The parse error details are not included to avoid echoing potentially malicious input.
 func parseUUID(w http.ResponseWriter, s, fieldName string) (uuid.UUID, bool) {
 	id, err := uuid.Parse(s)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid %s: %v", fieldName, err))
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("%s must be a valid UUID", fieldName))
 		return uuid.Nil, false
 	}
 	return id, true

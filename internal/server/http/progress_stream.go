@@ -134,16 +134,8 @@ func (s *Server) streamProgress(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			sendSSEEvent(w, flusher, sseEvent{
-				EventType: "progress_update",
-				ReviewID:  current.ID.String(),
-				Status:    string(current.Status),
-				Progress:  buildProgressData(current),
-				Message:   "status: " + string(current.Status),
-				Timestamp: time.Now(),
-			})
-
 			if current.Status.IsTerminal() {
+				// Send only the final event to avoid duplicate terminal events.
 				sendSSEEvent(w, flusher, sseEvent{
 					EventType: "completed",
 					ReviewID:  current.ID.String(),
@@ -154,6 +146,15 @@ func (s *Server) streamProgress(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
+
+			sendSSEEvent(w, flusher, sseEvent{
+				EventType: "progress_update",
+				ReviewID:  current.ID.String(),
+				Status:    string(current.Status),
+				Progress:  buildProgressData(current),
+				Message:   "status: " + string(current.Status),
+				Timestamp: time.Now(),
+			})
 		}
 	}
 }

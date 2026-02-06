@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,7 +30,8 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 		return nil, err
 	}
 
-	// Validate title.
+	// Validate title (trim whitespace first, matching HTTP handler).
+	req.Title = strings.TrimSpace(req.Title)
 	if req.Title == "" {
 		return nil, status.Error(codes.InvalidArgument, "title is required")
 	}
@@ -53,18 +55,34 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 	// Build configuration from defaults, overriding with request values.
 	cfg := domain.DefaultReviewConfiguration()
 	if req.InitialKeywordCount != nil {
-		cfg.MaxKeywordsPerRound = int(req.InitialKeywordCount.Value)
+		v := int(req.InitialKeywordCount.Value)
+		if v < 1 || v > 100 {
+			return nil, status.Error(codes.InvalidArgument, "initial_keyword_count must be between 1 and 100")
+		}
+		cfg.MaxKeywordsPerRound = v
 	}
 	if req.PaperKeywordCount != nil {
-		cfg.PaperKeywordCount = int(req.PaperKeywordCount.Value)
+		v := int(req.PaperKeywordCount.Value)
+		if v < 1 || v > 50 {
+			return nil, status.Error(codes.InvalidArgument, "paper_keyword_count must be between 1 and 50")
+		}
+		cfg.PaperKeywordCount = v
 	}
 	if req.MaxExpansionDepth != nil {
-		cfg.MaxExpansionDepth = int(req.MaxExpansionDepth.Value)
+		v := int(req.MaxExpansionDepth.Value)
+		if v < 0 || v > 10 {
+			return nil, status.Error(codes.InvalidArgument, "max_expansion_depth must be between 0 and 10")
+		}
+		cfg.MaxExpansionDepth = v
 	}
 	if len(req.SourceFilters) > 0 {
 		sources := make([]domain.SourceType, len(req.SourceFilters))
 		for i, sf := range req.SourceFilters {
-			sources[i] = domain.SourceType(sf)
+			st := domain.SourceType(sf)
+			if !domain.IsValidSourceType(st) {
+				return nil, status.Errorf(codes.InvalidArgument, "unsupported source: %s", sf)
+			}
+			sources[i] = st
 		}
 		cfg.Sources = sources
 	}

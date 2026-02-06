@@ -10,7 +10,6 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"strconv"
 
 	"github.com/google/uuid"
@@ -149,11 +148,12 @@ func validateTenantAccess(ctx context.Context, orgID, projectID string) error {
 }
 
 // validateUUID parses and validates a UUID string. Returns a descriptive error
-// referencing fieldName if the string is not a valid UUID.
+// referencing fieldName if the string is not a valid UUID. The parse error
+// details are not included to avoid echoing potentially malicious input.
 func validateUUID(s, fieldName string) (uuid.UUID, error) {
 	id, err := uuid.Parse(s)
 	if err != nil {
-		return uuid.Nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid %s: %v", fieldName, err))
+		return uuid.Nil, status.Errorf(codes.InvalidArgument, "%s must be a valid UUID", fieldName)
 	}
 	return id, nil
 }

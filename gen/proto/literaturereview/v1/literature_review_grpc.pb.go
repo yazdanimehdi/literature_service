@@ -26,6 +26,10 @@ const (
 	LiteratureReviewService_GetLiteratureReviewPapers_FullMethodName      = "/literaturereview.v1.LiteratureReviewService/GetLiteratureReviewPapers"
 	LiteratureReviewService_GetLiteratureReviewKeywords_FullMethodName    = "/literaturereview.v1.LiteratureReviewService/GetLiteratureReviewKeywords"
 	LiteratureReviewService_StreamLiteratureReviewProgress_FullMethodName = "/literaturereview.v1.LiteratureReviewService/StreamLiteratureReviewProgress"
+	LiteratureReviewService_PauseReview_FullMethodName                    = "/literaturereview.v1.LiteratureReviewService/PauseReview"
+	LiteratureReviewService_ResumeReview_FullMethodName                   = "/literaturereview.v1.LiteratureReviewService/ResumeReview"
+	LiteratureReviewService_StopReview_FullMethodName                     = "/literaturereview.v1.LiteratureReviewService/StopReview"
+	LiteratureReviewService_ListPausedReviews_FullMethodName              = "/literaturereview.v1.LiteratureReviewService/ListPausedReviews"
 )
 
 // LiteratureReviewServiceClient is the client API for LiteratureReviewService service.
@@ -48,6 +52,14 @@ type LiteratureReviewServiceClient interface {
 	GetLiteratureReviewKeywords(ctx context.Context, in *GetLiteratureReviewKeywordsRequest, opts ...grpc.CallOption) (*GetLiteratureReviewKeywordsResponse, error)
 	// StreamLiteratureReviewProgress streams real-time progress updates.
 	StreamLiteratureReviewProgress(ctx context.Context, in *StreamLiteratureReviewProgressRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LiteratureReviewProgressEvent], error)
+	// PauseReview pauses a running review at the next checkpoint.
+	PauseReview(ctx context.Context, in *PauseReviewRequest, opts ...grpc.CallOption) (*PauseReviewResponse, error)
+	// ResumeReview resumes a paused review.
+	ResumeReview(ctx context.Context, in *ResumeReviewRequest, opts ...grpc.CallOption) (*ResumeReviewResponse, error)
+	// StopReview gracefully stops a review and saves partial results.
+	StopReview(ctx context.Context, in *StopReviewRequest, opts ...grpc.CallOption) (*StopReviewResponse, error)
+	// ListPausedReviews returns all paused reviews for an org/project.
+	ListPausedReviews(ctx context.Context, in *ListPausedReviewsRequest, opts ...grpc.CallOption) (*ListPausedReviewsResponse, error)
 }
 
 type literatureReviewServiceClient struct {
@@ -137,6 +149,46 @@ func (c *literatureReviewServiceClient) StreamLiteratureReviewProgress(ctx conte
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type LiteratureReviewService_StreamLiteratureReviewProgressClient = grpc.ServerStreamingClient[LiteratureReviewProgressEvent]
 
+func (c *literatureReviewServiceClient) PauseReview(ctx context.Context, in *PauseReviewRequest, opts ...grpc.CallOption) (*PauseReviewResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PauseReviewResponse)
+	err := c.cc.Invoke(ctx, LiteratureReviewService_PauseReview_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *literatureReviewServiceClient) ResumeReview(ctx context.Context, in *ResumeReviewRequest, opts ...grpc.CallOption) (*ResumeReviewResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResumeReviewResponse)
+	err := c.cc.Invoke(ctx, LiteratureReviewService_ResumeReview_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *literatureReviewServiceClient) StopReview(ctx context.Context, in *StopReviewRequest, opts ...grpc.CallOption) (*StopReviewResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StopReviewResponse)
+	err := c.cc.Invoke(ctx, LiteratureReviewService_StopReview_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *literatureReviewServiceClient) ListPausedReviews(ctx context.Context, in *ListPausedReviewsRequest, opts ...grpc.CallOption) (*ListPausedReviewsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListPausedReviewsResponse)
+	err := c.cc.Invoke(ctx, LiteratureReviewService_ListPausedReviews_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // LiteratureReviewServiceServer is the server API for LiteratureReviewService service.
 // All implementations must embed UnimplementedLiteratureReviewServiceServer
 // for forward compatibility.
@@ -157,6 +209,14 @@ type LiteratureReviewServiceServer interface {
 	GetLiteratureReviewKeywords(context.Context, *GetLiteratureReviewKeywordsRequest) (*GetLiteratureReviewKeywordsResponse, error)
 	// StreamLiteratureReviewProgress streams real-time progress updates.
 	StreamLiteratureReviewProgress(*StreamLiteratureReviewProgressRequest, grpc.ServerStreamingServer[LiteratureReviewProgressEvent]) error
+	// PauseReview pauses a running review at the next checkpoint.
+	PauseReview(context.Context, *PauseReviewRequest) (*PauseReviewResponse, error)
+	// ResumeReview resumes a paused review.
+	ResumeReview(context.Context, *ResumeReviewRequest) (*ResumeReviewResponse, error)
+	// StopReview gracefully stops a review and saves partial results.
+	StopReview(context.Context, *StopReviewRequest) (*StopReviewResponse, error)
+	// ListPausedReviews returns all paused reviews for an org/project.
+	ListPausedReviews(context.Context, *ListPausedReviewsRequest) (*ListPausedReviewsResponse, error)
 	mustEmbedUnimplementedLiteratureReviewServiceServer()
 }
 
@@ -187,6 +247,18 @@ func (UnimplementedLiteratureReviewServiceServer) GetLiteratureReviewKeywords(co
 }
 func (UnimplementedLiteratureReviewServiceServer) StreamLiteratureReviewProgress(*StreamLiteratureReviewProgressRequest, grpc.ServerStreamingServer[LiteratureReviewProgressEvent]) error {
 	return status.Error(codes.Unimplemented, "method StreamLiteratureReviewProgress not implemented")
+}
+func (UnimplementedLiteratureReviewServiceServer) PauseReview(context.Context, *PauseReviewRequest) (*PauseReviewResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method PauseReview not implemented")
+}
+func (UnimplementedLiteratureReviewServiceServer) ResumeReview(context.Context, *ResumeReviewRequest) (*ResumeReviewResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResumeReview not implemented")
+}
+func (UnimplementedLiteratureReviewServiceServer) StopReview(context.Context, *StopReviewRequest) (*StopReviewResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StopReview not implemented")
+}
+func (UnimplementedLiteratureReviewServiceServer) ListPausedReviews(context.Context, *ListPausedReviewsRequest) (*ListPausedReviewsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListPausedReviews not implemented")
 }
 func (UnimplementedLiteratureReviewServiceServer) mustEmbedUnimplementedLiteratureReviewServiceServer() {
 }
@@ -329,6 +401,78 @@ func _LiteratureReviewService_StreamLiteratureReviewProgress_Handler(srv interfa
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type LiteratureReviewService_StreamLiteratureReviewProgressServer = grpc.ServerStreamingServer[LiteratureReviewProgressEvent]
 
+func _LiteratureReviewService_PauseReview_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PauseReviewRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LiteratureReviewServiceServer).PauseReview(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LiteratureReviewService_PauseReview_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LiteratureReviewServiceServer).PauseReview(ctx, req.(*PauseReviewRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LiteratureReviewService_ResumeReview_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResumeReviewRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LiteratureReviewServiceServer).ResumeReview(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LiteratureReviewService_ResumeReview_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LiteratureReviewServiceServer).ResumeReview(ctx, req.(*ResumeReviewRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LiteratureReviewService_StopReview_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StopReviewRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LiteratureReviewServiceServer).StopReview(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LiteratureReviewService_StopReview_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LiteratureReviewServiceServer).StopReview(ctx, req.(*StopReviewRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _LiteratureReviewService_ListPausedReviews_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListPausedReviewsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LiteratureReviewServiceServer).ListPausedReviews(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: LiteratureReviewService_ListPausedReviews_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LiteratureReviewServiceServer).ListPausedReviews(ctx, req.(*ListPausedReviewsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // LiteratureReviewService_ServiceDesc is the grpc.ServiceDesc for LiteratureReviewService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -359,6 +503,22 @@ var LiteratureReviewService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetLiteratureReviewKeywords",
 			Handler:    _LiteratureReviewService_GetLiteratureReviewKeywords_Handler,
+		},
+		{
+			MethodName: "PauseReview",
+			Handler:    _LiteratureReviewService_PauseReview_Handler,
+		},
+		{
+			MethodName: "ResumeReview",
+			Handler:    _LiteratureReviewService_ResumeReview_Handler,
+		},
+		{
+			MethodName: "StopReview",
+			Handler:    _LiteratureReviewService_StopReview_Handler,
+		},
+		{
+			MethodName: "ListPausedReviews",
+			Handler:    _LiteratureReviewService_ListPausedReviews_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

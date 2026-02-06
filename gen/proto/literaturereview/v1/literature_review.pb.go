@@ -37,21 +37,23 @@ const (
 	ReviewStatus_REVIEW_STATUS_FAILED              ReviewStatus = 7
 	ReviewStatus_REVIEW_STATUS_CANCELLED           ReviewStatus = 8
 	ReviewStatus_REVIEW_STATUS_PARTIAL             ReviewStatus = 9
+	ReviewStatus_REVIEW_STATUS_PAUSED              ReviewStatus = 10
 )
 
 // Enum value maps for ReviewStatus.
 var (
 	ReviewStatus_name = map[int32]string{
-		0: "REVIEW_STATUS_UNSPECIFIED",
-		1: "REVIEW_STATUS_PENDING",
-		2: "REVIEW_STATUS_EXTRACTING_KEYWORDS",
-		3: "REVIEW_STATUS_SEARCHING",
-		4: "REVIEW_STATUS_EXPANDING",
-		5: "REVIEW_STATUS_INGESTING",
-		6: "REVIEW_STATUS_COMPLETED",
-		7: "REVIEW_STATUS_FAILED",
-		8: "REVIEW_STATUS_CANCELLED",
-		9: "REVIEW_STATUS_PARTIAL",
+		0:  "REVIEW_STATUS_UNSPECIFIED",
+		1:  "REVIEW_STATUS_PENDING",
+		2:  "REVIEW_STATUS_EXTRACTING_KEYWORDS",
+		3:  "REVIEW_STATUS_SEARCHING",
+		4:  "REVIEW_STATUS_EXPANDING",
+		5:  "REVIEW_STATUS_INGESTING",
+		6:  "REVIEW_STATUS_COMPLETED",
+		7:  "REVIEW_STATUS_FAILED",
+		8:  "REVIEW_STATUS_CANCELLED",
+		9:  "REVIEW_STATUS_PARTIAL",
+		10: "REVIEW_STATUS_PAUSED",
 	}
 	ReviewStatus_value = map[string]int32{
 		"REVIEW_STATUS_UNSPECIFIED":         0,
@@ -64,6 +66,7 @@ var (
 		"REVIEW_STATUS_FAILED":              7,
 		"REVIEW_STATUS_CANCELLED":           8,
 		"REVIEW_STATUS_PARTIAL":             9,
+		"REVIEW_STATUS_PAUSED":              10,
 	}
 )
 
@@ -1435,6 +1438,522 @@ func (*LiteratureReviewProgressEvent_IngestionProgress) isLiteratureReviewProgre
 
 func (*LiteratureReviewProgressEvent_Error) isLiteratureReviewProgressEvent_EventData() {}
 
+type PauseReviewRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrgId         string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	ProjectId     string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	ReviewId      string                 `protobuf:"bytes,3,opt,name=review_id,json=reviewId,proto3" json:"review_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PauseReviewRequest) Reset() {
+	*x = PauseReviewRequest{}
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PauseReviewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PauseReviewRequest) ProtoMessage() {}
+
+func (x *PauseReviewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PauseReviewRequest.ProtoReflect.Descriptor instead.
+func (*PauseReviewRequest) Descriptor() ([]byte, []int) {
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *PauseReviewRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *PauseReviewRequest) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *PauseReviewRequest) GetReviewId() string {
+	if x != nil {
+		return x.ReviewId
+	}
+	return ""
+}
+
+type PauseReviewResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PauseReviewResponse) Reset() {
+	*x = PauseReviewResponse{}
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PauseReviewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PauseReviewResponse) ProtoMessage() {}
+
+func (x *PauseReviewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PauseReviewResponse.ProtoReflect.Descriptor instead.
+func (*PauseReviewResponse) Descriptor() ([]byte, []int) {
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *PauseReviewResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *PauseReviewResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type ResumeReviewRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrgId         string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	ProjectId     string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	ReviewId      string                 `protobuf:"bytes,3,opt,name=review_id,json=reviewId,proto3" json:"review_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeReviewRequest) Reset() {
+	*x = ResumeReviewRequest{}
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeReviewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeReviewRequest) ProtoMessage() {}
+
+func (x *ResumeReviewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeReviewRequest.ProtoReflect.Descriptor instead.
+func (*ResumeReviewRequest) Descriptor() ([]byte, []int) {
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ResumeReviewRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *ResumeReviewRequest) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *ResumeReviewRequest) GetReviewId() string {
+	if x != nil {
+		return x.ReviewId
+	}
+	return ""
+}
+
+type ResumeReviewResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeReviewResponse) Reset() {
+	*x = ResumeReviewResponse{}
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeReviewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeReviewResponse) ProtoMessage() {}
+
+func (x *ResumeReviewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeReviewResponse.ProtoReflect.Descriptor instead.
+func (*ResumeReviewResponse) Descriptor() ([]byte, []int) {
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ResumeReviewResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ResumeReviewResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type StopReviewRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrgId         string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	ProjectId     string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	ReviewId      string                 `protobuf:"bytes,3,opt,name=review_id,json=reviewId,proto3" json:"review_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopReviewRequest) Reset() {
+	*x = StopReviewRequest{}
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopReviewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopReviewRequest) ProtoMessage() {}
+
+func (x *StopReviewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopReviewRequest.ProtoReflect.Descriptor instead.
+func (*StopReviewRequest) Descriptor() ([]byte, []int) {
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *StopReviewRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *StopReviewRequest) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *StopReviewRequest) GetReviewId() string {
+	if x != nil {
+		return x.ReviewId
+	}
+	return ""
+}
+
+type StopReviewResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopReviewResponse) Reset() {
+	*x = StopReviewResponse{}
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopReviewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopReviewResponse) ProtoMessage() {}
+
+func (x *StopReviewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopReviewResponse.ProtoReflect.Descriptor instead.
+func (*StopReviewResponse) Descriptor() ([]byte, []int) {
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *StopReviewResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *StopReviewResponse) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+type ListPausedReviewsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrgId         string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	ProjectId     string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`       // Optional - filter by project
+	PauseReason   string                 `protobuf:"bytes,3,opt,name=pause_reason,json=pauseReason,proto3" json:"pause_reason,omitempty"` // Optional - "user" or "budget_exhausted"
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPausedReviewsRequest) Reset() {
+	*x = ListPausedReviewsRequest{}
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPausedReviewsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPausedReviewsRequest) ProtoMessage() {}
+
+func (x *ListPausedReviewsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPausedReviewsRequest.ProtoReflect.Descriptor instead.
+func (*ListPausedReviewsRequest) Descriptor() ([]byte, []int) {
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ListPausedReviewsRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *ListPausedReviewsRequest) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *ListPausedReviewsRequest) GetPauseReason() string {
+	if x != nil {
+		return x.PauseReason
+	}
+	return ""
+}
+
+type ListPausedReviewsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reviews       []*PausedReview        `protobuf:"bytes,1,rep,name=reviews,proto3" json:"reviews,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListPausedReviewsResponse) Reset() {
+	*x = ListPausedReviewsResponse{}
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListPausedReviewsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListPausedReviewsResponse) ProtoMessage() {}
+
+func (x *ListPausedReviewsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListPausedReviewsResponse.ProtoReflect.Descriptor instead.
+func (*ListPausedReviewsResponse) Descriptor() ([]byte, []int) {
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ListPausedReviewsResponse) GetReviews() []*PausedReview {
+	if x != nil {
+		return x.Reviews
+	}
+	return nil
+}
+
+type PausedReview struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ReviewId      string                 `protobuf:"bytes,1,opt,name=review_id,json=reviewId,proto3" json:"review_id,omitempty"`
+	ProjectId     string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	PauseReason   string                 `protobuf:"bytes,3,opt,name=pause_reason,json=pauseReason,proto3" json:"pause_reason,omitempty"`
+	PausedAt      *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=paused_at,json=pausedAt,proto3" json:"paused_at,omitempty"`
+	PausedAtPhase string                 `protobuf:"bytes,5,opt,name=paused_at_phase,json=pausedAtPhase,proto3" json:"paused_at_phase,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PausedReview) Reset() {
+	*x = PausedReview{}
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PausedReview) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PausedReview) ProtoMessage() {}
+
+func (x *PausedReview) ProtoReflect() protoreflect.Message {
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PausedReview.ProtoReflect.Descriptor instead.
+func (*PausedReview) Descriptor() ([]byte, []int) {
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *PausedReview) GetReviewId() string {
+	if x != nil {
+		return x.ReviewId
+	}
+	return ""
+}
+
+func (x *PausedReview) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *PausedReview) GetPauseReason() string {
+	if x != nil {
+		return x.PauseReason
+	}
+	return ""
+}
+
+func (x *PausedReview) GetPausedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PausedAt
+	}
+	return nil
+}
+
+func (x *PausedReview) GetPausedAtPhase() string {
+	if x != nil {
+		return x.PausedAtPhase
+	}
+	return ""
+}
+
 type ReviewProgress struct {
 	state                  protoimpl.MessageState     `protogen:"open.v1"`
 	InitialKeywordsCount   int32                      `protobuf:"varint,1,opt,name=initial_keywords_count,json=initialKeywordsCount,proto3" json:"initial_keywords_count,omitempty"`
@@ -1454,7 +1973,7 @@ type ReviewProgress struct {
 
 func (x *ReviewProgress) Reset() {
 	*x = ReviewProgress{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[14]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1466,7 +1985,7 @@ func (x *ReviewProgress) String() string {
 func (*ReviewProgress) ProtoMessage() {}
 
 func (x *ReviewProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[14]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1479,7 +1998,7 @@ func (x *ReviewProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReviewProgress.ProtoReflect.Descriptor instead.
 func (*ReviewProgress) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{14}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ReviewProgress) GetInitialKeywordsCount() int32 {
@@ -1573,7 +2092,7 @@ type SourceProgress struct {
 
 func (x *SourceProgress) Reset() {
 	*x = SourceProgress{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[15]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1585,7 +2104,7 @@ func (x *SourceProgress) String() string {
 func (*SourceProgress) ProtoMessage() {}
 
 func (x *SourceProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[15]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1598,7 +2117,7 @@ func (x *SourceProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SourceProgress.ProtoReflect.Descriptor instead.
 func (*SourceProgress) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{15}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *SourceProgress) GetSourceName() string {
@@ -1657,7 +2176,7 @@ type ReviewConfiguration struct {
 
 func (x *ReviewConfiguration) Reset() {
 	*x = ReviewConfiguration{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[16]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1669,7 +2188,7 @@ func (x *ReviewConfiguration) String() string {
 func (*ReviewConfiguration) ProtoMessage() {}
 
 func (x *ReviewConfiguration) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[16]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1682,7 +2201,7 @@ func (x *ReviewConfiguration) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReviewConfiguration.ProtoReflect.Descriptor instead.
 func (*ReviewConfiguration) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{16}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ReviewConfiguration) GetInitialKeywordCount() int32 {
@@ -1745,7 +2264,7 @@ type LiteratureReviewSummary struct {
 
 func (x *LiteratureReviewSummary) Reset() {
 	*x = LiteratureReviewSummary{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[17]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1757,7 +2276,7 @@ func (x *LiteratureReviewSummary) String() string {
 func (*LiteratureReviewSummary) ProtoMessage() {}
 
 func (x *LiteratureReviewSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[17]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1770,7 +2289,7 @@ func (x *LiteratureReviewSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LiteratureReviewSummary.ProtoReflect.Descriptor instead.
 func (*LiteratureReviewSummary) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{17}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *LiteratureReviewSummary) GetReviewId() string {
@@ -1873,7 +2392,7 @@ type Paper struct {
 
 func (x *Paper) Reset() {
 	*x = Paper{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[18]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1885,7 +2404,7 @@ func (x *Paper) String() string {
 func (*Paper) ProtoMessage() {}
 
 func (x *Paper) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[18]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1898,7 +2417,7 @@ func (x *Paper) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Paper.ProtoReflect.Descriptor instead.
 func (*Paper) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{18}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Paper) GetId() string {
@@ -2066,7 +2585,7 @@ type Author struct {
 
 func (x *Author) Reset() {
 	*x = Author{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[19]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2078,7 +2597,7 @@ func (x *Author) String() string {
 func (*Author) ProtoMessage() {}
 
 func (x *Author) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[19]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2091,7 +2610,7 @@ func (x *Author) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Author.ProtoReflect.Descriptor instead.
 func (*Author) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{19}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *Author) GetName() string {
@@ -2132,7 +2651,7 @@ type ReviewKeyword struct {
 
 func (x *ReviewKeyword) Reset() {
 	*x = ReviewKeyword{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[20]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2144,7 +2663,7 @@ func (x *ReviewKeyword) String() string {
 func (*ReviewKeyword) ProtoMessage() {}
 
 func (x *ReviewKeyword) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[20]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2157,7 +2676,7 @@ func (x *ReviewKeyword) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReviewKeyword.ProtoReflect.Descriptor instead.
 func (*ReviewKeyword) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{20}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ReviewKeyword) GetId() string {
@@ -2234,7 +2753,7 @@ type KeywordsExtractedEvent struct {
 
 func (x *KeywordsExtractedEvent) Reset() {
 	*x = KeywordsExtractedEvent{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[21]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2246,7 +2765,7 @@ func (x *KeywordsExtractedEvent) String() string {
 func (*KeywordsExtractedEvent) ProtoMessage() {}
 
 func (x *KeywordsExtractedEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[21]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2259,7 +2778,7 @@ func (x *KeywordsExtractedEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeywordsExtractedEvent.ProtoReflect.Descriptor instead.
 func (*KeywordsExtractedEvent) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{21}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *KeywordsExtractedEvent) GetKeywords() []string {
@@ -2295,7 +2814,7 @@ type PapersFoundEvent struct {
 
 func (x *PapersFoundEvent) Reset() {
 	*x = PapersFoundEvent{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[22]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2307,7 +2826,7 @@ func (x *PapersFoundEvent) String() string {
 func (*PapersFoundEvent) ProtoMessage() {}
 
 func (x *PapersFoundEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[22]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2320,7 +2839,7 @@ func (x *PapersFoundEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PapersFoundEvent.ProtoReflect.Descriptor instead.
 func (*PapersFoundEvent) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{22}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *PapersFoundEvent) GetSource() string {
@@ -2362,7 +2881,7 @@ type ExpansionStartedEvent struct {
 
 func (x *ExpansionStartedEvent) Reset() {
 	*x = ExpansionStartedEvent{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[23]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2374,7 +2893,7 @@ func (x *ExpansionStartedEvent) String() string {
 func (*ExpansionStartedEvent) ProtoMessage() {}
 
 func (x *ExpansionStartedEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[23]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2387,7 +2906,7 @@ func (x *ExpansionStartedEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExpansionStartedEvent.ProtoReflect.Descriptor instead.
 func (*ExpansionStartedEvent) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{23}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ExpansionStartedEvent) GetDepth() int32 {
@@ -2422,7 +2941,7 @@ type IngestionProgressEvent struct {
 
 func (x *IngestionProgressEvent) Reset() {
 	*x = IngestionProgressEvent{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[24]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2434,7 +2953,7 @@ func (x *IngestionProgressEvent) String() string {
 func (*IngestionProgressEvent) ProtoMessage() {}
 
 func (x *IngestionProgressEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[24]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2447,7 +2966,7 @@ func (x *IngestionProgressEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IngestionProgressEvent.ProtoReflect.Descriptor instead.
 func (*IngestionProgressEvent) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{24}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *IngestionProgressEvent) GetQueued() int32 {
@@ -2483,7 +3002,7 @@ type ErrorEvent struct {
 
 func (x *ErrorEvent) Reset() {
 	*x = ErrorEvent{}
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[25]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2495,7 +3014,7 @@ func (x *ErrorEvent) String() string {
 func (*ErrorEvent) ProtoMessage() {}
 
 func (x *ErrorEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[25]
+	mi := &file_literaturereview_v1_literature_review_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2508,7 +3027,7 @@ func (x *ErrorEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorEvent.ProtoReflect.Descriptor instead.
 func (*ErrorEvent) Descriptor() ([]byte, []int) {
-	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{25}
+	return file_literaturereview_v1_literature_review_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ErrorEvent) GetErrorCode() string {
@@ -2656,7 +3175,45 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"\x12ingestion_progress\x18\r \x01(\v2+.literaturereview.v1.IngestionProgressEventH\x00R\x11ingestionProgress\x127\n" +
 	"\x05error\x18\x0e \x01(\v2\x1f.literaturereview.v1.ErrorEventH\x00R\x05errorB\f\n" +
 	"\n" +
-	"event_data\"\xcc\x05\n" +
+	"event_data\"g\n" +
+	"\x12PauseReviewRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x1b\n" +
+	"\treview_id\x18\x03 \x01(\tR\breviewId\"I\n" +
+	"\x13PauseReviewResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"h\n" +
+	"\x13ResumeReviewRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x1b\n" +
+	"\treview_id\x18\x03 \x01(\tR\breviewId\"J\n" +
+	"\x14ResumeReviewResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"f\n" +
+	"\x11StopReviewRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x1b\n" +
+	"\treview_id\x18\x03 \x01(\tR\breviewId\"H\n" +
+	"\x12StopReviewResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\"s\n" +
+	"\x18ListPausedReviewsRequest\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12!\n" +
+	"\fpause_reason\x18\x03 \x01(\tR\vpauseReason\"X\n" +
+	"\x19ListPausedReviewsResponse\x12;\n" +
+	"\areviews\x18\x01 \x03(\v2!.literaturereview.v1.PausedReviewR\areviews\"\xce\x01\n" +
+	"\fPausedReview\x12\x1b\n" +
+	"\treview_id\x18\x01 \x01(\tR\breviewId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x02 \x01(\tR\tprojectId\x12!\n" +
+	"\fpause_reason\x18\x03 \x01(\tR\vpauseReason\x127\n" +
+	"\tpaused_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\bpausedAt\x12&\n" +
+	"\x0fpaused_at_phase\x18\x05 \x01(\tR\rpausedAtPhase\"\xcc\x05\n" +
 	"\x0eReviewProgress\x124\n" +
 	"\x16initial_keywords_count\x18\x01 \x01(\x05R\x14initialKeywordsCount\x128\n" +
 	"\x18total_keywords_processed\x18\x02 \x01(\x05R\x16totalKeywordsProcessed\x12!\n" +
@@ -2766,7 +3323,7 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"error_code\x18\x01 \x01(\tR\terrorCode\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12\x14\n" +
 	"\x05phase\x18\x03 \x01(\tR\x05phase\x12 \n" +
-	"\vrecoverable\x18\x04 \x01(\bR\vrecoverable*\xb5\x02\n" +
+	"\vrecoverable\x18\x04 \x01(\bR\vrecoverable*\xcf\x02\n" +
 	"\fReviewStatus\x12\x1d\n" +
 	"\x19REVIEW_STATUS_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15REVIEW_STATUS_PENDING\x10\x01\x12%\n" +
@@ -2777,7 +3334,9 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"\x17REVIEW_STATUS_COMPLETED\x10\x06\x12\x18\n" +
 	"\x14REVIEW_STATUS_FAILED\x10\a\x12\x1b\n" +
 	"\x17REVIEW_STATUS_CANCELLED\x10\b\x12\x19\n" +
-	"\x15REVIEW_STATUS_PARTIAL\x10\t*\xe9\x01\n" +
+	"\x15REVIEW_STATUS_PARTIAL\x10\t\x12\x18\n" +
+	"\x14REVIEW_STATUS_PAUSED\x10\n" +
+	"*\xe9\x01\n" +
 	"\x0fIngestionStatus\x12 \n" +
 	"\x1cINGESTION_STATUS_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18INGESTION_STATUS_PENDING\x10\x01\x12\x1b\n" +
@@ -2793,7 +3352,8 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"\tSortOrder\x12\x1a\n" +
 	"\x16SORT_ORDER_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSORT_ORDER_ASC\x10\x01\x12\x13\n" +
-	"\x0fSORT_ORDER_DESC\x10\x022\xdf\a\n" +
+	"\x0fSORT_ORDER_DESC\x10\x022\xf9\n" +
+	"\n" +
 	"\x17LiteratureReviewService\x12~\n" +
 	"\x15StartLiteratureReview\x121.literaturereview.v1.StartLiteratureReviewRequest\x1a2.literaturereview.v1.StartLiteratureReviewResponse\x12\x8a\x01\n" +
 	"\x19GetLiteratureReviewStatus\x125.literaturereview.v1.GetLiteratureReviewStatusRequest\x1a6.literaturereview.v1.GetLiteratureReviewStatusResponse\x12\x81\x01\n" +
@@ -2801,7 +3361,12 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"\x15ListLiteratureReviews\x121.literaturereview.v1.ListLiteratureReviewsRequest\x1a2.literaturereview.v1.ListLiteratureReviewsResponse\x12\x8a\x01\n" +
 	"\x19GetLiteratureReviewPapers\x125.literaturereview.v1.GetLiteratureReviewPapersRequest\x1a6.literaturereview.v1.GetLiteratureReviewPapersResponse\x12\x90\x01\n" +
 	"\x1bGetLiteratureReviewKeywords\x127.literaturereview.v1.GetLiteratureReviewKeywordsRequest\x1a8.literaturereview.v1.GetLiteratureReviewKeywordsResponse\x12\x92\x01\n" +
-	"\x1eStreamLiteratureReviewProgress\x12:.literaturereview.v1.StreamLiteratureReviewProgressRequest\x1a2.literaturereview.v1.LiteratureReviewProgressEvent0\x01B\xfc\x01\n" +
+	"\x1eStreamLiteratureReviewProgress\x12:.literaturereview.v1.StreamLiteratureReviewProgressRequest\x1a2.literaturereview.v1.LiteratureReviewProgressEvent0\x01\x12`\n" +
+	"\vPauseReview\x12'.literaturereview.v1.PauseReviewRequest\x1a(.literaturereview.v1.PauseReviewResponse\x12c\n" +
+	"\fResumeReview\x12(.literaturereview.v1.ResumeReviewRequest\x1a).literaturereview.v1.ResumeReviewResponse\x12]\n" +
+	"\n" +
+	"StopReview\x12&.literaturereview.v1.StopReviewRequest\x1a'.literaturereview.v1.StopReviewResponse\x12r\n" +
+	"\x11ListPausedReviews\x12-.literaturereview.v1.ListPausedReviewsRequest\x1a..literaturereview.v1.ListPausedReviewsResponseB\xfc\x01\n" +
 	"\x17com.literaturereview.v1B\x15LiteratureReviewProtoP\x01Z]github.com/helixir/literature-review-service/gen/proto/literaturereview/v1;literaturereviewv1\xa2\x02\x03LXX\xaa\x02\x13Literaturereview.V1\xca\x02\x13Literaturereview\\V1\xe2\x02\x1fLiteraturereview\\V1\\GPBMetadata\xea\x02\x14Literaturereview::V1b\x06proto3"
 
 var (
@@ -2817,7 +3382,7 @@ func file_literaturereview_v1_literature_review_proto_rawDescGZIP() []byte {
 }
 
 var file_literaturereview_v1_literature_review_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_literaturereview_v1_literature_review_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_literaturereview_v1_literature_review_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_literaturereview_v1_literature_review_proto_goTypes = []any{
 	(ReviewStatus)(0),                             // 0: literaturereview.v1.ReviewStatus
 	(IngestionStatus)(0),                          // 1: literaturereview.v1.IngestionStatus
@@ -2837,89 +3402,108 @@ var file_literaturereview_v1_literature_review_proto_goTypes = []any{
 	(*GetLiteratureReviewKeywordsResponse)(nil),   // 15: literaturereview.v1.GetLiteratureReviewKeywordsResponse
 	(*StreamLiteratureReviewProgressRequest)(nil), // 16: literaturereview.v1.StreamLiteratureReviewProgressRequest
 	(*LiteratureReviewProgressEvent)(nil),         // 17: literaturereview.v1.LiteratureReviewProgressEvent
-	(*ReviewProgress)(nil),                        // 18: literaturereview.v1.ReviewProgress
-	(*SourceProgress)(nil),                        // 19: literaturereview.v1.SourceProgress
-	(*ReviewConfiguration)(nil),                   // 20: literaturereview.v1.ReviewConfiguration
-	(*LiteratureReviewSummary)(nil),               // 21: literaturereview.v1.LiteratureReviewSummary
-	(*Paper)(nil),                                 // 22: literaturereview.v1.Paper
-	(*Author)(nil),                                // 23: literaturereview.v1.Author
-	(*ReviewKeyword)(nil),                         // 24: literaturereview.v1.ReviewKeyword
-	(*KeywordsExtractedEvent)(nil),                // 25: literaturereview.v1.KeywordsExtractedEvent
-	(*PapersFoundEvent)(nil),                      // 26: literaturereview.v1.PapersFoundEvent
-	(*ExpansionStartedEvent)(nil),                 // 27: literaturereview.v1.ExpansionStartedEvent
-	(*IngestionProgressEvent)(nil),                // 28: literaturereview.v1.IngestionProgressEvent
-	(*ErrorEvent)(nil),                            // 29: literaturereview.v1.ErrorEvent
-	nil,                                           // 30: literaturereview.v1.ReviewProgress.SourceProgressEntry
-	(*wrapperspb.Int32Value)(nil),                 // 31: google.protobuf.Int32Value
-	(*timestamppb.Timestamp)(nil),                 // 32: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),                   // 33: google.protobuf.Duration
+	(*PauseReviewRequest)(nil),                    // 18: literaturereview.v1.PauseReviewRequest
+	(*PauseReviewResponse)(nil),                   // 19: literaturereview.v1.PauseReviewResponse
+	(*ResumeReviewRequest)(nil),                   // 20: literaturereview.v1.ResumeReviewRequest
+	(*ResumeReviewResponse)(nil),                  // 21: literaturereview.v1.ResumeReviewResponse
+	(*StopReviewRequest)(nil),                     // 22: literaturereview.v1.StopReviewRequest
+	(*StopReviewResponse)(nil),                    // 23: literaturereview.v1.StopReviewResponse
+	(*ListPausedReviewsRequest)(nil),              // 24: literaturereview.v1.ListPausedReviewsRequest
+	(*ListPausedReviewsResponse)(nil),             // 25: literaturereview.v1.ListPausedReviewsResponse
+	(*PausedReview)(nil),                          // 26: literaturereview.v1.PausedReview
+	(*ReviewProgress)(nil),                        // 27: literaturereview.v1.ReviewProgress
+	(*SourceProgress)(nil),                        // 28: literaturereview.v1.SourceProgress
+	(*ReviewConfiguration)(nil),                   // 29: literaturereview.v1.ReviewConfiguration
+	(*LiteratureReviewSummary)(nil),               // 30: literaturereview.v1.LiteratureReviewSummary
+	(*Paper)(nil),                                 // 31: literaturereview.v1.Paper
+	(*Author)(nil),                                // 32: literaturereview.v1.Author
+	(*ReviewKeyword)(nil),                         // 33: literaturereview.v1.ReviewKeyword
+	(*KeywordsExtractedEvent)(nil),                // 34: literaturereview.v1.KeywordsExtractedEvent
+	(*PapersFoundEvent)(nil),                      // 35: literaturereview.v1.PapersFoundEvent
+	(*ExpansionStartedEvent)(nil),                 // 36: literaturereview.v1.ExpansionStartedEvent
+	(*IngestionProgressEvent)(nil),                // 37: literaturereview.v1.IngestionProgressEvent
+	(*ErrorEvent)(nil),                            // 38: literaturereview.v1.ErrorEvent
+	nil,                                           // 39: literaturereview.v1.ReviewProgress.SourceProgressEntry
+	(*wrapperspb.Int32Value)(nil),                 // 40: google.protobuf.Int32Value
+	(*timestamppb.Timestamp)(nil),                 // 41: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),                   // 42: google.protobuf.Duration
 }
 var file_literaturereview_v1_literature_review_proto_depIdxs = []int32{
-	31, // 0: literaturereview.v1.StartLiteratureReviewRequest.initial_keyword_count:type_name -> google.protobuf.Int32Value
-	31, // 1: literaturereview.v1.StartLiteratureReviewRequest.paper_keyword_count:type_name -> google.protobuf.Int32Value
-	31, // 2: literaturereview.v1.StartLiteratureReviewRequest.max_expansion_depth:type_name -> google.protobuf.Int32Value
-	32, // 3: literaturereview.v1.StartLiteratureReviewRequest.date_from:type_name -> google.protobuf.Timestamp
-	32, // 4: literaturereview.v1.StartLiteratureReviewRequest.date_to:type_name -> google.protobuf.Timestamp
+	40, // 0: literaturereview.v1.StartLiteratureReviewRequest.initial_keyword_count:type_name -> google.protobuf.Int32Value
+	40, // 1: literaturereview.v1.StartLiteratureReviewRequest.paper_keyword_count:type_name -> google.protobuf.Int32Value
+	40, // 2: literaturereview.v1.StartLiteratureReviewRequest.max_expansion_depth:type_name -> google.protobuf.Int32Value
+	41, // 3: literaturereview.v1.StartLiteratureReviewRequest.date_from:type_name -> google.protobuf.Timestamp
+	41, // 4: literaturereview.v1.StartLiteratureReviewRequest.date_to:type_name -> google.protobuf.Timestamp
 	0,  // 5: literaturereview.v1.StartLiteratureReviewResponse.status:type_name -> literaturereview.v1.ReviewStatus
-	32, // 6: literaturereview.v1.StartLiteratureReviewResponse.created_at:type_name -> google.protobuf.Timestamp
+	41, // 6: literaturereview.v1.StartLiteratureReviewResponse.created_at:type_name -> google.protobuf.Timestamp
 	0,  // 7: literaturereview.v1.GetLiteratureReviewStatusResponse.status:type_name -> literaturereview.v1.ReviewStatus
-	18, // 8: literaturereview.v1.GetLiteratureReviewStatusResponse.progress:type_name -> literaturereview.v1.ReviewProgress
-	32, // 9: literaturereview.v1.GetLiteratureReviewStatusResponse.created_at:type_name -> google.protobuf.Timestamp
-	32, // 10: literaturereview.v1.GetLiteratureReviewStatusResponse.started_at:type_name -> google.protobuf.Timestamp
-	32, // 11: literaturereview.v1.GetLiteratureReviewStatusResponse.completed_at:type_name -> google.protobuf.Timestamp
-	33, // 12: literaturereview.v1.GetLiteratureReviewStatusResponse.duration:type_name -> google.protobuf.Duration
-	20, // 13: literaturereview.v1.GetLiteratureReviewStatusResponse.configuration:type_name -> literaturereview.v1.ReviewConfiguration
+	27, // 8: literaturereview.v1.GetLiteratureReviewStatusResponse.progress:type_name -> literaturereview.v1.ReviewProgress
+	41, // 9: literaturereview.v1.GetLiteratureReviewStatusResponse.created_at:type_name -> google.protobuf.Timestamp
+	41, // 10: literaturereview.v1.GetLiteratureReviewStatusResponse.started_at:type_name -> google.protobuf.Timestamp
+	41, // 11: literaturereview.v1.GetLiteratureReviewStatusResponse.completed_at:type_name -> google.protobuf.Timestamp
+	42, // 12: literaturereview.v1.GetLiteratureReviewStatusResponse.duration:type_name -> google.protobuf.Duration
+	29, // 13: literaturereview.v1.GetLiteratureReviewStatusResponse.configuration:type_name -> literaturereview.v1.ReviewConfiguration
 	0,  // 14: literaturereview.v1.CancelLiteratureReviewResponse.final_status:type_name -> literaturereview.v1.ReviewStatus
 	0,  // 15: literaturereview.v1.ListLiteratureReviewsRequest.status_filter:type_name -> literaturereview.v1.ReviewStatus
-	32, // 16: literaturereview.v1.ListLiteratureReviewsRequest.created_after:type_name -> google.protobuf.Timestamp
-	32, // 17: literaturereview.v1.ListLiteratureReviewsRequest.created_before:type_name -> google.protobuf.Timestamp
-	21, // 18: literaturereview.v1.ListLiteratureReviewsResponse.reviews:type_name -> literaturereview.v1.LiteratureReviewSummary
+	41, // 16: literaturereview.v1.ListLiteratureReviewsRequest.created_after:type_name -> google.protobuf.Timestamp
+	41, // 17: literaturereview.v1.ListLiteratureReviewsRequest.created_before:type_name -> google.protobuf.Timestamp
+	30, // 18: literaturereview.v1.ListLiteratureReviewsResponse.reviews:type_name -> literaturereview.v1.LiteratureReviewSummary
 	1,  // 19: literaturereview.v1.GetLiteratureReviewPapersRequest.ingestion_status_filter:type_name -> literaturereview.v1.IngestionStatus
-	22, // 20: literaturereview.v1.GetLiteratureReviewPapersResponse.papers:type_name -> literaturereview.v1.Paper
-	31, // 21: literaturereview.v1.GetLiteratureReviewKeywordsRequest.extraction_round_filter:type_name -> google.protobuf.Int32Value
+	31, // 20: literaturereview.v1.GetLiteratureReviewPapersResponse.papers:type_name -> literaturereview.v1.Paper
+	40, // 21: literaturereview.v1.GetLiteratureReviewKeywordsRequest.extraction_round_filter:type_name -> google.protobuf.Int32Value
 	2,  // 22: literaturereview.v1.GetLiteratureReviewKeywordsRequest.source_type_filter:type_name -> literaturereview.v1.KeywordSourceType
-	24, // 23: literaturereview.v1.GetLiteratureReviewKeywordsResponse.keywords:type_name -> literaturereview.v1.ReviewKeyword
+	33, // 23: literaturereview.v1.GetLiteratureReviewKeywordsResponse.keywords:type_name -> literaturereview.v1.ReviewKeyword
 	0,  // 24: literaturereview.v1.LiteratureReviewProgressEvent.status:type_name -> literaturereview.v1.ReviewStatus
-	18, // 25: literaturereview.v1.LiteratureReviewProgressEvent.progress:type_name -> literaturereview.v1.ReviewProgress
-	32, // 26: literaturereview.v1.LiteratureReviewProgressEvent.timestamp:type_name -> google.protobuf.Timestamp
-	25, // 27: literaturereview.v1.LiteratureReviewProgressEvent.keywords_extracted:type_name -> literaturereview.v1.KeywordsExtractedEvent
-	26, // 28: literaturereview.v1.LiteratureReviewProgressEvent.papers_found:type_name -> literaturereview.v1.PapersFoundEvent
-	27, // 29: literaturereview.v1.LiteratureReviewProgressEvent.expansion_started:type_name -> literaturereview.v1.ExpansionStartedEvent
-	28, // 30: literaturereview.v1.LiteratureReviewProgressEvent.ingestion_progress:type_name -> literaturereview.v1.IngestionProgressEvent
-	29, // 31: literaturereview.v1.LiteratureReviewProgressEvent.error:type_name -> literaturereview.v1.ErrorEvent
-	30, // 32: literaturereview.v1.ReviewProgress.source_progress:type_name -> literaturereview.v1.ReviewProgress.SourceProgressEntry
-	33, // 33: literaturereview.v1.ReviewProgress.elapsed_time:type_name -> google.protobuf.Duration
-	33, // 34: literaturereview.v1.ReviewProgress.estimated_remaining:type_name -> google.protobuf.Duration
-	32, // 35: literaturereview.v1.ReviewConfiguration.date_from:type_name -> google.protobuf.Timestamp
-	32, // 36: literaturereview.v1.ReviewConfiguration.date_to:type_name -> google.protobuf.Timestamp
-	0,  // 37: literaturereview.v1.LiteratureReviewSummary.status:type_name -> literaturereview.v1.ReviewStatus
-	32, // 38: literaturereview.v1.LiteratureReviewSummary.created_at:type_name -> google.protobuf.Timestamp
-	32, // 39: literaturereview.v1.LiteratureReviewSummary.completed_at:type_name -> google.protobuf.Timestamp
-	33, // 40: literaturereview.v1.LiteratureReviewSummary.duration:type_name -> google.protobuf.Duration
-	23, // 41: literaturereview.v1.Paper.authors:type_name -> literaturereview.v1.Author
-	32, // 42: literaturereview.v1.Paper.publication_date:type_name -> google.protobuf.Timestamp
-	1,  // 43: literaturereview.v1.Paper.ingestion_status:type_name -> literaturereview.v1.IngestionStatus
-	2,  // 44: literaturereview.v1.ReviewKeyword.source_type:type_name -> literaturereview.v1.KeywordSourceType
-	19, // 45: literaturereview.v1.ReviewProgress.SourceProgressEntry.value:type_name -> literaturereview.v1.SourceProgress
-	4,  // 46: literaturereview.v1.LiteratureReviewService.StartLiteratureReview:input_type -> literaturereview.v1.StartLiteratureReviewRequest
-	6,  // 47: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewStatus:input_type -> literaturereview.v1.GetLiteratureReviewStatusRequest
-	8,  // 48: literaturereview.v1.LiteratureReviewService.CancelLiteratureReview:input_type -> literaturereview.v1.CancelLiteratureReviewRequest
-	10, // 49: literaturereview.v1.LiteratureReviewService.ListLiteratureReviews:input_type -> literaturereview.v1.ListLiteratureReviewsRequest
-	12, // 50: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewPapers:input_type -> literaturereview.v1.GetLiteratureReviewPapersRequest
-	14, // 51: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewKeywords:input_type -> literaturereview.v1.GetLiteratureReviewKeywordsRequest
-	16, // 52: literaturereview.v1.LiteratureReviewService.StreamLiteratureReviewProgress:input_type -> literaturereview.v1.StreamLiteratureReviewProgressRequest
-	5,  // 53: literaturereview.v1.LiteratureReviewService.StartLiteratureReview:output_type -> literaturereview.v1.StartLiteratureReviewResponse
-	7,  // 54: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewStatus:output_type -> literaturereview.v1.GetLiteratureReviewStatusResponse
-	9,  // 55: literaturereview.v1.LiteratureReviewService.CancelLiteratureReview:output_type -> literaturereview.v1.CancelLiteratureReviewResponse
-	11, // 56: literaturereview.v1.LiteratureReviewService.ListLiteratureReviews:output_type -> literaturereview.v1.ListLiteratureReviewsResponse
-	13, // 57: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewPapers:output_type -> literaturereview.v1.GetLiteratureReviewPapersResponse
-	15, // 58: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewKeywords:output_type -> literaturereview.v1.GetLiteratureReviewKeywordsResponse
-	17, // 59: literaturereview.v1.LiteratureReviewService.StreamLiteratureReviewProgress:output_type -> literaturereview.v1.LiteratureReviewProgressEvent
-	53, // [53:60] is the sub-list for method output_type
-	46, // [46:53] is the sub-list for method input_type
-	46, // [46:46] is the sub-list for extension type_name
-	46, // [46:46] is the sub-list for extension extendee
-	0,  // [0:46] is the sub-list for field type_name
+	27, // 25: literaturereview.v1.LiteratureReviewProgressEvent.progress:type_name -> literaturereview.v1.ReviewProgress
+	41, // 26: literaturereview.v1.LiteratureReviewProgressEvent.timestamp:type_name -> google.protobuf.Timestamp
+	34, // 27: literaturereview.v1.LiteratureReviewProgressEvent.keywords_extracted:type_name -> literaturereview.v1.KeywordsExtractedEvent
+	35, // 28: literaturereview.v1.LiteratureReviewProgressEvent.papers_found:type_name -> literaturereview.v1.PapersFoundEvent
+	36, // 29: literaturereview.v1.LiteratureReviewProgressEvent.expansion_started:type_name -> literaturereview.v1.ExpansionStartedEvent
+	37, // 30: literaturereview.v1.LiteratureReviewProgressEvent.ingestion_progress:type_name -> literaturereview.v1.IngestionProgressEvent
+	38, // 31: literaturereview.v1.LiteratureReviewProgressEvent.error:type_name -> literaturereview.v1.ErrorEvent
+	26, // 32: literaturereview.v1.ListPausedReviewsResponse.reviews:type_name -> literaturereview.v1.PausedReview
+	41, // 33: literaturereview.v1.PausedReview.paused_at:type_name -> google.protobuf.Timestamp
+	39, // 34: literaturereview.v1.ReviewProgress.source_progress:type_name -> literaturereview.v1.ReviewProgress.SourceProgressEntry
+	42, // 35: literaturereview.v1.ReviewProgress.elapsed_time:type_name -> google.protobuf.Duration
+	42, // 36: literaturereview.v1.ReviewProgress.estimated_remaining:type_name -> google.protobuf.Duration
+	41, // 37: literaturereview.v1.ReviewConfiguration.date_from:type_name -> google.protobuf.Timestamp
+	41, // 38: literaturereview.v1.ReviewConfiguration.date_to:type_name -> google.protobuf.Timestamp
+	0,  // 39: literaturereview.v1.LiteratureReviewSummary.status:type_name -> literaturereview.v1.ReviewStatus
+	41, // 40: literaturereview.v1.LiteratureReviewSummary.created_at:type_name -> google.protobuf.Timestamp
+	41, // 41: literaturereview.v1.LiteratureReviewSummary.completed_at:type_name -> google.protobuf.Timestamp
+	42, // 42: literaturereview.v1.LiteratureReviewSummary.duration:type_name -> google.protobuf.Duration
+	32, // 43: literaturereview.v1.Paper.authors:type_name -> literaturereview.v1.Author
+	41, // 44: literaturereview.v1.Paper.publication_date:type_name -> google.protobuf.Timestamp
+	1,  // 45: literaturereview.v1.Paper.ingestion_status:type_name -> literaturereview.v1.IngestionStatus
+	2,  // 46: literaturereview.v1.ReviewKeyword.source_type:type_name -> literaturereview.v1.KeywordSourceType
+	28, // 47: literaturereview.v1.ReviewProgress.SourceProgressEntry.value:type_name -> literaturereview.v1.SourceProgress
+	4,  // 48: literaturereview.v1.LiteratureReviewService.StartLiteratureReview:input_type -> literaturereview.v1.StartLiteratureReviewRequest
+	6,  // 49: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewStatus:input_type -> literaturereview.v1.GetLiteratureReviewStatusRequest
+	8,  // 50: literaturereview.v1.LiteratureReviewService.CancelLiteratureReview:input_type -> literaturereview.v1.CancelLiteratureReviewRequest
+	10, // 51: literaturereview.v1.LiteratureReviewService.ListLiteratureReviews:input_type -> literaturereview.v1.ListLiteratureReviewsRequest
+	12, // 52: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewPapers:input_type -> literaturereview.v1.GetLiteratureReviewPapersRequest
+	14, // 53: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewKeywords:input_type -> literaturereview.v1.GetLiteratureReviewKeywordsRequest
+	16, // 54: literaturereview.v1.LiteratureReviewService.StreamLiteratureReviewProgress:input_type -> literaturereview.v1.StreamLiteratureReviewProgressRequest
+	18, // 55: literaturereview.v1.LiteratureReviewService.PauseReview:input_type -> literaturereview.v1.PauseReviewRequest
+	20, // 56: literaturereview.v1.LiteratureReviewService.ResumeReview:input_type -> literaturereview.v1.ResumeReviewRequest
+	22, // 57: literaturereview.v1.LiteratureReviewService.StopReview:input_type -> literaturereview.v1.StopReviewRequest
+	24, // 58: literaturereview.v1.LiteratureReviewService.ListPausedReviews:input_type -> literaturereview.v1.ListPausedReviewsRequest
+	5,  // 59: literaturereview.v1.LiteratureReviewService.StartLiteratureReview:output_type -> literaturereview.v1.StartLiteratureReviewResponse
+	7,  // 60: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewStatus:output_type -> literaturereview.v1.GetLiteratureReviewStatusResponse
+	9,  // 61: literaturereview.v1.LiteratureReviewService.CancelLiteratureReview:output_type -> literaturereview.v1.CancelLiteratureReviewResponse
+	11, // 62: literaturereview.v1.LiteratureReviewService.ListLiteratureReviews:output_type -> literaturereview.v1.ListLiteratureReviewsResponse
+	13, // 63: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewPapers:output_type -> literaturereview.v1.GetLiteratureReviewPapersResponse
+	15, // 64: literaturereview.v1.LiteratureReviewService.GetLiteratureReviewKeywords:output_type -> literaturereview.v1.GetLiteratureReviewKeywordsResponse
+	17, // 65: literaturereview.v1.LiteratureReviewService.StreamLiteratureReviewProgress:output_type -> literaturereview.v1.LiteratureReviewProgressEvent
+	19, // 66: literaturereview.v1.LiteratureReviewService.PauseReview:output_type -> literaturereview.v1.PauseReviewResponse
+	21, // 67: literaturereview.v1.LiteratureReviewService.ResumeReview:output_type -> literaturereview.v1.ResumeReviewResponse
+	23, // 68: literaturereview.v1.LiteratureReviewService.StopReview:output_type -> literaturereview.v1.StopReviewResponse
+	25, // 69: literaturereview.v1.LiteratureReviewService.ListPausedReviews:output_type -> literaturereview.v1.ListPausedReviewsResponse
+	59, // [59:70] is the sub-list for method output_type
+	48, // [48:59] is the sub-list for method input_type
+	48, // [48:48] is the sub-list for extension type_name
+	48, // [48:48] is the sub-list for extension extendee
+	0,  // [0:48] is the sub-list for field type_name
 }
 
 func init() { file_literaturereview_v1_literature_review_proto_init() }
@@ -2940,7 +3524,7 @@ func file_literaturereview_v1_literature_review_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_literaturereview_v1_literature_review_proto_rawDesc), len(file_literaturereview_v1_literature_review_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   27,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

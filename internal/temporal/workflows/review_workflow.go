@@ -974,3 +974,71 @@ func phaseToStatus(phase string) domain.ReviewStatus {
 		return domain.ReviewStatusPending
 	}
 }
+
+// checkStopPoint checks if stop was requested and returns partial results if so.
+// Returns (shouldReturn, result, error). If shouldReturn is true, the workflow
+// should return immediately with the provided result.
+func checkStopPoint(
+	ctx workflow.Context,
+	stopRequested bool,
+	progress *workflowProgress,
+	input ReviewWorkflowInput,
+	startTime time.Time,
+	totalKeywords, totalPapersFound, expansionRounds int,
+	statusAct *activities.StatusActivities,
+	eventAct *activities.EventActivities,
+	logger log.Logger,
+) (bool, *ReviewWorkflowResult, error) {
+	if !stopRequested {
+		return false, nil, nil
+	}
+
+	logger.Info("stopping workflow gracefully", "phase", progress.Phase)
+
+	// Update status to partial using root context to avoid cancelled context issues.
+	statusCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: statusActivityTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    500 * time.Millisecond,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    10 * time.Second,
+			MaximumAttempts:    5,
+		},
+	})
+
+	_ = workflow.ExecuteActivity(statusCtx, statusAct.UpdateStatus, activities.UpdateStatusInput{
+		OrgID:     input.OrgID,
+		ProjectID: input.ProjectID,
+		RequestID: input.RequestID,
+		Status:    domain.ReviewStatusPartial,
+		ErrorMsg:  "stopped by user",
+	}).Get(ctx, nil)
+
+	duration := workflow.Now(ctx).Sub(startTime).Seconds()
+
+	result := &ReviewWorkflowResult{
+		RequestID:       input.RequestID,
+		Status:          string(domain.ReviewStatusPartial),
+		KeywordsFound:   totalKeywords,
+		PapersFound:     totalPapersFound,
+		PapersIngested:  progress.PapersIngested,
+		DuplicatesFound: progress.DuplicatesFound,
+		PapersFailed:    progress.PapersFailed,
+		ExpansionRounds: expansionRounds,
+		Duration:        duration,
+	}
+
+	// Publish stopped event (fire-and-forget).
+	_ = workflow.ExecuteActivity(statusCtx, eventAct.PublishEvent, activities.PublishEventInput{
+		EventType: "review.stopped",
+		RequestID: input.RequestID,
+		OrgID:     input.OrgID,
+		ProjectID: input.ProjectID,
+		Payload: map[string]interface{}{
+			"stopped_at_phase": progress.Phase,
+			"papers_ingested":  progress.PapersIngested,
+		},
+	}).Get(ctx, nil)
+
+	return true, result, nil
+}

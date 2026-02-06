@@ -318,8 +318,8 @@ func TestStartLiteratureReview_Success(t *testing.T) {
 	if capturedReq.OrgID != "org-1" {
 		t.Errorf("expected workflow req org_id org-1, got %s", capturedReq.OrgID)
 	}
-	if capturedReq.Query != "CRISPR gene editing in cancer treatment" {
-		t.Errorf("expected workflow req query to match, got %s", capturedReq.Query)
+	if capturedReq.Title != "CRISPR gene editing in cancer treatment" {
+		t.Errorf("expected workflow req query to match, got %s", capturedReq.Title)
 	}
 }
 

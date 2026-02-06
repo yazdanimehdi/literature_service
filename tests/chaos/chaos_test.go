@@ -30,7 +30,7 @@ func newChaosInput() workflows.ReviewWorkflowInput {
 		OrgID:     "org-chaos",
 		ProjectID: "proj-chaos",
 		UserID:    "user-chaos",
-		Query:     "chaos test query",
+		Title:     "chaos test query",
 		Config: domain.ReviewConfiguration{
 			MaxPapers:           10,
 			MaxExpansionDepth:   0,

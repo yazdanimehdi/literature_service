@@ -73,6 +73,14 @@ const (
 // remain unchanged while the type is importable from either location.
 type ReviewWorkflowInput = litemporal.ReviewWorkflowInput
 
+// queryText builds a combined text from title and description for LLM extraction and logging.
+func queryText(title, description string) string {
+	if description != "" {
+		return title + "\n" + description
+	}
+	return title
+}
+
 // ReviewWorkflowResult contains the final results of a literature review workflow.
 type ReviewWorkflowResult struct {
 	// RequestID is the review request identifier.
@@ -317,9 +325,28 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	// Phase 1: Extract keywords from the user query
 	// =========================================================================
 
-	logger.Info("starting keyword extraction from query", "query", input.Query)
+	logger.Info("starting keyword extraction", "title", input.Title)
 	if err := updateStatus(domain.ReviewStatusExtractingKeywords, "extracting_keywords", ""); err != nil {
 		return handleFailure(fmt.Errorf("update status to extracting_keywords: %w", err))
+	}
+
+	// Add user-provided seed keywords first.
+	if len(input.SeedKeywords) > 0 {
+		allKeywords = append(allKeywords, input.SeedKeywords...)
+		totalKeywords += len(input.SeedKeywords)
+		progress.KeywordsFound = totalKeywords
+
+		// Save seed keywords.
+		var seedKwOutput activities.SaveKeywordsOutput
+		err = workflow.ExecuteActivity(statusCtx, statusAct.SaveKeywords, activities.SaveKeywordsInput{
+			RequestID:       input.RequestID,
+			Keywords:        input.SeedKeywords,
+			ExtractionRound: 0,
+			SourceType:      "user_provided",
+		}).Get(cancelCtx, &seedKwOutput)
+		if err != nil {
+			return handleFailure(fmt.Errorf("save_seed_keywords: %w", err))
+		}
 	}
 
 	maxKw := input.Config.MaxKeywordsPerRound
@@ -329,10 +356,11 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 
 	var extractOutput activities.ExtractKeywordsOutput
 	err = workflow.ExecuteActivity(llmCtx, llmAct.ExtractKeywords, activities.ExtractKeywordsInput{
-		Text:        input.Query,
-		Mode:        "query",
-		MaxKeywords: maxKw,
-		MinKeywords: defaultMinKeywordsForQuery,
+		Text:             queryText(input.Title, input.Description),
+		Mode:             "query",
+		MaxKeywords:      maxKw,
+		MinKeywords:      defaultMinKeywordsForQuery,
+		ExistingKeywords: input.SeedKeywords,
 	}).Get(cancelCtx, &extractOutput)
 	if err != nil {
 		return handleFailure(fmt.Errorf("extract_keywords: %w", err))
@@ -363,7 +391,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		OrgID:     input.OrgID,
 		ProjectID: input.ProjectID,
 		Payload: map[string]interface{}{
-			"query":         input.Query,
+			"title":         input.Title,
 			"keywords":      extractOutput.Keywords,
 			"keyword_count": len(extractOutput.Keywords),
 		},
@@ -648,7 +676,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 				MaxKeywords:      maxKw,
 				MinKeywords:      1,
 				ExistingKeywords: allKeywords,
-				Context:          input.Query,
+				Context:          queryText(input.Title, input.Description),
 			}).Get(cancelCtx, &expExtractOutput)
 			if err != nil {
 				logger.Warn("expansion keyword extraction failed, skipping paper",

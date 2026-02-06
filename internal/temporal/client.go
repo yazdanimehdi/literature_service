@@ -336,8 +336,14 @@ type ReviewWorkflowInput struct {
 	// UserID is the user who initiated the review.
 	UserID string
 
-	// Query is the natural language research query.
-	Query string
+	// Title is the research topic title (required).
+	Title string
+
+	// Description is an expanded description of the review scope (optional).
+	Description string
+
+	// SeedKeywords are user-provided starting keywords (optional).
+	SeedKeywords []string
 
 	// Config holds the review configuration parameters.
 	Config domain.ReviewConfiguration
@@ -424,8 +430,8 @@ type ReviewWorkflowRequest struct {
 	OrgID string
 	// ProjectID is the project identifier.
 	ProjectID string
-	// Query is the user's research query.
-	Query string
+	// Title is the user's research topic title.
+	Title string
 	// MaxPapers is the maximum number of papers to retrieve.
 	MaxPapers int
 	// MaxDepth is the maximum recursive search depth.

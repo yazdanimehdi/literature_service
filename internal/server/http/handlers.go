@@ -139,7 +139,7 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 		RequestID: requestID,
 		OrgID:     orgID,
 		ProjectID: projectID,
-		Query:     req.Query,
+		Title:     req.Query,
 		Config:    cfg,
 	}
 
@@ -147,7 +147,7 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 		RequestID: requestID.String(),
 		OrgID:     orgID,
 		ProjectID: projectID,
-		Query:     req.Query,
+		Title:     req.Query,
 	}, s.workflowFunc, wfInput)
 	if err != nil {
 		writeDomainError(w, err)

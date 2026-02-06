@@ -481,7 +481,7 @@ func TestReviewWorkflowRequest(t *testing.T) {
 			RequestID: "req-123",
 			OrgID:     "org-456",
 			ProjectID: "proj-789",
-			Query:     "machine learning papers",
+			Title:     "machine learning papers",
 			MaxPapers: 100,
 			MaxDepth:  3,
 			Sources:   []string{"semantic_scholar", "openalex"},
@@ -490,7 +490,7 @@ func TestReviewWorkflowRequest(t *testing.T) {
 		assert.Equal(t, "req-123", req.RequestID)
 		assert.Equal(t, "org-456", req.OrgID)
 		assert.Equal(t, "proj-789", req.ProjectID)
-		assert.Equal(t, "machine learning papers", req.Query)
+		assert.Equal(t, "machine learning papers", req.Title)
 		assert.Equal(t, 100, req.MaxPapers)
 		assert.Equal(t, 3, req.MaxDepth)
 		assert.Equal(t, []string{"semantic_scholar", "openalex"}, req.Sources)

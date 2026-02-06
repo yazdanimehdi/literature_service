@@ -24,7 +24,7 @@ func newTestInput() workflows.ReviewWorkflowInput {
 		OrgID:     "org-1",
 		ProjectID: "proj-1",
 		UserID:    "user-1",
-		Query:     "test query for pipeline integration",
+		Title:     "test query for pipeline integration",
 		Config: domain.ReviewConfiguration{
 			MaxPapers:           50,
 			MaxExpansionDepth:   0,

@@ -22,7 +22,9 @@ func newTestInput() ReviewWorkflowInput {
 		OrgID:     "org-1",
 		ProjectID: "proj-1",
 		UserID:    "user-1",
-		Query:     "CRISPR gene editing therapeutic applications",
+		Title:        "CRISPR gene editing therapeutic applications",
+		Description:  "",
+		SeedKeywords: nil,
 		Config: domain.ReviewConfiguration{
 			MaxPapers:           50,
 			MaxExpansionDepth:   0,

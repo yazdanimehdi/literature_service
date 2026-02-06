@@ -91,7 +91,7 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 		RequestID: requestID,
 		OrgID:     req.OrgId,
 		ProjectID: req.ProjectId,
-		Query:     req.Query,
+		Title:     req.Query,
 		Config:    cfg,
 	}
 
@@ -99,7 +99,7 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 		RequestID: requestID.String(),
 		OrgID:     req.OrgId,
 		ProjectID: req.ProjectId,
-		Query:     req.Query,
+		Title:     req.Query,
 	}, s.workflowFunc, wfInput)
 	if err != nil {
 		return nil, domainErrToGRPC(err)

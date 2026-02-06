@@ -97,6 +97,45 @@ type KeywordExtractor interface {
 	Model() string
 }
 
+// CoverageRequest contains parameters for corpus coverage assessment.
+type CoverageRequest struct {
+	Title           string
+	Description     string
+	SeedKeywords    []string
+	AllKeywords     []string
+	PaperSummaries  []CoveragePaperSummary
+	TotalPapers     int
+	ExpansionRounds int
+}
+
+// CoveragePaperSummary is a paper title+abstract pair for coverage assessment.
+type CoveragePaperSummary struct {
+	Title    string
+	Abstract string
+}
+
+// CoverageResult contains the LLM's coverage assessment.
+type CoverageResult struct {
+	CoverageScore float64
+	Reasoning     string
+	GapTopics     []string
+	IsSufficient  bool
+	Model         string
+	InputTokens   int
+	OutputTokens  int
+}
+
+// CoverageAssessor defines the interface for LLM-based corpus coverage assessment.
+type CoverageAssessor interface {
+	AssessCoverage(ctx context.Context, req CoverageRequest) (*CoverageResult, error)
+}
+
+// KeywordExtractorWithCoverage combines keyword extraction and coverage assessment.
+type KeywordExtractorWithCoverage interface {
+	KeywordExtractor
+	CoverageAssessor
+}
+
 // llmResponse is the expected JSON structure from LLM responses.
 type llmResponse struct {
 	Keywords  []string `json:"keywords"`
@@ -196,6 +235,91 @@ func (a *clientAdapter) ExtractKeywords(ctx context.Context, req ExtractionReque
 
 func (a *clientAdapter) Provider() string { return a.client.Provider() }
 func (a *clientAdapter) Model() string    { return a.client.Model() }
+
+// coverageResponse is the expected JSON structure from LLM coverage assessment responses.
+type coverageResponse struct {
+	CoverageScore float64  `json:"coverage_score"`
+	Reasoning     string   `json:"reasoning"`
+	GapTopics     []string `json:"gap_topics"`
+	IsSufficient  bool     `json:"is_sufficient"`
+}
+
+// AssessCoverage evaluates corpus coverage using the LLM provider.
+func (a *clientAdapter) AssessCoverage(ctx context.Context, req CoverageRequest) (*CoverageResult, error) {
+	systemPrompt := buildCoverageSystemPrompt()
+	userPrompt := buildCoverageUserPrompt(req)
+
+	completionReq := sharedllm.Request{
+		Messages: []sharedllm.Message{
+			{Role: sharedllm.RoleSystem, Content: systemPrompt},
+			{Role: sharedllm.RoleUser, Content: userPrompt},
+		},
+		ResponseFormat: "json",
+	}
+
+	resp, err := a.client.Complete(ctx, completionReq)
+	if err != nil {
+		return nil, fmt.Errorf("coverage assessment via %s failed: %w", a.client.Provider(), err)
+	}
+
+	var parsed coverageResponse
+	if err := json.Unmarshal([]byte(resp.Content), &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse coverage response as JSON: %w", err)
+	}
+
+	return &CoverageResult{
+		CoverageScore: parsed.CoverageScore,
+		Reasoning:     parsed.Reasoning,
+		GapTopics:     parsed.GapTopics,
+		IsSufficient:  parsed.IsSufficient,
+		Model:         resp.Model,
+		InputTokens:   resp.Usage.InputTokens,
+		OutputTokens:  resp.Usage.OutputTokens,
+	}, nil
+}
+
+func buildCoverageSystemPrompt() string {
+	return `You are a systematic literature review quality assessor. Given a research topic and the corpus of papers collected so far, assess whether the corpus provides adequate coverage.
+
+Respond with valid JSON:
+{"coverage_score": 0.82, "reasoning": "Brief assessment...", "gap_topics": ["topic1", "topic2"], "is_sufficient": true}
+
+Guidelines:
+- coverage_score: 0.0 (no coverage) to 1.0 (comprehensive)
+- gap_topics: specific research subtopics NOT well-represented (make them searchable academic terms)
+- is_sufficient: true if the corpus supports a reasonable literature review
+- Consider breadth (major subtopics), depth (papers per subtopic), and methodological diversity`
+}
+
+func buildCoverageUserPrompt(req CoverageRequest) string {
+	var sb strings.Builder
+
+	fmt.Fprintf(&sb, "Research Title: %s\n\n", req.Title)
+	if req.Description != "" {
+		fmt.Fprintf(&sb, "Description: %s\n\n", req.Description)
+	}
+	if len(req.SeedKeywords) > 0 {
+		fmt.Fprintf(&sb, "User-provided keywords: [%s]\n\n", strings.Join(req.SeedKeywords, ", "))
+	}
+	fmt.Fprintf(&sb, "All extracted keywords (%d): [%s]\n\n", len(req.AllKeywords), strings.Join(req.AllKeywords, ", "))
+	fmt.Fprintf(&sb, "Total papers found: %d\n", req.TotalPapers)
+	fmt.Fprintf(&sb, "Expansion rounds completed: %d\n\n", req.ExpansionRounds)
+
+	sb.WriteString("Sample papers from corpus:\n---\n")
+	for i, p := range req.PaperSummaries {
+		fmt.Fprintf(&sb, "%d. %s\n", i+1, p.Title)
+		if p.Abstract != "" {
+			abstract := p.Abstract
+			if len(abstract) > 500 {
+				abstract = abstract[:500] + "..."
+			}
+			fmt.Fprintf(&sb, "   %s\n", abstract)
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("---")
+	return sb.String()
+}
 
 // buildUserPrompt constructs the user-level prompt containing the text and constraints.
 func buildUserPrompt(req ExtractionRequest) string {

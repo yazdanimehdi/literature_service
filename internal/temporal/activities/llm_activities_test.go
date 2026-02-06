@@ -223,6 +223,99 @@ func TestErrorType(t *testing.T) {
 	}
 }
 
+// mockCoverageAssessor implements llm.CoverageAssessor for testing.
+type mockCoverageAssessor struct {
+	mock.Mock
+}
+
+func (m *mockCoverageAssessor) AssessCoverage(ctx context.Context, req llm.CoverageRequest) (*llm.CoverageResult, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*llm.CoverageResult), args.Error(1)
+}
+
+func TestAssessCoverage_Success(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	assessor := &mockCoverageAssessor{}
+	assessor.On("AssessCoverage", mock.Anything, mock.MatchedBy(func(req llm.CoverageRequest) bool {
+		return req.Title == "CRISPR gene editing" && req.TotalPapers == 25
+	})).Return(&llm.CoverageResult{
+		CoverageScore: 0.82,
+		Reasoning:     "Good coverage of mechanisms, gap in delivery vectors",
+		GapTopics:     []string{"lipid nanoparticle delivery"},
+		IsSufficient:  true,
+		Model:         "gpt-4o",
+		InputTokens:   500,
+		OutputTokens:  100,
+	}, nil)
+
+	extractor := &mockKeywordExtractor{}
+	act := NewLLMActivities(extractor, nil, WithCoverageAssessor(assessor))
+	env.RegisterActivity(act.AssessCoverage)
+
+	val, err := env.ExecuteActivity(act.AssessCoverage, AssessCoverageInput{
+		Title:       "CRISPR gene editing",
+		AllKeywords: []string{"CRISPR", "Cas9"},
+		PaperSummaries: []PaperSummary{
+			{Title: "Paper 1", Abstract: "About CRISPR"},
+		},
+		TotalPapers: 25,
+	})
+	require.NoError(t, err)
+
+	var output AssessCoverageOutput
+	require.NoError(t, val.Get(&output))
+	assert.InDelta(t, 0.82, output.CoverageScore, 0.001)
+	assert.Equal(t, []string{"lipid nanoparticle delivery"}, output.GapTopics)
+	assert.True(t, output.IsSufficient)
+	assert.Equal(t, "gpt-4o", output.Model)
+	assert.Equal(t, 500, output.InputTokens)
+	assert.Equal(t, 100, output.OutputTokens)
+
+	assessor.AssertExpectations(t)
+}
+
+func TestAssessCoverage_NilAssessor(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	extractor := &mockKeywordExtractor{}
+	act := NewLLMActivities(extractor, nil)
+	env.RegisterActivity(act.AssessCoverage)
+
+	_, err := env.ExecuteActivity(act.AssessCoverage, AssessCoverageInput{
+		Title: "test",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "coverage assessor is not configured")
+}
+
+func TestAssessCoverage_Error(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	assessor := &mockCoverageAssessor{}
+	assessor.On("AssessCoverage", mock.Anything, mock.Anything).
+		Return(nil, fmt.Errorf("LLM provider unavailable"))
+
+	extractor := &mockKeywordExtractor{}
+	act := NewLLMActivities(extractor, nil, WithCoverageAssessor(assessor))
+	env.RegisterActivity(act.AssessCoverage)
+
+	_, err := env.ExecuteActivity(act.AssessCoverage, AssessCoverageInput{
+		Title:       "test",
+		TotalPapers: 10,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "coverage assessment failed")
+
+	assessor.AssertExpectations(t)
+}
+
 func TestExtractKeywords_WithExistingKeywords(t *testing.T) {
 	// Set up Temporal test environment.
 	suite := &testsuite.WorkflowTestSuite{}

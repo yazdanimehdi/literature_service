@@ -34,9 +34,10 @@ type BudgetUsageParams struct {
 // LLMActivities provides Temporal activities for LLM-based operations.
 // Methods on this struct are registered as Temporal activities via the worker.
 type LLMActivities struct {
-	extractor      llm.KeywordExtractor
-	metrics        *observability.Metrics
-	budgetReporter BudgetUsageReporter // nil = budget reporting disabled
+	extractor        llm.KeywordExtractor
+	coverageAssessor llm.CoverageAssessor
+	metrics          *observability.Metrics
+	budgetReporter   BudgetUsageReporter // nil = budget reporting disabled
 }
 
 // LLMActivitiesOption configures optional LLMActivities dependencies.
@@ -45,6 +46,11 @@ type LLMActivitiesOption func(*LLMActivities)
 // WithBudgetReporter attaches a budget usage reporter to the LLM activities.
 func WithBudgetReporter(reporter BudgetUsageReporter) LLMActivitiesOption {
 	return func(a *LLMActivities) { a.budgetReporter = reporter }
+}
+
+// WithCoverageAssessor attaches a coverage assessor to the LLM activities.
+func WithCoverageAssessor(assessor llm.CoverageAssessor) LLMActivitiesOption {
+	return func(a *LLMActivities) { a.coverageAssessor = assessor }
 }
 
 // NewLLMActivities creates a new LLMActivities instance with the given dependencies.
@@ -141,6 +147,67 @@ func (a *LLMActivities) ExtractKeywords(ctx context.Context, input ExtractKeywor
 		Model:        result.Model,
 		InputTokens:  result.InputTokens,
 		OutputTokens: result.OutputTokens,
+	}, nil
+}
+
+// AssessCoverage evaluates the corpus coverage of a literature review using an LLM.
+//
+// This activity converts the Temporal-serializable input into an LLM coverage
+// assessment request, invokes the configured coverage assessor, and returns the results.
+// Metrics are recorded for successful and failed requests.
+func (a *LLMActivities) AssessCoverage(ctx context.Context, input AssessCoverageInput) (*AssessCoverageOutput, error) {
+	logger := activity.GetLogger(ctx)
+	logger.Info("assessing corpus coverage",
+		"title", input.Title,
+		"totalPapers", input.TotalPapers,
+		"keywordCount", len(input.AllKeywords),
+		"paperSummaries", len(input.PaperSummaries),
+	)
+
+	if a.coverageAssessor == nil {
+		return nil, fmt.Errorf("coverage assessor is not configured")
+	}
+
+	summaries := make([]llm.CoveragePaperSummary, len(input.PaperSummaries))
+	for i, ps := range input.PaperSummaries {
+		summaries[i] = llm.CoveragePaperSummary{Title: ps.Title, Abstract: ps.Abstract}
+	}
+
+	result, err := a.coverageAssessor.AssessCoverage(ctx, llm.CoverageRequest{
+		Title:           input.Title,
+		Description:     input.Description,
+		SeedKeywords:    input.SeedKeywords,
+		AllKeywords:     input.AllKeywords,
+		PaperSummaries:  summaries,
+		TotalPapers:     input.TotalPapers,
+		ExpansionRounds: input.ExpansionRounds,
+	})
+	if err != nil {
+		logger.Error("coverage assessment failed", "error", err)
+		if a.metrics != nil {
+			a.metrics.RecordLLMRequestFailed("assess_coverage", "", errorType(err))
+		}
+		return nil, fmt.Errorf("coverage assessment failed: %w", err)
+	}
+
+	logger.Info("coverage assessment completed",
+		"score", result.CoverageScore,
+		"isSufficient", result.IsSufficient,
+		"gapTopics", len(result.GapTopics),
+	)
+
+	if a.metrics != nil {
+		a.metrics.RecordLLMRequest("assess_coverage", result.Model, 0, result.InputTokens, result.OutputTokens)
+	}
+
+	return &AssessCoverageOutput{
+		CoverageScore: result.CoverageScore,
+		Reasoning:     result.Reasoning,
+		GapTopics:     result.GapTopics,
+		IsSufficient:  result.IsSufficient,
+		Model:         result.Model,
+		InputTokens:   result.InputTokens,
+		OutputTokens:  result.OutputTokens,
 	}, nil
 }
 

@@ -22,6 +22,9 @@ import (
 // reference them without depending on the workflows package.
 const (
 	SignalCancel  = litemporal.SignalCancel
+	SignalPause   = litemporal.SignalPause
+	SignalResume  = litemporal.SignalResume
+	SignalStop    = litemporal.SignalStop
 	QueryProgress = litemporal.QueryProgress
 )
 
@@ -113,6 +116,12 @@ type workflowProgress struct {
 	BatchesCompleted  int
 	ExpansionRound    int
 	MaxExpansionDepth int
+
+	// Pause state
+	IsPaused      bool
+	PauseReason   domain.PauseReason
+	PausedAt      time.Time
+	PausedAtPhase string
 }
 
 // LiteratureReviewWorkflow orchestrates an automated literature review using
@@ -179,6 +188,46 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			)
 		}
 	})
+
+	// Set up pause/resume/stop signal channels.
+	pauseCh := workflow.GetSignalChannel(ctx, SignalPause)
+	resumeCh := workflow.GetSignalChannel(ctx, SignalResume)
+	stopCh := workflow.GetSignalChannel(ctx, SignalStop)
+
+	// resumeCh is used by checkPausePoint helper (added in a later task) that blocks
+	// until resume is received. We declare it here to avoid unused variable errors.
+	_ = resumeCh
+
+	var stopRequested bool
+
+	// Pause signal handler goroutine - listens for pause signals.
+	workflow.Go(ctx, func(gCtx workflow.Context) {
+		for {
+			var signal PauseSignal
+			if !pauseCh.Receive(gCtx, &signal) {
+				return
+			}
+			progress.IsPaused = true
+			progress.PauseReason = signal.Reason
+			progress.PausedAt = workflow.Now(gCtx)
+			progress.PausedAtPhase = progress.Phase
+			logger.Info("workflow paused", "reason", signal.Reason, "phase", progress.Phase)
+		}
+	})
+
+	// Stop signal handler goroutine - listens for stop signals.
+	workflow.Go(ctx, func(gCtx workflow.Context) {
+		var signal StopSignal
+		if !stopCh.Receive(gCtx, &signal) {
+			return
+		}
+		stopRequested = true
+		logger.Info("stop requested, will complete current phase", "reason", signal.Reason)
+	})
+
+	// stopRequested is used by checkpoint logic (added in a later task).
+	// We reference it here to avoid unused variable errors.
+	_ = stopRequested
 
 	// Activity nil-pointer variables for method references.
 	var llmAct *activities.LLMActivities

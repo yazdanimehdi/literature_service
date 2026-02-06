@@ -110,6 +110,15 @@ type ReviewWorkflowResult struct {
 	// KeywordsFilteredByRelevance is the count of keywords dropped by the relevance gate.
 	KeywordsFilteredByRelevance int
 
+	// CoverageScore is the LLM-assessed coverage score (0.0-1.0).
+	CoverageScore float64
+
+	// CoverageReasoning is the LLM's explanation of the coverage assessment.
+	CoverageReasoning string
+
+	// GapTopics are research subtopics the LLM identified as under-represented.
+	GapTopics []string
+
 	// Duration is the total workflow execution time in seconds.
 	Duration float64
 }
@@ -129,6 +138,8 @@ type workflowProgress struct {
 	ExpansionRound              int
 	MaxExpansionDepth           int
 	KeywordsFilteredByRelevance int
+	CoverageScore               float64
+	CoverageReasoning           string
 
 	// Pause state
 	IsPaused      bool
@@ -893,7 +904,224 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	}
 
 	// =========================================================================
-	// Phase 5: Complete
+	// Phase 5: Coverage Review (optional)
+	// =========================================================================
+
+	var coverageScore float64
+	var coverageReasoning string
+	var gapTopics []string
+	var gapExpansionTriggered bool
+
+	if input.Config.EnableCoverageReview {
+		if err := checkPausePoint(ctx, progress, resumeCh, statusAct, input, logger); err != nil {
+			return handleFailure(err)
+		}
+		if shouldReturn, result, _ := checkStopPoint(ctx, stopRequested, progress, input, startTime, totalKeywords, totalPapersFound, expansionRounds, statusAct, eventAct, logger); shouldReturn {
+			return result, nil
+		}
+
+		logger.Info("starting coverage review")
+		if err := updateStatus(domain.ReviewStatusReviewing, "reviewing", ""); err != nil {
+			return handleFailure(fmt.Errorf("update status to reviewing: %w", err))
+		}
+		progress.Phase = "reviewing"
+
+		// Select up to 20 papers for assessment.
+		assessmentPapers := selectPapersForExpansion(allPapers, 20)
+		summaries := make([]activities.PaperSummary, 0, len(assessmentPapers))
+		for _, p := range assessmentPapers {
+			abstract := p.Abstract
+			if len(abstract) > 500 {
+				abstract = abstract[:500]
+			}
+			summaries = append(summaries, activities.PaperSummary{
+				Title:    p.Title,
+				Abstract: abstract,
+			})
+		}
+
+		var coverageOutput activities.AssessCoverageOutput
+		err = workflow.ExecuteActivity(llmCtx, llmAct.AssessCoverage, activities.AssessCoverageInput{
+			Title:           input.Title,
+			Description:     input.Description,
+			SeedKeywords:    input.SeedKeywords,
+			AllKeywords:     allKeywords,
+			PaperSummaries:  summaries,
+			TotalPapers:     totalPapersFound,
+			ExpansionRounds: expansionRounds,
+		}).Get(cancelCtx, &coverageOutput)
+
+		if err != nil {
+			// Non-fatal: complete without score.
+			logger.Warn("coverage assessment failed, completing without score", "error", err)
+		} else {
+			coverageScore = coverageOutput.CoverageScore
+			coverageReasoning = coverageOutput.Reasoning
+			gapTopics = coverageOutput.GapTopics
+			progress.CoverageScore = coverageScore
+			progress.CoverageReasoning = coverageReasoning
+
+			logger.Info("coverage assessment completed",
+				"score", coverageScore,
+				"isSufficient", coverageOutput.IsSufficient,
+				"gapTopics", gapTopics,
+			)
+
+			// Auto-trigger gap expansion if below threshold and depth available.
+			if coverageScore < input.Config.CoverageThreshold &&
+				!coverageOutput.IsSufficient &&
+				len(gapTopics) > 0 &&
+				expansionRounds < input.Config.MaxExpansionDepth {
+
+				logger.Info("coverage below threshold, triggering gap expansion",
+					"score", coverageScore,
+					"threshold", input.Config.CoverageThreshold,
+					"gapTopics", gapTopics,
+				)
+				gapExpansionTriggered = true
+
+				if err := updateStatus(domain.ReviewStatusExpanding, "expanding", ""); err != nil {
+					return handleFailure(fmt.Errorf("update status to expanding for gap: %w", err))
+				}
+
+				// Save gap topics as keywords.
+				var gapKwOutput activities.SaveKeywordsOutput
+				err = workflow.ExecuteActivity(statusCtx, statusAct.SaveKeywords, activities.SaveKeywordsInput{
+					RequestID:       input.RequestID,
+					Keywords:        gapTopics,
+					ExtractionRound: expansionRounds + 1,
+					SourceType:      "coverage_gap",
+				}).Get(cancelCtx, &gapKwOutput)
+				if err != nil {
+					logger.Warn("failed to save gap keywords", "error", err)
+					// Non-fatal, continue with search.
+				}
+
+				allKeywords = append(allKeywords, gapTopics...)
+				totalKeywords += len(gapTopics)
+
+				// Search with gap topics.
+				var gapSearchFutures []struct {
+					source  domain.SourceType
+					keyword string
+					future  workflow.Future
+				}
+
+				for _, keyword := range gapTopics {
+					for idx, source := range sources {
+						actCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
+							StartToCloseTimeout: searchActivityTimeout,
+							RetryPolicy: &temporal.RetryPolicy{
+								InitialInterval:    2 * time.Second,
+								BackoffCoefficient: 2.0,
+								MaximumInterval:    1 * time.Minute,
+								MaximumAttempts:    3,
+							},
+						})
+						if idx > 0 {
+							_ = workflow.Sleep(cancelCtx, time.Duration(idx)*searchRateLimitDelay)
+						}
+						future := workflow.ExecuteActivity(actCtx, searchAct.SearchSingleSource, activities.SearchSingleSourceInput{
+							Source:           source,
+							Query:            keyword,
+							MaxResults:       resultsPerSource,
+							IncludePreprints: input.Config.IncludePreprints,
+							OpenAccessOnly:   input.Config.RequireOpenAccess,
+							MinCitations:     input.Config.MinCitations,
+						})
+						gapSearchFutures = append(gapSearchFutures, struct {
+							source  domain.SourceType
+							keyword string
+							future  workflow.Future
+						}{source: source, keyword: keyword, future: future})
+					}
+				}
+
+				var gapPapers []*domain.Paper
+				for _, sf := range gapSearchFutures {
+					var output activities.SearchSingleSourceOutput
+					if err := sf.future.Get(cancelCtx, &output); err != nil || output.Error != "" {
+						continue
+					}
+					if len(output.Papers) > 0 {
+						gapPapers = append(gapPapers, output.Papers...)
+						totalPapersFound += output.TotalFound
+						progress.PapersFound = totalPapersFound
+					}
+				}
+
+				// Save and process gap papers.
+				if len(gapPapers) > 0 {
+					var gapSaveOutput activities.SavePapersOutput
+					err = workflow.ExecuteActivity(statusCtx, statusAct.SavePapers, activities.SavePapersInput{
+						RequestID:           input.RequestID,
+						OrgID:               input.OrgID,
+						ProjectID:           input.ProjectID,
+						Papers:              gapPapers,
+						DiscoveredViaSource: sources[0],
+						ExpansionDepth:      expansionRounds + 1,
+					}).Get(cancelCtx, &gapSaveOutput)
+					if err != nil {
+						logger.Warn("failed to save gap papers", "error", err)
+					} else {
+						gapPapersForProcessing := make([]PaperForProcessing, 0, len(gapPapers))
+						for _, p := range gapPapers {
+							if p == nil {
+								continue
+							}
+							gapPapersForProcessing = append(gapPapersForProcessing, PaperForProcessing{
+								PaperID:     p.ID,
+								CanonicalID: p.CanonicalID,
+								Title:       p.Title,
+								Abstract:    p.Abstract,
+								PDFURL:      p.PDFURL,
+								Authors:     extractAuthors(p),
+							})
+						}
+
+						gapBatches := createBatches(gapPapersForProcessing, batchSize)
+						for i, batch := range gapBatches {
+							batchID := fmt.Sprintf("%s-gap-batch-%d", workflowInfo.WorkflowExecution.ID, i)
+							childCtx := workflow.WithChildOptions(cancelCtx, workflow.ChildWorkflowOptions{
+								WorkflowID: batchID,
+								TaskQueue:  workflowInfo.TaskQueueName,
+								RetryPolicy: &temporal.RetryPolicy{
+									InitialInterval:    2 * time.Second,
+									BackoffCoefficient: 2.0,
+									MaximumInterval:    1 * time.Minute,
+									MaximumAttempts:    3,
+								},
+							})
+							future := workflow.ExecuteChildWorkflow(childCtx, PaperProcessingWorkflow, PaperProcessingInput{
+								OrgID:            input.OrgID,
+								ProjectID:        input.ProjectID,
+								RequestID:        input.RequestID.String(),
+								Batch:            PaperBatch{BatchID: batchID, Papers: batch},
+								ParentWorkflowID: workflowInfo.WorkflowExecution.ID,
+							})
+							childFutures = append(childFutures, future)
+							progress.BatchesSpawned++
+						}
+
+						if len(gapBatches) > 0 {
+							err = workflow.Await(cancelCtx, func() bool {
+								return progress.BatchesCompleted >= progress.BatchesSpawned
+							})
+							if err != nil {
+								return handleFailure(fmt.Errorf("await gap batch completion: %w", err))
+							}
+						}
+					}
+				}
+
+				allPapers = append(allPapers, gapPapers...)
+				expansionRounds++
+			}
+		}
+	}
+
+	// =========================================================================
+	// Phase 6: Complete
 	// =========================================================================
 
 	if err := updateStatus(domain.ReviewStatusCompleted, "completed", ""); err != nil {
@@ -912,6 +1140,9 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		PapersFailed:                progress.PapersFailed,
 		ExpansionRounds:             expansionRounds,
 		KeywordsFilteredByRelevance: progress.KeywordsFilteredByRelevance,
+		CoverageScore:               coverageScore,
+		CoverageReasoning:           coverageReasoning,
+		GapTopics:                   gapTopics,
 		Duration:                    duration,
 	}
 
@@ -922,13 +1153,18 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		OrgID:     input.OrgID,
 		ProjectID: input.ProjectID,
 		Payload: map[string]interface{}{
-			"keywords_found":   totalKeywords,
-			"papers_found":     totalPapersFound,
-			"papers_ingested":  progress.PapersIngested,
-			"duplicates_found": progress.DuplicatesFound,
-			"papers_failed":    progress.PapersFailed,
-			"expansion_rounds": expansionRounds,
-			"duration":         duration,
+			"keywords_found":                 totalKeywords,
+			"papers_found":                   totalPapersFound,
+			"papers_ingested":                progress.PapersIngested,
+			"duplicates_found":               progress.DuplicatesFound,
+			"papers_failed":                  progress.PapersFailed,
+			"expansion_rounds":               expansionRounds,
+			"duration":                       duration,
+			"coverage_score":                 coverageScore,
+			"coverage_reasoning":             coverageReasoning,
+			"gap_topics":                     gapTopics,
+			"gap_expansion_triggered":        gapExpansionTriggered,
+			"keywords_filtered_by_relevance": progress.KeywordsFilteredByRelevance,
 		},
 	}).Get(cancelCtx, nil)
 
@@ -1116,6 +1352,8 @@ func phaseToStatus(phase string) domain.ReviewStatus {
 		return domain.ReviewStatusIngesting
 	case "expanding":
 		return domain.ReviewStatusExpanding
+	case "reviewing":
+		return domain.ReviewStatusReviewing
 	default:
 		return domain.ReviewStatusPending
 	}

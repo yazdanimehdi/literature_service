@@ -1030,3 +1030,177 @@ func TestLiteratureReviewWorkflow_RelevanceGate(t *testing.T) {
 	require.NoError(t, env.GetWorkflowResult(&result))
 	assert.Equal(t, 1, result.KeywordsFilteredByRelevance)
 }
+
+func TestLiteratureReviewWorkflow_CoverageReview(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	input := newTestInput()
+	input.Config.EnableCoverageReview = true
+	input.Config.CoverageThreshold = 0.7
+
+	var llmAct *activities.LLMActivities
+	var searchAct *activities.SearchActivities
+	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
+
+	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(statusAct.SaveKeywords, mock.Anything, mock.Anything).Return(
+		&activities.SaveKeywordsOutput{KeywordIDs: []uuid.UUID{uuid.New()}, NewCount: 1}, nil)
+
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
+		&activities.ExtractKeywordsOutput{Keywords: []string{"CRISPR"}, Model: "test"}, nil)
+
+	paperID := uuid.New()
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Papers:     []*domain.Paper{{ID: paperID, Title: "Paper", Abstract: "Abstract", CanonicalID: "doi:1"}},
+			TotalFound: 1,
+		}, nil)
+	env.OnActivity(statusAct.SavePapers, mock.Anything, mock.Anything).Return(
+		&activities.SavePapersOutput{SavedCount: 1}, nil)
+
+	// Register PaperProcessingWorkflow for child workflow execution.
+	env.RegisterWorkflow(PaperProcessingWorkflow)
+
+	// Mock activities for child workflow.
+	var embeddingAct *activities.EmbeddingActivities
+	var dedupAct *activities.DedupActivities
+	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
+		&activities.EmbedPapersOutput{
+			Embeddings: map[string][]float32{"doi:1": make([]float32, 768)},
+		}, nil)
+
+	env.OnActivity(dedupAct.BatchDedup, mock.Anything, mock.Anything).Return(
+		&activities.BatchDedupOutput{
+			NonDuplicateIDs: []uuid.UUID{paperID},
+			DuplicateCount:  0,
+		}, nil)
+
+	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.Anything).Return(
+		&activities.DownloadAndIngestOutput{
+			Successful: 0, Skipped: 0, Failed: 0,
+		}, nil)
+
+	env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).Return(
+		&activities.UpdatePaperIngestionResultsOutput{Updated: 0}, nil)
+
+	// Coverage review returns high score -- no gap expansion.
+	env.OnActivity(llmAct.AssessCoverage, mock.Anything, mock.Anything).Return(
+		&activities.AssessCoverageOutput{
+			CoverageScore: 0.85,
+			Reasoning:     "Good coverage",
+			IsSufficient:  true,
+		}, nil)
+
+	env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	var result ReviewWorkflowResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	assert.InDelta(t, 0.85, result.CoverageScore, 0.001)
+	assert.Equal(t, "Good coverage", result.CoverageReasoning)
+	assert.Empty(t, result.GapTopics)
+}
+
+func TestLiteratureReviewWorkflow_CoverageReview_GapExpansion(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	input := newTestInput()
+	input.Config.EnableCoverageReview = true
+	input.Config.CoverageThreshold = 0.7
+	// MaxExpansionDepth=1 allows one expansion round. The expansion loop will
+	// break early because the abstract-mode keyword extraction returns nothing,
+	// leaving expansionRounds=0. This satisfies the gap expansion guard
+	// (0 < 1) so the coverage gap round triggers.
+	input.Config.MaxExpansionDepth = 1
+
+	var llmAct *activities.LLMActivities
+	var searchAct *activities.SearchActivities
+	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
+
+	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(statusAct.SaveKeywords, mock.Anything, mock.Anything).Return(
+		&activities.SaveKeywordsOutput{KeywordIDs: []uuid.UUID{uuid.New()}, NewCount: 1}, nil)
+
+	// Phase 1: query-mode keyword extraction returns CRISPR.
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.MatchedBy(func(in activities.ExtractKeywordsInput) bool {
+		return in.Mode == "query"
+	})).Return(
+		&activities.ExtractKeywordsOutput{Keywords: []string{"CRISPR"}, Model: "test"}, nil).Once()
+
+	// Phase 4: abstract-mode keyword extraction returns nothing so the
+	// expansion loop breaks early (expansionRounds stays 0).
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.MatchedBy(func(in activities.ExtractKeywordsInput) bool {
+		return in.Mode == "abstract"
+	})).Return(
+		&activities.ExtractKeywordsOutput{Keywords: []string{}, Model: "test"}, nil)
+
+	paperID := uuid.New()
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Papers:     []*domain.Paper{{ID: paperID, Title: "Paper", Abstract: "Abstract", CanonicalID: "doi:1"}},
+			TotalFound: 1,
+		}, nil)
+	env.OnActivity(statusAct.SavePapers, mock.Anything, mock.Anything).Return(
+		&activities.SavePapersOutput{SavedCount: 1}, nil)
+
+	// Register PaperProcessingWorkflow for child workflow execution.
+	env.RegisterWorkflow(PaperProcessingWorkflow)
+
+	// Mock activities for child workflow.
+	var embeddingAct *activities.EmbeddingActivities
+	var dedupAct *activities.DedupActivities
+	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
+		&activities.EmbedPapersOutput{
+			Embeddings: map[string][]float32{"doi:1": make([]float32, 768)},
+		}, nil)
+
+	env.OnActivity(dedupAct.BatchDedup, mock.Anything, mock.Anything).Return(
+		&activities.BatchDedupOutput{
+			NonDuplicateIDs: []uuid.UUID{paperID},
+			DuplicateCount:  0,
+		}, nil)
+
+	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.Anything).Return(
+		&activities.DownloadAndIngestOutput{
+			Successful: 0, Skipped: 0, Failed: 0,
+		}, nil)
+
+	env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).Return(
+		&activities.UpdatePaperIngestionResultsOutput{Updated: 0}, nil)
+
+	// Coverage review returns low score with gap topics -- triggers gap expansion.
+	env.OnActivity(llmAct.AssessCoverage, mock.Anything, mock.Anything).Return(
+		&activities.AssessCoverageOutput{
+			CoverageScore: 0.45,
+			Reasoning:     "Missing delivery mechanisms",
+			IsSufficient:  false,
+			GapTopics:     []string{"lipid nanoparticle delivery"},
+		}, nil)
+
+	env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	var result ReviewWorkflowResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	assert.InDelta(t, 0.45, result.CoverageScore, 0.001)
+	assert.Equal(t, "Missing delivery mechanisms", result.CoverageReasoning)
+	assert.Equal(t, []string{"lipid nanoparticle delivery"}, result.GapTopics)
+	// The expansion loop broke early (no new keywords), so expansionRounds was 0.
+	// Gap expansion ran and incremented it to 1.
+	assert.Equal(t, 1, result.ExpansionRounds)
+	// Gap expansion added "lipid nanoparticle delivery" as a keyword, plus the
+	// original "CRISPR".
+	assert.Equal(t, 2, result.KeywordsFound)
+}

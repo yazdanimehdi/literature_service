@@ -63,7 +63,7 @@ func TestSQLInjection_QueryField(t *testing.T) {
 
 			srv := newTestHTTPServer(wfClient, reviewRepo, &mockPaperRepo{}, &mockKeywordRepo{})
 
-			bodyMap := map[string]string{"query": tc.query}
+			bodyMap := map[string]string{"title": tc.query}
 			bodyBytes, err := json.Marshal(bodyMap)
 			if err != nil {
 				t.Fatalf("failed to marshal request body: %v", err)
@@ -142,7 +142,7 @@ func TestResponseSanitization(t *testing.T) {
 			wfClient := &mockWorkflowClient{}
 			srv := newTestHTTPServer(wfClient, reviewRepo, &mockPaperRepo{}, &mockKeywordRepo{})
 
-			body := `{"query":"test query for sanitization"}`
+			body := `{"title":"test query for sanitization"}`
 			req := httptest.NewRequest(http.MethodPost, buildPath("org-1", "proj-1", ""), bytes.NewBufferString(body))
 			req.Header.Set("Content-Type", "application/json")
 
@@ -189,7 +189,7 @@ func TestMaxQueryLength_Security(t *testing.T) {
 		srv := newTestHTTPServer(wfClient, reviewRepo, &mockPaperRepo{}, &mockKeywordRepo{})
 
 		query := strings.Repeat("a", maxQueryLength)
-		bodyMap := map[string]string{"query": query}
+		bodyMap := map[string]string{"title": query}
 		bodyBytes, _ := json.Marshal(bodyMap)
 
 		req := httptest.NewRequest(http.MethodPost, buildPath("org-1", "proj-1", ""), bytes.NewBuffer(bodyBytes))
@@ -207,7 +207,7 @@ func TestMaxQueryLength_Security(t *testing.T) {
 		srv := newTestHTTPServer(wfClient, &mockReviewRepo{}, &mockPaperRepo{}, &mockKeywordRepo{})
 
 		query := strings.Repeat("a", maxQueryLength+1)
-		bodyMap := map[string]string{"query": query}
+		bodyMap := map[string]string{"title": query}
 		bodyBytes, _ := json.Marshal(bodyMap)
 
 		req := httptest.NewRequest(http.MethodPost, buildPath("org-1", "proj-1", ""), bytes.NewBuffer(bodyBytes))
@@ -239,7 +239,7 @@ func TestMaxQueryLength_Security(t *testing.T) {
 		srv := newTestHTTPServer(wfClient, reviewRepo, &mockPaperRepo{}, &mockKeywordRepo{})
 
 		query := strings.Repeat("b", maxQueryLength-1)
-		bodyMap := map[string]string{"query": query}
+		bodyMap := map[string]string{"title": query}
 		bodyBytes, _ := json.Marshal(bodyMap)
 
 		req := httptest.NewRequest(http.MethodPost, buildPath("org-1", "proj-1", ""), bytes.NewBuffer(bodyBytes))
@@ -317,7 +317,7 @@ func TestXSSPayload_QueryField(t *testing.T) {
 
 			srv := newTestHTTPServer(wfClient, reviewRepo, &mockPaperRepo{}, &mockKeywordRepo{})
 
-			bodyMap := map[string]string{"query": tc.query}
+			bodyMap := map[string]string{"title": tc.query}
 			bodyBytes, err := json.Marshal(bodyMap)
 			if err != nil {
 				t.Fatalf("failed to marshal request body: %v", err)

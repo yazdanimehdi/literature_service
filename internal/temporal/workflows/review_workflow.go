@@ -556,13 +556,17 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 
 	// Save discovered papers.
 	if len(allPapers) > 0 {
+		discoveredVia := sources[0]
+		if len(sources) > 1 {
+			discoveredVia = "multiple"
+		}
 		var savePapersOutput activities.SavePapersOutput
 		err = workflow.ExecuteActivity(statusCtx, statusAct.SavePapers, activities.SavePapersInput{
 			RequestID:           input.RequestID,
 			OrgID:               input.OrgID,
 			ProjectID:           input.ProjectID,
 			Papers:              allPapers,
-			DiscoveredViaSource: sources[0],
+			DiscoveredViaSource: discoveredVia,
 			ExpansionDepth:      0,
 		}).Get(cancelCtx, &savePapersOutput)
 		if err != nil {
@@ -831,13 +835,17 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 
 		// Save expansion papers.
 		if len(expansionPapersFound) > 0 {
+			expDiscoveredVia := sources[0]
+			if len(sources) > 1 {
+				expDiscoveredVia = "multiple"
+			}
 			var expSavePapersOutput activities.SavePapersOutput
 			err = workflow.ExecuteActivity(statusCtx, statusAct.SavePapers, activities.SavePapersInput{
 				RequestID:           input.RequestID,
 				OrgID:               input.OrgID,
 				ProjectID:           input.ProjectID,
 				Papers:              expansionPapersFound,
-				DiscoveredViaSource: sources[0],
+				DiscoveredViaSource: expDiscoveredVia,
 				ExpansionDepth:      round,
 			}).Get(cancelCtx, &expSavePapersOutput)
 			if err != nil {
@@ -1052,13 +1060,17 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 
 				// Save and process gap papers.
 				if len(gapPapers) > 0 {
+					gapDiscoveredVia := sources[0]
+					if len(sources) > 1 {
+						gapDiscoveredVia = "multiple"
+					}
 					var gapSaveOutput activities.SavePapersOutput
 					err = workflow.ExecuteActivity(statusCtx, statusAct.SavePapers, activities.SavePapersInput{
 						RequestID:           input.RequestID,
 						OrgID:               input.OrgID,
 						ProjectID:           input.ProjectID,
 						Papers:              gapPapers,
-						DiscoveredViaSource: sources[0],
+						DiscoveredViaSource: gapDiscoveredVia,
 						ExpansionDepth:      expansionRounds + 1,
 					}).Get(cancelCtx, &gapSaveOutput)
 					if err != nil {

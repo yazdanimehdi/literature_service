@@ -271,7 +271,7 @@ func TestStartLiteratureReview_Success(t *testing.T) {
 
 	srv := newTestHTTPServer(wfClient, reviewRepo, &mockPaperRepo{}, &mockKeywordRepo{})
 
-	body := `{"query":"CRISPR gene editing in cancer treatment"}`
+	body := `{"title":"CRISPR gene editing in cancer treatment"}`
 	req := httptest.NewRequest(http.MethodPost, buildPath("org-1", "proj-1", ""), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -323,11 +323,11 @@ func TestStartLiteratureReview_Success(t *testing.T) {
 	}
 }
 
-func TestStartLiteratureReview_MissingQuery(t *testing.T) {
+func TestStartLiteratureReview_MissingTitle(t *testing.T) {
 	wfClient := &mockWorkflowClient{}
 	srv := newTestHTTPServer(wfClient, &mockReviewRepo{}, &mockPaperRepo{}, &mockKeywordRepo{})
 
-	body := `{"query":""}`
+	body := `{"title":""}`
 	req := httptest.NewRequest(http.MethodPost, buildPath("org-1", "proj-1", ""), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -339,12 +339,12 @@ func TestStartLiteratureReview_MissingQuery(t *testing.T) {
 
 	var resp map[string]string
 	decodeJSON(t, rr, &resp)
-	if resp["error"] != "query is required" {
-		t.Errorf("expected error message 'query is required', got %q", resp["error"])
+	if resp["error"] != "title is required" {
+		t.Errorf("expected error message 'title is required', got %q", resp["error"])
 	}
 }
 
-func TestStartLiteratureReview_QueryTooLong(t *testing.T) {
+func TestStartLiteratureReview_TitleTooLong(t *testing.T) {
 	wfClient := &mockWorkflowClient{}
 	srv := newTestHTTPServer(wfClient, &mockReviewRepo{}, &mockPaperRepo{}, &mockKeywordRepo{})
 
@@ -352,7 +352,7 @@ func TestStartLiteratureReview_QueryTooLong(t *testing.T) {
 	for i := range longQuery {
 		longQuery[i] = 'a'
 	}
-	bodyMap := map[string]string{"query": string(longQuery)}
+	bodyMap := map[string]string{"title": string(longQuery)}
 	bodyBytes, _ := json.Marshal(bodyMap)
 	req := httptest.NewRequest(http.MethodPost, buildPath("org-1", "proj-1", ""), bytes.NewBuffer(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
@@ -387,7 +387,7 @@ func TestStartLiteratureReview_CreateRepoError(t *testing.T) {
 	wfClient := &mockWorkflowClient{}
 	srv := newTestHTTPServer(wfClient, reviewRepo, &mockPaperRepo{}, &mockKeywordRepo{})
 
-	body := `{"query":"some query"}`
+	body := `{"title":"some query"}`
 	req := httptest.NewRequest(http.MethodPost, buildPath("org-1", "proj-1", ""), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -411,7 +411,7 @@ func TestStartLiteratureReview_WorkflowError(t *testing.T) {
 	}
 	srv := newTestHTTPServer(wfClient, reviewRepo, &mockPaperRepo{}, &mockKeywordRepo{})
 
-	body := `{"query":"some query"}`
+	body := `{"title":"some query"}`
 	req := httptest.NewRequest(http.MethodPost, buildPath("org-1", "proj-1", ""), bytes.NewBufferString(body))
 	req.Header.Set("Content-Type", "application/json")
 
@@ -439,7 +439,7 @@ func TestStartLiteratureReview_WithOptionalFields(t *testing.T) {
 	srv := newTestHTTPServer(wfClient, reviewRepo, &mockPaperRepo{}, &mockKeywordRepo{})
 
 	body := `{
-		"query": "mRNA vaccine development",
+		"title": "mRNA vaccine development",
 		"initial_keyword_count": 15,
 		"paper_keyword_count": 5,
 		"max_expansion_depth": 3,

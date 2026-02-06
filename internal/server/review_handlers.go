@@ -40,6 +40,13 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 	if len(req.Title) > maxQueryLength {
 		return nil, status.Errorf(codes.InvalidArgument, "title must be at most %d characters", maxQueryLength)
 	}
+	if len(req.Description) > maxQueryLength {
+		return nil, status.Errorf(codes.InvalidArgument, "description must be at most %d characters", maxQueryLength)
+	}
+	const maxSeedKeywords = 50
+	if len(req.SeedKeywords) > maxSeedKeywords {
+		return nil, status.Errorf(codes.InvalidArgument, "seed_keywords must have at most %d entries", maxSeedKeywords)
+	}
 
 	requestID := uuid.New()
 

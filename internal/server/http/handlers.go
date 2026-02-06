@@ -30,7 +30,9 @@ const (
 
 // startReviewRequest is the JSON request body for starting a literature review.
 type startReviewRequest struct {
-	Query               string   `json:"query"`
+	Title               string   `json:"title"`
+	Description         string   `json:"description,omitempty"`
+	SeedKeywords        []string `json:"seed_keywords,omitempty"`
 	InitialKeywordCount *int     `json:"initial_keyword_count,omitempty"`
 	PaperKeywordCount   *int     `json:"paper_keyword_count,omitempty"`
 	MaxExpansionDepth   *int     `json:"max_expansion_depth,omitempty"`
@@ -65,18 +67,27 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate query.
-	req.Query = strings.TrimSpace(req.Query)
-	if req.Query == "" {
-		writeError(w, http.StatusBadRequest, "query is required")
+	// Validate title.
+	req.Title = strings.TrimSpace(req.Title)
+	if req.Title == "" {
+		writeError(w, http.StatusBadRequest, "title is required")
 		return
 	}
-	if len(req.Query) < minQueryLength {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("query must be at least %d characters", minQueryLength))
+	if len(req.Title) < minQueryLength {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("title must be at least %d characters", minQueryLength))
 		return
 	}
-	if len(req.Query) > maxQueryLength {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("query must be at most %d characters", maxQueryLength))
+	if len(req.Title) > maxQueryLength {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("title must be at most %d characters", maxQueryLength))
+		return
+	}
+	if len(req.Description) > maxQueryLength {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("description must be at most %d characters", maxQueryLength))
+		return
+	}
+	const maxSeedKeywords = 50
+	if len(req.SeedKeywords) > maxSeedKeywords {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("seed_keywords must have at most %d entries", maxSeedKeywords))
 		return
 	}
 
@@ -122,7 +133,9 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 		ID:            requestID,
 		OrgID:         orgID,
 		ProjectID:     projectID,
-		Title: req.Query,
+		Title:         req.Title,
+		Description:   req.Description,
+		SeedKeywords:  req.SeedKeywords,
 		Status:        domain.ReviewStatusPending,
 		Configuration: cfg,
 		CreatedAt:     now,
@@ -136,18 +149,20 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 
 	// Prepare and start the Temporal workflow.
 	wfInput := temporal.ReviewWorkflowInput{
-		RequestID: requestID,
-		OrgID:     orgID,
-		ProjectID: projectID,
-		Title:     req.Query,
-		Config:    cfg,
+		RequestID:    requestID,
+		OrgID:        orgID,
+		ProjectID:    projectID,
+		Title:        req.Title,
+		Description:  req.Description,
+		SeedKeywords: req.SeedKeywords,
+		Config:       cfg,
 	}
 
 	workflowID, runID, err := s.workflowClient.StartReviewWorkflow(ctx, temporal.ReviewWorkflowRequest{
 		RequestID: requestID.String(),
 		OrgID:     orgID,
 		ProjectID: projectID,
-		Title:     req.Query,
+		Title:     req.Title,
 	}, s.workflowFunc, wfInput)
 	if err != nil {
 		writeDomainError(w, err)

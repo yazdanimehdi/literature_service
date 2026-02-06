@@ -185,6 +185,12 @@ func buildSystemPrompt(req ExtractionRequest) string {
 	return sb.String()
 }
 
+// Compile-time checks that clientAdapter implements both interfaces.
+var (
+	_ KeywordExtractor = (*clientAdapter)(nil)
+	_ CoverageAssessor = (*clientAdapter)(nil)
+)
+
 // clientAdapter wraps a shared llm.Client to implement KeywordExtractor.
 type clientAdapter struct {
 	client sharedllm.Client
@@ -267,8 +273,16 @@ func (a *clientAdapter) AssessCoverage(ctx context.Context, req CoverageRequest)
 		return nil, fmt.Errorf("failed to parse coverage response as JSON: %w", err)
 	}
 
+	// Clamp score to valid range [0.0, 1.0].
+	score := parsed.CoverageScore
+	if score < 0 {
+		score = 0
+	} else if score > 1 {
+		score = 1
+	}
+
 	return &CoverageResult{
-		CoverageScore: parsed.CoverageScore,
+		CoverageScore: score,
 		Reasoning:     parsed.Reasoning,
 		GapTopics:     parsed.GapTopics,
 		IsSufficient:  parsed.IsSufficient,
@@ -301,7 +315,12 @@ func buildCoverageUserPrompt(req CoverageRequest) string {
 	if len(req.SeedKeywords) > 0 {
 		fmt.Fprintf(&sb, "User-provided keywords: [%s]\n\n", strings.Join(req.SeedKeywords, ", "))
 	}
-	fmt.Fprintf(&sb, "All extracted keywords (%d): [%s]\n\n", len(req.AllKeywords), strings.Join(req.AllKeywords, ", "))
+	keywords := req.AllKeywords
+	const maxPromptKeywords = 200
+	if len(keywords) > maxPromptKeywords {
+		keywords = keywords[:maxPromptKeywords]
+	}
+	fmt.Fprintf(&sb, "All extracted keywords (%d, showing %d): [%s]\n\n", len(req.AllKeywords), len(keywords), strings.Join(keywords, ", "))
 	fmt.Fprintf(&sb, "Total papers found: %d\n", req.TotalPapers)
 	fmt.Fprintf(&sb, "Expansion rounds completed: %d\n\n", req.ExpansionRounds)
 

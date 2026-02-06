@@ -17,15 +17,17 @@ type startReviewResponse struct {
 }
 
 type reviewStatusResponse struct {
-	ReviewID     string            `json:"review_id"`
-	Status       string            `json:"status"`
-	Progress     *progressResponse `json:"progress,omitempty"`
-	ErrorMessage string            `json:"error_message,omitempty"`
-	CreatedAt    time.Time         `json:"created_at"`
-	StartedAt    *time.Time        `json:"started_at,omitempty"`
-	CompletedAt  *time.Time        `json:"completed_at,omitempty"`
-	Duration     string            `json:"duration,omitempty"`
-	Config       *configResponse   `json:"configuration,omitempty"`
+	ReviewID          string            `json:"review_id"`
+	Status            string            `json:"status"`
+	Progress          *progressResponse `json:"progress,omitempty"`
+	ErrorMessage      string            `json:"error_message,omitempty"`
+	CoverageScore     *float64          `json:"coverage_score,omitempty"`
+	CoverageReasoning string            `json:"coverage_reasoning,omitempty"`
+	CreatedAt         time.Time         `json:"created_at"`
+	StartedAt         *time.Time        `json:"started_at,omitempty"`
+	CompletedAt       *time.Time        `json:"completed_at,omitempty"`
+	Duration          string            `json:"duration,omitempty"`
+	Config            *configResponse   `json:"configuration,omitempty"`
 }
 
 type progressResponse struct {
@@ -39,12 +41,16 @@ type progressResponse struct {
 }
 
 type configResponse struct {
-	InitialKeywordCount int      `json:"initial_keyword_count"`
-	PaperKeywordCount   int      `json:"paper_keyword_count"`
-	MaxExpansionDepth   int      `json:"max_expansion_depth"`
-	EnabledSources      []string `json:"enabled_sources"`
-	DateFrom            string   `json:"date_from,omitempty"`
-	DateTo              string   `json:"date_to,omitempty"`
+	InitialKeywordCount  int      `json:"initial_keyword_count"`
+	PaperKeywordCount    int      `json:"paper_keyword_count"`
+	MaxExpansionDepth    int      `json:"max_expansion_depth"`
+	EnabledSources       []string `json:"enabled_sources"`
+	EnableRelevanceGate  bool     `json:"enable_relevance_gate"`
+	RelevanceThreshold   float64  `json:"relevance_threshold,omitempty"`
+	EnableCoverageReview bool     `json:"enable_coverage_review"`
+	CoverageThreshold    float64  `json:"coverage_threshold,omitempty"`
+	DateFrom             string   `json:"date_from,omitempty"`
+	DateTo               string   `json:"date_to,omitempty"`
 }
 
 type reviewSummaryResponse struct {
@@ -114,12 +120,14 @@ type listKeywordsResponse struct {
 
 func domainReviewToStatusResponse(r *domain.LiteratureReviewRequest) reviewStatusResponse {
 	resp := reviewStatusResponse{
-		ReviewID:     r.ID.String(),
-		Status:       string(r.Status),
-		ErrorMessage: r.ErrorMessage,
-		CreatedAt:    r.CreatedAt,
-		StartedAt:    r.StartedAt,
-		CompletedAt:  r.CompletedAt,
+		ReviewID:          r.ID.String(),
+		Status:            string(r.Status),
+		ErrorMessage:      r.ErrorMessage,
+		CoverageScore:     r.CoverageScore,
+		CoverageReasoning: r.CoverageReasoning,
+		CreatedAt:         r.CreatedAt,
+		StartedAt:         r.StartedAt,
+		CompletedAt:       r.CompletedAt,
 		Progress: &progressResponse{
 			InitialKeywordsCount:   r.Configuration.MaxKeywordsPerRound,
 			TotalKeywordsProcessed: r.KeywordsFoundCount,
@@ -143,10 +151,14 @@ func domainConfigToResponse(c domain.ReviewConfiguration) *configResponse {
 		sources[i] = string(s)
 	}
 	resp := &configResponse{
-		InitialKeywordCount: c.MaxKeywordsPerRound,
-		PaperKeywordCount:   c.PaperKeywordCount,
-		MaxExpansionDepth:   c.MaxExpansionDepth,
-		EnabledSources:      sources,
+		InitialKeywordCount:  c.MaxKeywordsPerRound,
+		PaperKeywordCount:    c.PaperKeywordCount,
+		MaxExpansionDepth:    c.MaxExpansionDepth,
+		EnabledSources:       sources,
+		EnableRelevanceGate:  c.EnableRelevanceGate,
+		RelevanceThreshold:   c.RelevanceThreshold,
+		EnableCoverageReview: c.EnableCoverageReview,
+		CoverageThreshold:    c.CoverageThreshold,
 	}
 	if c.DateFrom != nil {
 		resp.DateFrom = c.DateFrom.Format(time.RFC3339)

@@ -269,6 +269,9 @@ func run() error {
 	}
 	if ca, ok := extractor.(llm.CoverageAssessor); ok {
 		llmOpts = append(llmOpts, activities.WithCoverageAssessor(ca))
+		logger.Info().Msg("coverage assessor wired to LLM activities")
+	} else {
+		logger.Warn().Msg("extractor does not implement CoverageAssessor; coverage review will be unavailable")
 	}
 	llmActivities := activities.NewLLMActivities(extractor, metrics, llmOpts...)
 	searchActivities := activities.NewSearchActivities(registry, metrics)

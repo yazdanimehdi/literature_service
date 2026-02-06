@@ -173,6 +173,7 @@ func (a *LLMActivities) AssessCoverage(ctx context.Context, input AssessCoverage
 		summaries[i] = llm.CoveragePaperSummary{Title: ps.Title, Abstract: ps.Abstract}
 	}
 
+	start := time.Now()
 	result, err := a.coverageAssessor.AssessCoverage(ctx, llm.CoverageRequest{
 		Title:           input.Title,
 		Description:     input.Description,
@@ -182,8 +183,13 @@ func (a *LLMActivities) AssessCoverage(ctx context.Context, input AssessCoverage
 		TotalPapers:     input.TotalPapers,
 		ExpansionRounds: input.ExpansionRounds,
 	})
+	duration := time.Since(start).Seconds()
+
 	if err != nil {
-		logger.Error("coverage assessment failed", "error", err)
+		logger.Error("coverage assessment failed",
+			"error", err,
+			"duration", duration,
+		)
 		if a.metrics != nil {
 			a.metrics.RecordLLMRequestFailed("assess_coverage", "", errorType(err))
 		}
@@ -194,10 +200,34 @@ func (a *LLMActivities) AssessCoverage(ctx context.Context, input AssessCoverage
 		"score", result.CoverageScore,
 		"isSufficient", result.IsSufficient,
 		"gapTopics", len(result.GapTopics),
+		"model", result.Model,
+		"inputTokens", result.InputTokens,
+		"outputTokens", result.OutputTokens,
+		"duration", duration,
 	)
 
 	if a.metrics != nil {
-		a.metrics.RecordLLMRequest("assess_coverage", result.Model, 0, result.InputTokens, result.OutputTokens)
+		a.metrics.RecordLLMRequest("assess_coverage", result.Model, duration, result.InputTokens, result.OutputTokens)
+	}
+
+	// Emit budget usage event if lease info is available.
+	if a.budgetReporter != nil && input.LeaseID != "" {
+		cost := sharedllm.EstimateCost(result.Model, result.InputTokens, result.OutputTokens)
+		if reportErr := a.budgetReporter.ReportUsage(ctx, BudgetUsageParams{
+			LeaseID:      input.LeaseID,
+			OrgID:        input.OrgID,
+			ProjectID:    input.ProjectID,
+			Model:        result.Model,
+			InputTokens:  result.InputTokens,
+			OutputTokens: result.OutputTokens,
+			TotalTokens:  result.InputTokens + result.OutputTokens,
+			CostUSD:      cost,
+		}); reportErr != nil {
+			logger.Warn("failed to report budget usage for coverage assessment",
+				"error", reportErr,
+				"leaseID", input.LeaseID,
+			)
+		}
 	}
 
 	return &AssessCoverageOutput{

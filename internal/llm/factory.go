@@ -44,15 +44,32 @@ type FactoryConfig struct {
 
 // ResilienceConfig holds rate limiter and circuit breaker settings for the factory.
 type ResilienceConfig struct {
-	RateLimitRPS           float64
-	RateLimitBurst         int
-	RateLimitMinRPS        float64
-	RateLimitRecoverySec   int
+	// RateLimitRPS is the steady-state requests per second allowed.
+	RateLimitRPS float64
+
+	// RateLimitBurst is the maximum burst size above the steady-state rate.
+	RateLimitBurst int
+
+	// RateLimitMinRPS is the minimum RPS after adaptive backoff.
+	RateLimitMinRPS float64
+
+	// RateLimitRecoverySec is the seconds to recover from min to normal RPS.
+	RateLimitRecoverySec int
+
+	// CBConsecutiveThreshold is the consecutive failures before the circuit breaker opens.
 	CBConsecutiveThreshold int
+
+	// CBFailureRateThreshold is the failure rate (0.0-1.0) that triggers the circuit breaker.
 	CBFailureRateThreshold float64
-	CBWindowSize           int
-	CBCooldownSec          int
-	CBProbeCount           int
+
+	// CBWindowSize is the number of recent calls tracked for failure rate calculation.
+	CBWindowSize int
+
+	// CBCooldownSec is the seconds the circuit breaker stays open before probing.
+	CBCooldownSec int
+
+	// CBProbeCount is the number of probe calls allowed during half-open state.
+	CBProbeCount int
 }
 
 // OpenAIConfig holds OpenAI-specific settings.

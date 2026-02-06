@@ -152,15 +152,18 @@ type workflowProgress struct {
 // a concurrent two-phase pipeline architecture.
 //
 // The workflow proceeds through the following phases:
-//  1. Extract keywords from the user query using an LLM
-//  2. Search academic databases concurrently with rate limiting (Phase 1)
-//  3. Batch papers (5 papers or 5s timeout) and spawn child workflows (Phase 2)
-//  4. Track progress via signals from child workflows
-//  5. Optionally expand the search by extracting keywords from discovered papers
-//  6. Save all results and update the review status
+//  1. Extract keywords from the research title/description using an LLM
+//  2. Embed the query text for relevance gating (if enabled)
+//  3. Search academic databases concurrently with rate limiting
+//  4. Batch papers and spawn child workflows for dedup, ingestion, and embedding
+//  5. Optionally expand the search by extracting keywords from discovered papers,
+//     filtering expansion keywords via embedding-based relevance gate
+//  6. Assess corpus coverage via LLM (if enabled), triggering gap-based expansion
+//     rounds when coverage is below threshold
+//  7. Save all results and update the review status
 //
-// The workflow supports cancellation via the "cancel" signal and progress
-// queries via the "progress" query type.
+// The workflow supports pause/resume/stop/cancel signals and progress queries.
+// Budget exhaustion during LLM calls triggers automatic pause with resume on refill.
 func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (*ReviewWorkflowResult, error) {
 	logger := workflow.GetLogger(ctx)
 	startTime := workflow.Now(ctx)
@@ -297,8 +300,14 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	}
 
 	// handleFailure updates status to failed and returns the original error.
+	// Error messages stored in DB and published to events are sanitized to avoid
+	// leaking internal details (stack traces, connection strings, file paths).
 	handleFailure := func(originalErr error) (*ReviewWorkflowResult, error) {
 		logger.Error("workflow failed", "error", originalErr)
+
+		// Sanitize: use a generic message for persistence and events.
+		// The detailed error is already logged above and returned to Temporal.
+		sanitizedMsg := "workflow failed"
 
 		// Use the root context for failure status update to avoid cancelled context issues.
 		failCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
@@ -315,7 +324,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			ProjectID: input.ProjectID,
 			RequestID: input.RequestID,
 			Status:    domain.ReviewStatusFailed,
-			ErrorMsg:  originalErr.Error(),
+			ErrorMsg:  sanitizedMsg,
 		}).Get(ctx, nil)
 
 		// Fire-and-forget: publish review.failed event using root context.
@@ -325,7 +334,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			OrgID:     input.OrgID,
 			ProjectID: input.ProjectID,
 			Payload: map[string]interface{}{
-				"error": originalErr.Error(),
+				"error": sanitizedMsg,
 			},
 		}).Get(ctx, nil)
 

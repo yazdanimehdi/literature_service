@@ -54,12 +54,12 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 	projectID := projectIDFromContext(ctx)
 
 	// Parse and validate the request body.
+	defer r.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodySize))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to read request body")
 		return
 	}
-	defer r.Body.Close()
 
 	var req startReviewRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -220,12 +220,14 @@ func (s *Server) cancelLiteratureReview(w http.ResponseWriter, r *http.Request) 
 
 	// Parse optional reason from the request body.
 	var cancelReq cancelReviewRequest
-	if r.Body != nil && r.ContentLength != 0 {
-		body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodySize))
-		if err == nil && len(body) > 0 {
-			_ = json.Unmarshal(body, &cancelReq)
-		}
+	if r.Body != nil {
 		defer r.Body.Close()
+		if r.ContentLength != 0 {
+			body, err := io.ReadAll(io.LimitReader(r.Body, maxRequestBodySize))
+			if err == nil && len(body) > 0 {
+				_ = json.Unmarshal(body, &cancelReq)
+			}
+		}
 	}
 
 	review, err := s.reviewRepo.Get(ctx, orgID, projectID, reviewID)
@@ -320,7 +322,12 @@ func writeDomainError(w http.ResponseWriter, err error) {
 	case errors.Is(err, domain.ErrNotFound):
 		writeError(w, http.StatusNotFound, "resource not found")
 	case errors.Is(err, domain.ErrInvalidInput):
-		writeError(w, http.StatusBadRequest, err.Error())
+		var ve *domain.ValidationError
+		if errors.As(err, &ve) {
+			writeError(w, http.StatusBadRequest, ve.Error())
+		} else {
+			writeError(w, http.StatusBadRequest, "invalid input")
+		}
 	case errors.Is(err, domain.ErrAlreadyExists):
 		writeError(w, http.StatusConflict, "resource already exists")
 	case errors.Is(err, domain.ErrUnauthorized):

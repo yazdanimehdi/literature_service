@@ -83,7 +83,13 @@ func domainErrToGRPC(err error) error {
 	case errors.Is(err, domain.ErrNotFound):
 		return status.Error(codes.NotFound, "resource not found")
 	case errors.Is(err, domain.ErrInvalidInput):
-		return status.Error(codes.InvalidArgument, err.Error())
+		// Extract user-facing message from ValidationError if available;
+		// otherwise use a generic message to avoid leaking internal details.
+		var ve *domain.ValidationError
+		if errors.As(err, &ve) {
+			return status.Error(codes.InvalidArgument, ve.Error())
+		}
+		return status.Error(codes.InvalidArgument, "invalid input")
 	case errors.Is(err, domain.ErrAlreadyExists):
 		return status.Error(codes.AlreadyExists, "resource already exists")
 	case errors.Is(err, domain.ErrUnauthorized):
@@ -130,12 +136,12 @@ func validateTenantAccess(ctx context.Context, orgID, projectID string) error {
 	user := authCtx.User
 
 	if !user.HasOrgAccess(orgID) {
-		return status.Errorf(codes.PermissionDenied, "access denied to organization %s", orgID)
+		return status.Error(codes.PermissionDenied, "permission denied")
 	}
 
 	if projectID != "" {
 		if !user.IsOrgAdmin() && len(user.GetProjectRoles(projectID)) == 0 {
-			return status.Errorf(codes.PermissionDenied, "access denied to project %s", projectID)
+			return status.Error(codes.PermissionDenied, "permission denied")
 		}
 	}
 

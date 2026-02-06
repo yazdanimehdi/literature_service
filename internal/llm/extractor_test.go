@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -550,4 +551,345 @@ func TestClientAdapter_ExtractKeywords(t *testing.T) {
 		assert.Equal(t, []string{"p53", "tumor suppressor"}, result.Keywords)
 		assert.Empty(t, result.Reasoning)
 	})
+}
+
+// ---------------------------------------------------------------------------
+// TestBuildCoverageSystemPrompt
+// ---------------------------------------------------------------------------
+
+func TestBuildCoverageSystemPrompt(t *testing.T) {
+	t.Parallel()
+
+	prompt := buildCoverageSystemPrompt()
+
+	t.Run("contains systematic literature review role", func(t *testing.T) {
+		t.Parallel()
+		assert.Contains(t, prompt, "systematic literature review")
+	})
+
+	t.Run("contains JSON format instruction", func(t *testing.T) {
+		t.Parallel()
+		assert.Contains(t, prompt, "JSON")
+	})
+
+	t.Run("contains coverage_score field", func(t *testing.T) {
+		t.Parallel()
+		assert.Contains(t, prompt, "coverage_score")
+	})
+
+	t.Run("contains gap_topics field", func(t *testing.T) {
+		t.Parallel()
+		assert.Contains(t, prompt, "gap_topics")
+	})
+
+	t.Run("contains is_sufficient field", func(t *testing.T) {
+		t.Parallel()
+		assert.Contains(t, prompt, "is_sufficient")
+	})
+}
+
+// ---------------------------------------------------------------------------
+// TestBuildCoverageUserPrompt
+// ---------------------------------------------------------------------------
+
+func TestBuildCoverageUserPrompt(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name             string
+		req              CoverageRequest
+		wantContains     []string
+		wantNotContains  []string
+	}{
+		{
+			name: "full request with all fields populated",
+			req: CoverageRequest{
+				Title:       "CRISPR Gene Editing in Cancer Therapy",
+				Description: "A comprehensive review of CRISPR applications in oncology",
+				SeedKeywords: []string{"CRISPR", "cancer", "gene editing"},
+				AllKeywords:  []string{"CRISPR", "cancer", "gene editing", "Cas9", "oncology"},
+				TotalPapers:    42,
+				ExpansionRounds: 3,
+				PaperSummaries: []CoveragePaperSummary{
+					{Title: "CRISPR in Oncology", Abstract: "This paper reviews CRISPR."},
+				},
+			},
+			wantContains: []string{
+				"CRISPR Gene Editing in Cancer Therapy",
+				"A comprehensive review of CRISPR applications in oncology",
+				"CRISPR, cancer, gene editing",
+				"CRISPR, cancer, gene editing, Cas9, oncology",
+				"Total papers found: 42",
+				"Expansion rounds completed: 3",
+				"CRISPR in Oncology",
+				"This paper reviews CRISPR.",
+			},
+		},
+		{
+			name: "minimal request with title only",
+			req: CoverageRequest{
+				Title: "Minimal Review Topic",
+			},
+			wantContains: []string{
+				"Minimal Review Topic",
+				"Total papers found: 0",
+				"Expansion rounds completed: 0",
+			},
+			wantNotContains: []string{
+				"Description:",
+				"User-provided keywords:",
+			},
+		},
+		{
+			name: "keywords truncated at 200",
+			req: func() CoverageRequest {
+				kw := make([]string, 250)
+				for i := range kw {
+					kw[i] = fmt.Sprintf("kw%d", i)
+				}
+				return CoverageRequest{
+					Title:       "Large Keyword Set",
+					AllKeywords: kw,
+				}
+			}(),
+			wantContains: []string{
+				// The full count is reported.
+				"(250, showing 200)",
+				// First keyword is present.
+				"kw0",
+				// The 200th keyword (index 199) is present.
+				"kw199",
+			},
+			wantNotContains: []string{
+				// The 201st keyword (index 200) should NOT appear in the keyword list.
+				"kw200",
+			},
+		},
+		{
+			name: "abstract truncated at 500 chars",
+			req: CoverageRequest{
+				Title: "Abstract Truncation Test",
+				PaperSummaries: []CoveragePaperSummary{
+					{
+						Title:    "Long Abstract Paper",
+						Abstract: strings.Repeat("A", 600),
+					},
+				},
+			},
+			wantContains: []string{
+				"Long Abstract Paper",
+				strings.Repeat("A", 500) + "...",
+			},
+		},
+		{
+			name: "multiple paper summaries are numbered",
+			req: CoverageRequest{
+				Title: "Multi Paper Test",
+				PaperSummaries: []CoveragePaperSummary{
+					{Title: "First Paper", Abstract: "Abstract one"},
+					{Title: "Second Paper", Abstract: "Abstract two"},
+					{Title: "Third Paper", Abstract: "Abstract three"},
+				},
+			},
+			wantContains: []string{
+				"1. First Paper",
+				"2. Second Paper",
+				"3. Third Paper",
+				"Abstract one",
+				"Abstract two",
+				"Abstract three",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			prompt := buildCoverageUserPrompt(tc.req)
+
+			for _, want := range tc.wantContains {
+				assert.Contains(t, prompt, want, "prompt should contain %q", want)
+			}
+			for _, notWant := range tc.wantNotContains {
+				assert.NotContains(t, prompt, notWant, "prompt should not contain %q", notWant)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TestClientAdapter_AssessCoverage
+// ---------------------------------------------------------------------------
+
+func TestClientAdapter_AssessCoverage(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		provider     string
+		model        string
+		completeFunc func(ctx context.Context, req sharedllm.Request) (*sharedllm.Response, error)
+		req          CoverageRequest
+		wantErr      bool
+		errContains  string
+		check        func(t *testing.T, result *CoverageResult)
+	}{
+		{
+			name:     "happy path returns parsed coverage result",
+			provider: "openai",
+			model:    "gpt-4o",
+			completeFunc: func(_ context.Context, req sharedllm.Request) (*sharedllm.Response, error) {
+				assert.Equal(t, "json", req.ResponseFormat)
+				assert.Len(t, req.Messages, 2)
+				assert.Equal(t, sharedllm.RoleSystem, req.Messages[0].Role)
+				assert.Equal(t, sharedllm.RoleUser, req.Messages[1].Role)
+
+				return &sharedllm.Response{
+					Content: `{"coverage_score":0.82,"reasoning":"Good coverage","gap_topics":["topic1"],"is_sufficient":true}`,
+					Model:   "gpt-4o",
+					Usage: sharedllm.Usage{
+						InputTokens:  200,
+						OutputTokens: 50,
+						TotalTokens:  250,
+					},
+				}, nil
+			},
+			req: CoverageRequest{
+				Title:       "Test Review",
+				TotalPapers: 10,
+			},
+			check: func(t *testing.T, result *CoverageResult) {
+				t.Helper()
+				assert.InDelta(t, 0.82, result.CoverageScore, 0.001)
+				assert.Equal(t, "Good coverage", result.Reasoning)
+				assert.Equal(t, []string{"topic1"}, result.GapTopics)
+				assert.True(t, result.IsSufficient)
+				assert.Equal(t, "gpt-4o", result.Model)
+				assert.Equal(t, 200, result.InputTokens)
+				assert.Equal(t, 50, result.OutputTokens)
+			},
+		},
+		{
+			name:     "score clamped below 0",
+			provider: "openai",
+			model:    "gpt-4o",
+			completeFunc: func(_ context.Context, _ sharedllm.Request) (*sharedllm.Response, error) {
+				return &sharedllm.Response{
+					Content: `{"coverage_score":-0.5,"reasoning":"test","gap_topics":[],"is_sufficient":false}`,
+					Model:   "gpt-4o",
+				}, nil
+			},
+			req: CoverageRequest{Title: "Negative Score"},
+			check: func(t *testing.T, result *CoverageResult) {
+				t.Helper()
+				assert.Equal(t, 0.0, result.CoverageScore)
+			},
+		},
+		{
+			name:     "score clamped above 1",
+			provider: "openai",
+			model:    "gpt-4o",
+			completeFunc: func(_ context.Context, _ sharedllm.Request) (*sharedllm.Response, error) {
+				return &sharedllm.Response{
+					Content: `{"coverage_score":1.5,"reasoning":"test","gap_topics":[],"is_sufficient":true}`,
+					Model:   "gpt-4o",
+				}, nil
+			},
+			req: CoverageRequest{Title: "Over Score"},
+			check: func(t *testing.T, result *CoverageResult) {
+				t.Helper()
+				assert.Equal(t, 1.0, result.CoverageScore)
+			},
+		},
+		{
+			name:     "client error is wrapped with provider",
+			provider: "anthropic",
+			model:    "claude-3-sonnet",
+			completeFunc: func(_ context.Context, _ sharedllm.Request) (*sharedllm.Response, error) {
+				return nil, errors.New("rate limit exceeded")
+			},
+			req:         CoverageRequest{Title: "Error Test"},
+			wantErr:     true,
+			errContains: "anthropic",
+		},
+		{
+			name:     "invalid JSON response returns parse error",
+			provider: "openai",
+			model:    "gpt-4o",
+			completeFunc: func(_ context.Context, _ sharedllm.Request) (*sharedllm.Response, error) {
+				return &sharedllm.Response{
+					Content: `this is not valid JSON`,
+					Model:   "gpt-4o",
+				}, nil
+			},
+			req:         CoverageRequest{Title: "Bad JSON"},
+			wantErr:     true,
+			errContains: "failed to parse coverage response as JSON",
+		},
+		{
+			name:     "zero score passes through without clamping",
+			provider: "openai",
+			model:    "gpt-4o",
+			completeFunc: func(_ context.Context, _ sharedllm.Request) (*sharedllm.Response, error) {
+				return &sharedllm.Response{
+					Content: `{"coverage_score":0.0,"reasoning":"No coverage","gap_topics":["everything"],"is_sufficient":false}`,
+					Model:   "gpt-4o",
+				}, nil
+			},
+			req: CoverageRequest{Title: "Zero Score"},
+			check: func(t *testing.T, result *CoverageResult) {
+				t.Helper()
+				assert.Equal(t, 0.0, result.CoverageScore)
+				assert.False(t, result.IsSufficient)
+				assert.Equal(t, []string{"everything"}, result.GapTopics)
+			},
+		},
+		{
+			name:     "score exactly 1.0 passes through without clamping",
+			provider: "openai",
+			model:    "gpt-4o",
+			completeFunc: func(_ context.Context, _ sharedllm.Request) (*sharedllm.Response, error) {
+				return &sharedllm.Response{
+					Content: `{"coverage_score":1.0,"reasoning":"Perfect coverage","gap_topics":[],"is_sufficient":true}`,
+					Model:   "gpt-4o",
+				}, nil
+			},
+			req: CoverageRequest{Title: "Perfect Score"},
+			check: func(t *testing.T, result *CoverageResult) {
+				t.Helper()
+				assert.Equal(t, 1.0, result.CoverageScore)
+				assert.True(t, result.IsSufficient)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			mock := &mockClient{
+				provider:     tc.provider,
+				model:        tc.model,
+				completeFunc: tc.completeFunc,
+			}
+
+			adapter := &clientAdapter{client: mock}
+			result, err := adapter.AssessCoverage(context.Background(), tc.req)
+
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Nil(t, result)
+				if tc.errContains != "" {
+					assert.Contains(t, err.Error(), tc.errContains)
+				}
+				return
+			}
+
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			if tc.check != nil {
+				tc.check(t, result)
+			}
+		})
+	}
 }

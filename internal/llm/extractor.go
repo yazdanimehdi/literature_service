@@ -99,12 +99,25 @@ type KeywordExtractor interface {
 
 // CoverageRequest contains parameters for corpus coverage assessment.
 type CoverageRequest struct {
-	Title           string
-	Description     string
-	SeedKeywords    []string
-	AllKeywords     []string
-	PaperSummaries  []CoveragePaperSummary
-	TotalPapers     int
+	// Title is the research review title.
+	Title string
+
+	// Description is the optional research review description.
+	Description string
+
+	// SeedKeywords are the user-provided initial keywords.
+	SeedKeywords []string
+
+	// AllKeywords are all keywords discovered during the review (seed + extracted).
+	AllKeywords []string
+
+	// PaperSummaries is a sample of paper title/abstract pairs for assessment.
+	PaperSummaries []CoveragePaperSummary
+
+	// TotalPapers is the total number of papers found so far.
+	TotalPapers int
+
+	// ExpansionRounds is the number of keyword expansion rounds completed.
 	ExpansionRounds int
 }
 
@@ -116,17 +129,36 @@ type CoveragePaperSummary struct {
 
 // CoverageResult contains the LLM's coverage assessment.
 type CoverageResult struct {
+	// CoverageScore is the assessed coverage level from 0.0 (none) to 1.0 (comprehensive).
 	CoverageScore float64
-	Reasoning     string
-	GapTopics     []string
-	IsSufficient  bool
-	Model         string
-	InputTokens   int
-	OutputTokens  int
+
+	// Reasoning is the LLM's explanation of the coverage assessment.
+	Reasoning string
+
+	// GapTopics are specific research subtopics not well-represented in the corpus.
+	GapTopics []string
+
+	// IsSufficient indicates whether the corpus supports a reasonable literature review.
+	IsSufficient bool
+
+	// Model is the LLM model used for assessment.
+	Model string
+
+	// InputTokens is the number of input tokens consumed.
+	InputTokens int
+
+	// OutputTokens is the number of output tokens consumed.
+	OutputTokens int
 }
 
 // CoverageAssessor defines the interface for LLM-based corpus coverage assessment.
+//
+// Implementations should handle provider-specific API calls, parse the JSON response,
+// and clamp CoverageScore to the [0.0, 1.0] range. Errors should be wrapped with
+// provider context. The context should be used for cancellation and deadline propagation.
 type CoverageAssessor interface {
+	// AssessCoverage evaluates how well the collected corpus covers the research topic.
+	// Returns a coverage score, gap topics, and sufficiency determination.
 	AssessCoverage(ctx context.Context, req CoverageRequest) (*CoverageResult, error)
 }
 

@@ -484,3 +484,93 @@ type UpdatePauseStateInput struct {
 	// PausedAtPhase records which workflow phase was active when paused.
 	PausedAtPhase string
 }
+
+// --- Relevance Gate & Coverage Review Types ---
+
+// EmbedTextInput contains the parameters for embedding a single text string.
+type EmbedTextInput struct {
+	// Text is the text to embed.
+	Text string `json:"text"`
+}
+
+// EmbedTextOutput contains the embedding result for a single text.
+type EmbedTextOutput struct {
+	// Embedding is the vector representation of the text.
+	Embedding []float32 `json:"embedding"`
+}
+
+// ScoreKeywordRelevanceInput contains the parameters for scoring keyword relevance.
+type ScoreKeywordRelevanceInput struct {
+	// Keywords are the keywords to score.
+	Keywords []string `json:"keywords"`
+	// QueryEmbedding is the embedding of the original query (anchor).
+	QueryEmbedding []float32 `json:"query_embedding"`
+	// Threshold is the minimum cosine similarity to accept a keyword.
+	Threshold float64 `json:"threshold"`
+}
+
+// ScoredKeyword contains a keyword with its relevance score.
+type ScoredKeyword struct {
+	// Keyword is the keyword text.
+	Keyword string `json:"keyword"`
+	// Score is the cosine similarity to the query embedding.
+	Score float64 `json:"score"`
+}
+
+// ScoreKeywordRelevanceOutput contains the scored and filtered keywords.
+type ScoreKeywordRelevanceOutput struct {
+	// Accepted are keywords above the threshold.
+	Accepted []ScoredKeyword `json:"accepted"`
+	// Rejected are keywords below the threshold.
+	Rejected []ScoredKeyword `json:"rejected"`
+}
+
+// PaperSummary contains the minimum paper data for coverage assessment.
+type PaperSummary struct {
+	// Title is the paper title.
+	Title string `json:"title"`
+	// Abstract is the paper abstract (may be truncated).
+	Abstract string `json:"abstract"`
+}
+
+// AssessCoverageInput contains the parameters for LLM coverage assessment.
+type AssessCoverageInput struct {
+	// Title is the research topic title.
+	Title string `json:"title"`
+	// Description is the extended review scope description.
+	Description string `json:"description"`
+	// SeedKeywords are the user-provided starting keywords.
+	SeedKeywords []string `json:"seed_keywords"`
+	// AllKeywords are all keywords extracted across all rounds.
+	AllKeywords []string `json:"all_keywords"`
+	// PaperSummaries are title+abstract pairs for up to 20 papers.
+	PaperSummaries []PaperSummary `json:"paper_summaries"`
+	// TotalPapers is the total number of papers found.
+	TotalPapers int `json:"total_papers"`
+	// ExpansionRounds is the number of expansion rounds completed.
+	ExpansionRounds int `json:"expansion_rounds"`
+	// OrgID for budget tracking.
+	OrgID string `json:"org_id"`
+	// ProjectID for budget tracking.
+	ProjectID string `json:"project_id"`
+	// LeaseID for budget usage reporting.
+	LeaseID string `json:"lease_id"`
+}
+
+// AssessCoverageOutput contains the LLM coverage assessment results.
+type AssessCoverageOutput struct {
+	// CoverageScore is the assessed coverage level (0.0-1.0).
+	CoverageScore float64 `json:"coverage_score"`
+	// Reasoning is the LLM's explanation of its assessment.
+	Reasoning string `json:"reasoning"`
+	// GapTopics are research subtopics not well-represented in the corpus.
+	GapTopics []string `json:"gap_topics"`
+	// IsSufficient indicates whether the corpus supports a reasonable review.
+	IsSufficient bool `json:"is_sufficient"`
+	// Model is the LLM model used.
+	Model string `json:"model"`
+	// InputTokens consumed.
+	InputTokens int `json:"input_tokens"`
+	// OutputTokens consumed.
+	OutputTokens int `json:"output_tokens"`
+}

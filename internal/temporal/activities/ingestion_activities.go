@@ -5,10 +5,12 @@ import (
 	"fmt"
 
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/helixir/literature-review-service/internal/ingestion"
 	"github.com/helixir/literature-review-service/internal/observability"
 	"github.com/helixir/literature-review-service/internal/pdf"
+	"github.com/helixir/literature-review-service/internal/temporal/resilience"
 )
 
 const (
@@ -44,24 +46,31 @@ type IngestionActivities struct {
 	downloader      PDFDownloader
 	streamingClient StreamingIngestionClient
 	metrics         *observability.Metrics
+	breakers        *resilience.BreakerRegistry
 }
 
 // NewIngestionActivities creates a new IngestionActivities instance.
 // The metrics parameter may be nil (metrics recording will be skipped).
 // The downloader and streamingClient parameters may be nil if DownloadAndIngestPapers
 // activity will not be used.
+// The breakers parameter may be nil (circuit breaker protection will be skipped).
 func NewIngestionActivities(
 	client IngestionClient,
 	downloader PDFDownloader,
 	streamingClient StreamingIngestionClient,
 	metrics *observability.Metrics,
+	breakers ...*resilience.BreakerRegistry,
 ) *IngestionActivities {
-	return &IngestionActivities{
+	a := &IngestionActivities{
 		client:          client,
 		downloader:      downloader,
 		streamingClient: streamingClient,
 		metrics:         metrics,
 	}
+	if len(breakers) > 0 && breakers[0] != nil {
+		a.breakers = breakers[0]
+	}
+	return a
 }
 
 // SubmitPaperForIngestion submits a single paper to the ingestion service for processing.
@@ -71,6 +80,19 @@ func (a *IngestionActivities) SubmitPaperForIngestion(ctx context.Context, input
 		"paperID", input.PaperID,
 		"requestID", input.RequestID,
 	)
+
+	// Circuit breaker check.
+	if a.breakers != nil {
+		cb := a.breakers.Get("ingestion")
+		if cbErr := cb.Allow(); cbErr != nil {
+			logger.Warn("ingestion circuit breaker open", "error", cbErr)
+			return nil, temporal.NewNonRetryableApplicationError(
+				"circuit_open: ingestion",
+				"circuit_open",
+				cbErr,
+			)
+		}
+	}
 
 	idempotencyKey := input.IdempotencyKey
 	if idempotencyKey == "" {
@@ -89,7 +111,15 @@ func (a *IngestionActivities) SubmitPaperForIngestion(ctx context.Context, input
 			"paperID", input.PaperID,
 			"error", err,
 		)
+		if a.breakers != nil {
+			a.breakers.Get("ingestion").RecordFailure()
+		}
 		return nil, fmt.Errorf("submit paper %s for ingestion: %w", input.PaperID, err)
+	}
+
+	// Record success on the circuit breaker.
+	if a.breakers != nil {
+		a.breakers.Get("ingestion").RecordSuccess()
 	}
 
 	logger.Info("paper submitted for ingestion",

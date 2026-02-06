@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -57,6 +59,23 @@ func NewKeyword(keyword string) *Keyword {
 		NormalizedKeyword: NormalizeKeyword(keyword),
 		CreatedAt:         time.Now(),
 	}
+}
+
+// ComputeSearchWindowHash computes a deterministic SHA-256 hash for a
+// keyword+source+dateRange combination. This is the unique key stored in
+// keyword_searches.search_window_hash for deduplication.
+func ComputeSearchWindowHash(keywordID uuid.UUID, source SourceType, dateFrom, dateTo *string) string {
+	dfStr := ""
+	if dateFrom != nil {
+		dfStr = *dateFrom
+	}
+	dtStr := ""
+	if dateTo != nil {
+		dtStr = *dateTo
+	}
+	raw := fmt.Sprintf("%s|%s|%s|%s", keywordID, source, dfStr, dtStr)
+	hash := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%x", hash)
 }
 
 // KeywordSearch records a search operation for idempotency and audit.

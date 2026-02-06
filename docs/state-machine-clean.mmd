@@ -1,0 +1,73 @@
+---
+title: Literature Review Service — Review Lifecycle
+---
+flowchart TB
+    subgraph Legend["Legend"]
+        direction LR
+        L1["Active Phase"]:::active
+        L2["Terminal State"]:::terminal
+        L3["Pausable State"]:::pausable
+        L4["Signal"]:::signal
+    end
+
+    Start(["Create Review"]) --> pending["pending"]:::active
+
+    pending --> extracting["extracting_keywords\n\nLLM extracts 3-10 keywords\nEmbed query for relevance gate"]:::active
+
+    extracting --> searching["searching\n\nConcurrent search across\nSemantic Scholar, OpenAlex, PubMed\n(rate-limited, 500ms stagger)"]:::active
+
+    searching --> ingesting["ingesting\n\nBatch papers into groups of 5\nSpawn child workflows:\nEmbed → Dedup → Ingest → Update"]:::active
+
+    ingesting --> expanding["expanding\n\nExtract keywords from top papers\nRelevance gate filters drift\nUp to MaxExpansionDepth rounds"]:::active
+
+    expanding -->|"new papers"| ingesting
+    expanding --> reviewing["reviewing\n\n(Optional) LLM assesses coverage\nScore 0.0-1.0 with reasoning"]:::active
+
+    reviewing -->|"gap expansion\ncoverage < threshold"| expanding
+
+    ingesting -->|"no expansion"| completed
+    expanding -->|"done"| completed
+    reviewing -->|"sufficient"| completed
+
+    completed["completed"]:::terminal
+    partial["partial"]:::terminal
+    failed["failed"]:::terminal
+    cancelled["cancelled"]:::terminal
+
+    paused["paused\n\nreason: user / budget_exhausted\ntracks: paused_at_phase"]:::pausable
+
+    subgraph Signals["External Signals"]
+        direction LR
+        pause_sig["pause"]:::signal
+        resume_sig["resume"]:::signal
+        stop_sig["stop"]:::signal
+        cancel_sig["cancel"]:::signal
+    end
+
+    pause_sig -.->|"any active state"| paused
+    resume_sig -.->|"returns to\nprevious phase"| extracting
+    stop_sig -.->|"graceful stop"| partial
+    cancel_sig -.->|"immediate"| cancelled
+
+    extracting -->|"retry\n(transient)"| extracting
+    searching -->|"retry\n(transient)"| searching
+
+    extracting -->|"critical\nexhausted"| failed
+    searching -->|"important\ndegraded"| partial
+    ingesting -->|"error"| failed
+    expanding -->|"non-critical\nskipped"| completed
+
+    subgraph ChildWorkflow["PaperProcessingWorkflow (per batch)"]
+        direction LR
+        c_embed["Embed\nabstracts"] --> c_dedup["Dedup\nvs Qdrant"]
+        c_dedup --> c_ingest["Ingest\nPDFs"]
+        c_ingest --> c_update["Update\nDB"]
+        c_update --> c_signal["Signal\nparent"]
+    end
+
+    ingesting -.->|"spawns"| ChildWorkflow
+
+    classDef active fill:#4A90D9,color:#fff,stroke:#2C6FAA,stroke-width:2px,font-size:12px
+    classDef terminal fill:#2ECC71,color:#fff,stroke:#27AE60,stroke-width:2px,font-size:13px,font-weight:bold
+    classDef pausable fill:#F39C12,color:#fff,stroke:#E67E22,stroke-width:2px,font-size:12px
+    classDef signal fill:#9B59B6,color:#fff,stroke:#8E44AD,stroke-width:2px,font-size:11px

@@ -147,6 +147,10 @@ type SaveKeywordsOutput struct {
 	// KeywordIDs contains the UUIDs of the saved keyword records.
 	KeywordIDs []uuid.UUID
 
+	// KeywordIDMap maps keyword strings to their database UUIDs.
+	// The keys are the original (non-normalized) keyword strings.
+	KeywordIDMap map[string]uuid.UUID
+
 	// NewCount is the number of newly created keywords (excludes duplicates).
 	NewCount int
 }
@@ -573,4 +577,66 @@ type AssessCoverageOutput struct {
 	InputTokens int `json:"input_tokens"`
 	// OutputTokens consumed.
 	OutputTokens int `json:"output_tokens"`
+}
+
+// --- Search Deduplication Types ---
+
+// CheckSearchCompletedInput contains the parameters for checking if a search was already done.
+type CheckSearchCompletedInput struct {
+	// KeywordID is the keyword's database UUID.
+	KeywordID uuid.UUID `json:"keyword_id"`
+
+	// Keyword is the keyword string (for logging).
+	Keyword string `json:"keyword"`
+
+	// Source is the paper source API to check.
+	Source domain.SourceType `json:"source"`
+
+	// DateFrom is the optional start of the date range filter.
+	DateFrom *string `json:"date_from,omitempty"`
+
+	// DateTo is the optional end of the date range filter.
+	DateTo *string `json:"date_to,omitempty"`
+}
+
+// CheckSearchCompletedOutput contains the result of checking for a completed search.
+type CheckSearchCompletedOutput struct {
+	// AlreadyCompleted is true if a completed search record exists for this keyword+source+dateRange.
+	AlreadyCompleted bool `json:"already_completed"`
+
+	// PreviouslyFoundPapers are papers from the cached search result.
+	PreviouslyFoundPapers []*domain.Paper `json:"previously_found_papers,omitempty"`
+
+	// PapersFoundCount is the number of papers found in the previous search.
+	PapersFoundCount int `json:"papers_found_count"`
+
+	// SearchedAt is when the previous search was performed.
+	SearchedAt string `json:"searched_at,omitempty"`
+}
+
+// RecordSearchResultInput contains the parameters for recording a completed search.
+type RecordSearchResultInput struct {
+	// KeywordID is the keyword's database UUID.
+	KeywordID uuid.UUID `json:"keyword_id"`
+
+	// Source is the paper source API that was searched.
+	Source domain.SourceType `json:"source"`
+
+	// DateFrom is the optional start of the date range filter.
+	DateFrom *string `json:"date_from,omitempty"`
+
+	// DateTo is the optional end of the date range filter.
+	DateTo *string `json:"date_to,omitempty"`
+
+	// PapersFound is the number of papers found.
+	PapersFound int `json:"papers_found"`
+
+	// PaperIDs are the IDs of papers found (for keyword_paper_mappings).
+	PaperIDs []uuid.UUID `json:"paper_ids"`
+
+	// Status is the search status ("completed" or "failed").
+	Status string `json:"status"`
+
+	// ErrorMessage is set when the search failed.
+	ErrorMessage string `json:"error_message,omitempty"`
 }

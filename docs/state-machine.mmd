@@ -1,0 +1,118 @@
+---
+title: Literature Review Service — State Machine
+---
+stateDiagram-v2
+    direction TB
+
+    [*] --> pending : CreateReview
+
+    pending --> extracting_keywords : Workflow starts
+
+    extracting_keywords --> searching : Keywords extracted
+
+    searching --> ingesting : Papers found
+
+    ingesting --> expanding : Batches complete
+
+    ingesting --> reviewing : No expansion, coverage enabled
+
+    ingesting --> completed : No expansion or review
+
+    expanding --> ingesting : New papers found
+
+    expanding --> reviewing : Expansion done, review enabled
+
+    expanding --> completed : Done, no review
+
+    reviewing --> expanding : Gap expansion triggered
+
+    reviewing --> completed : Coverage sufficient
+
+    extracting_keywords --> extracting_keywords : Retry (transient error)
+    searching --> searching : Retry (transient error)
+    expanding --> expanding : Retry (transient error)
+    reviewing --> reviewing : Retry (transient error)
+
+    extracting_keywords --> failed : Critical phase exhausted
+    searching --> partial : Important phase degraded
+    ingesting --> failed : Unrecoverable error
+    expanding --> completed : Non-critical phase skipped
+    reviewing --> completed : Non-critical phase skipped
+
+    extracting_keywords --> cancelled : Cancel signal
+    searching --> cancelled : Cancel signal
+    ingesting --> cancelled : Cancel signal
+    expanding --> cancelled : Cancel signal
+    reviewing --> cancelled : Cancel signal
+
+    searching --> partial : Stop signal
+    ingesting --> partial : Stop signal
+    expanding --> partial : Stop signal
+
+    extracting_keywords --> paused : Pause or budget exhausted
+    searching --> paused : Pause or budget exhausted
+    ingesting --> paused : Pause signal
+    expanding --> paused : Pause or budget exhausted
+    reviewing --> paused : Pause or budget exhausted
+
+    paused --> extracting_keywords : Resume (was extracting)
+    paused --> searching : Resume (was searching)
+    paused --> ingesting : Resume (was ingesting)
+    paused --> expanding : Resume (was expanding)
+    paused --> reviewing : Resume (was reviewing)
+
+    completed --> [*]
+    partial --> [*]
+    failed --> [*]
+    cancelled --> [*]
+
+    state paused {
+        direction LR
+        [*] --> WaitingForResume
+        WaitingForResume : Reason user or budget_exhausted
+        WaitingForResume : Tracks paused_at_phase
+    }
+
+    state "PaperProcessingWorkflow (child)" as child {
+        direction TB
+        [*] --> Embed
+        Embed : Generate abstract embeddings
+        Embed --> Dedup
+        Dedup : Check Qdrant (non-fatal)
+        Dedup --> Ingest
+        Ingest : Download and ingest PDFs
+        Ingest --> Update
+        Update : Save results to DB
+        Update --> Signal
+        Signal : batch_complete to parent
+        Signal --> [*]
+    }
+
+    note right of ingesting
+        Spawns PaperProcessingWorkflow
+        child workflows in batches of 5
+    end note
+
+    note right of expanding
+        Up to MaxExpansionDepth rounds
+        Relevance gate filters drifting keywords
+    end note
+
+    note right of reviewing
+        LLM assesses corpus coverage
+        Gap expansion if below threshold
+    end note
+
+    note left of paused
+        Resumable from any active phase
+    end note
+
+    note right of extracting_keywords
+        Critical: fail workflow on exhaust
+        Max 3 retries with exponential backoff
+    end note
+
+    note left of searching
+        Important: degrade to partial on exhaust
+        Circuit breakers per source API
+    end note

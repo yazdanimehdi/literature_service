@@ -2,7 +2,9 @@ package activities
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	"go.temporal.io/sdk/activity"
@@ -102,8 +104,10 @@ func (a *StatusActivities) SaveKeywords(ctx context.Context, input SaveKeywordsI
 	}
 
 	keywordIDs := make([]uuid.UUID, 0, len(keywords))
+	keywordIDMap := make(map[string]uuid.UUID, len(keywords))
 	for _, kw := range keywords {
 		keywordIDs = append(keywordIDs, kw.ID)
+		keywordIDMap[kw.Keyword] = kw.ID
 	}
 
 	// NewCount approximation: we cannot distinguish new from existing in BulkGetOrCreate
@@ -118,8 +122,9 @@ func (a *StatusActivities) SaveKeywords(ctx context.Context, input SaveKeywordsI
 	)
 
 	return &SaveKeywordsOutput{
-		KeywordIDs: keywordIDs,
-		NewCount:   newCount,
+		KeywordIDs:   keywordIDs,
+		KeywordIDMap: keywordIDMap,
+		NewCount:     newCount,
 	}, nil
 }
 
@@ -291,4 +296,145 @@ func (a *StatusActivities) UpdatePauseState(ctx context.Context, input UpdatePau
 	)
 
 	return nil
+}
+
+// CheckSearchCompleted checks if a keyword+source search was already done.
+// This enables search deduplication — when a workflow is resumed or a keyword
+// appears in multiple expansion rounds, we skip searches that already have results.
+func (a *StatusActivities) CheckSearchCompleted(ctx context.Context, input CheckSearchCompletedInput) (*CheckSearchCompletedOutput, error) {
+	logger := activity.GetLogger(ctx)
+	logger.Info("checking search completion",
+		"keywordID", input.KeywordID,
+		"keyword", input.Keyword,
+		"source", input.Source,
+	)
+
+	// Look up the most recent search for this keyword+source.
+	lastSearch, err := a.keywordRepo.GetLastSearch(ctx, input.KeywordID, input.Source)
+	if err != nil {
+		// Not found = never searched.
+		if errors.Is(err, domain.ErrNotFound) {
+			return &CheckSearchCompletedOutput{AlreadyCompleted: false}, nil
+		}
+		return nil, fmt.Errorf("check search completed: %w", err)
+	}
+
+	// Only consider completed searches as deduplicated.
+	if lastSearch.Status != domain.SearchStatusCompleted {
+		logger.Info("previous search not completed, will re-search",
+			"keyword", input.Keyword,
+			"source", input.Source,
+			"lastStatus", lastSearch.Status,
+		)
+		return &CheckSearchCompletedOutput{AlreadyCompleted: false}, nil
+	}
+
+	// Fetch cached papers from keyword_paper_mappings.
+	papers, _, err := a.keywordRepo.GetPapersForKeyword(ctx, input.KeywordID, 1000, 0)
+	if err != nil {
+		logger.Warn("failed to fetch cached papers, will re-search",
+			"keyword", input.Keyword,
+			"source", input.Source,
+			"error", err,
+		)
+		return &CheckSearchCompletedOutput{AlreadyCompleted: false}, nil
+	}
+
+	logger.Info("search already completed, reusing cached results",
+		"keyword", input.Keyword,
+		"source", input.Source,
+		"searchedAt", lastSearch.SearchedAt,
+		"cachedPapers", len(papers),
+	)
+
+	return &CheckSearchCompletedOutput{
+		AlreadyCompleted:      true,
+		PreviouslyFoundPapers: papers,
+		PapersFoundCount:      lastSearch.PapersFound,
+		SearchedAt:            lastSearch.SearchedAt.Format("2006-01-02T15:04:05Z"),
+	}, nil
+}
+
+// RecordSearchResult records a completed search and its paper mappings.
+// This persists the search record for future deduplication and links
+// the discovered papers to the keyword.
+func (a *StatusActivities) RecordSearchResult(ctx context.Context, input RecordSearchResultInput) error {
+	logger := activity.GetLogger(ctx)
+	logger.Info("recording search result",
+		"keywordID", input.KeywordID,
+		"source", input.Source,
+		"papersFound", input.PapersFound,
+		"status", input.Status,
+	)
+
+	// Compute search window hash for idempotency.
+	hash := domain.ComputeSearchWindowHash(input.KeywordID, input.Source, input.DateFrom, input.DateTo)
+
+	status := domain.SearchStatusCompleted
+	if input.Status == "failed" {
+		status = domain.SearchStatusFailed
+	}
+
+	search := &domain.KeywordSearch{
+		KeywordID:        input.KeywordID,
+		SourceAPI:        input.Source,
+		PapersFound:      input.PapersFound,
+		Status:           status,
+		ErrorMessage:     input.ErrorMessage,
+		SearchWindowHash: hash,
+	}
+
+	// Parse optional date range.
+	if input.DateFrom != nil {
+		t, err := parseDate(*input.DateFrom)
+		if err == nil {
+			search.DateFrom = &t
+		}
+	}
+	if input.DateTo != nil {
+		t, err := parseDate(*input.DateTo)
+		if err == nil {
+			search.DateTo = &t
+		}
+	}
+
+	if err := a.keywordRepo.RecordSearch(ctx, search); err != nil {
+		logger.Error("failed to record search", "error", err)
+		return fmt.Errorf("record search: %w", err)
+	}
+
+	// Create keyword-paper mappings for the found papers.
+	if len(input.PaperIDs) > 0 {
+		mappings := make([]*domain.KeywordPaperMapping, 0, len(input.PaperIDs))
+		for _, paperID := range input.PaperIDs {
+			mappings = append(mappings, &domain.KeywordPaperMapping{
+				KeywordID:   input.KeywordID,
+				PaperID:     paperID,
+				MappingType: domain.MappingTypeQueryMatch,
+				SourceType:  input.Source,
+			})
+		}
+
+		if err := a.keywordRepo.BulkAddPaperMappings(ctx, mappings); err != nil {
+			logger.Warn("failed to record keyword-paper mappings",
+				"keywordID", input.KeywordID,
+				"error", err,
+			)
+			// Non-fatal: the search record is saved, mappings are best-effort.
+		}
+	}
+
+	logger.Info("search result recorded",
+		"keywordID", input.KeywordID,
+		"source", input.Source,
+		"papersFound", input.PapersFound,
+		"mappings", len(input.PaperIDs),
+	)
+
+	return nil
+}
+
+// parseDate parses a date string in YYYY-MM-DD format.
+func parseDate(s string) (time.Time, error) {
+	return time.Parse("2006-01-02", s)
 }

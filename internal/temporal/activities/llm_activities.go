@@ -7,11 +7,13 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 
 	sharedllm "github.com/helixir/llm"
 
 	"github.com/helixir/literature-review-service/internal/llm"
 	"github.com/helixir/literature-review-service/internal/observability"
+	"github.com/helixir/literature-review-service/internal/temporal/resilience"
 )
 
 // BudgetUsageReporter emits budget usage events after successful LLM calls.
@@ -38,6 +40,7 @@ type LLMActivities struct {
 	coverageAssessor llm.CoverageAssessor
 	metrics          *observability.Metrics
 	budgetReporter   BudgetUsageReporter // nil = budget reporting disabled
+	breakers         *resilience.BreakerRegistry
 }
 
 // LLMActivitiesOption configures optional LLMActivities dependencies.
@@ -51,6 +54,11 @@ func WithBudgetReporter(reporter BudgetUsageReporter) LLMActivitiesOption {
 // WithCoverageAssessor attaches a coverage assessor to the LLM activities.
 func WithCoverageAssessor(assessor llm.CoverageAssessor) LLMActivitiesOption {
 	return func(a *LLMActivities) { a.coverageAssessor = assessor }
+}
+
+// WithBreakerRegistry attaches a circuit breaker registry to the LLM activities.
+func WithBreakerRegistry(breakers *resilience.BreakerRegistry) LLMActivitiesOption {
+	return func(a *LLMActivities) { a.breakers = breakers }
 }
 
 // NewLLMActivities creates a new LLMActivities instance with the given dependencies.
@@ -81,6 +89,19 @@ func (a *LLMActivities) ExtractKeywords(ctx context.Context, input ExtractKeywor
 		"existingKeywords", len(input.ExistingKeywords),
 	)
 
+	// Circuit breaker check.
+	if a.breakers != nil {
+		cb := a.breakers.Get("llm")
+		if cbErr := cb.Allow(); cbErr != nil {
+			logger.Warn("LLM circuit breaker open", "error", cbErr)
+			return nil, temporal.NewNonRetryableApplicationError(
+				"circuit_open: llm",
+				"circuit_open",
+				cbErr,
+			)
+		}
+	}
+
 	req := llm.ExtractionRequest{
 		Text:             input.Text,
 		Mode:             llm.ExtractionMode(input.Mode),
@@ -100,11 +121,19 @@ func (a *LLMActivities) ExtractKeywords(ctx context.Context, input ExtractKeywor
 			"duration", duration,
 		)
 
+		if a.breakers != nil {
+			a.breakers.Get("llm").RecordFailure()
+		}
 		if a.metrics != nil {
 			a.metrics.RecordLLMRequestFailed("extract_keywords", a.extractor.Model(), errorType(err))
 		}
 
 		return nil, fmt.Errorf("keyword extraction failed: %w", err)
+	}
+
+	// Record success on the circuit breaker.
+	if a.breakers != nil {
+		a.breakers.Get("llm").RecordSuccess()
 	}
 
 	logger.Info("keywords extracted successfully",
@@ -168,6 +197,19 @@ func (a *LLMActivities) AssessCoverage(ctx context.Context, input AssessCoverage
 		return nil, fmt.Errorf("coverage assessor is not configured")
 	}
 
+	// Circuit breaker check.
+	if a.breakers != nil {
+		cb := a.breakers.Get("llm")
+		if cbErr := cb.Allow(); cbErr != nil {
+			logger.Warn("LLM circuit breaker open for coverage assessment", "error", cbErr)
+			return nil, temporal.NewNonRetryableApplicationError(
+				"circuit_open: llm",
+				"circuit_open",
+				cbErr,
+			)
+		}
+	}
+
 	summaries := make([]llm.CoveragePaperSummary, len(input.PaperSummaries))
 	for i, ps := range input.PaperSummaries {
 		summaries[i] = llm.CoveragePaperSummary{Title: ps.Title, Abstract: ps.Abstract}
@@ -190,10 +232,18 @@ func (a *LLMActivities) AssessCoverage(ctx context.Context, input AssessCoverage
 			"error", err,
 			"duration", duration,
 		)
+		if a.breakers != nil {
+			a.breakers.Get("llm").RecordFailure()
+		}
 		if a.metrics != nil {
 			a.metrics.RecordLLMRequestFailed("assess_coverage", "", errorType(err))
 		}
 		return nil, fmt.Errorf("coverage assessment failed: %w", err)
+	}
+
+	// Record success on the circuit breaker.
+	if a.breakers != nil {
+		a.breakers.Get("llm").RecordSuccess()
 	}
 
 	logger.Info("coverage assessment completed",

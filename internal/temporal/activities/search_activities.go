@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 
 	"github.com/helixir/literature-review-service/internal/domain"
 	"github.com/helixir/literature-review-service/internal/observability"
 	"github.com/helixir/literature-review-service/internal/papersources"
+	"github.com/helixir/literature-review-service/internal/temporal/resilience"
 )
 
 // PaperSearcher defines the interface for searching paper sources.
@@ -25,15 +27,21 @@ type PaperSearcher interface {
 type SearchActivities struct {
 	registry PaperSearcher
 	metrics  *observability.Metrics
+	breakers *resilience.BreakerRegistry
 }
 
 // NewSearchActivities creates a new SearchActivities instance with the given dependencies.
 // The metrics parameter may be nil (metrics recording will be skipped).
-func NewSearchActivities(registry PaperSearcher, metrics *observability.Metrics) *SearchActivities {
-	return &SearchActivities{
+// The breakers parameter may be nil (circuit breaker protection will be skipped).
+func NewSearchActivities(registry PaperSearcher, metrics *observability.Metrics, breakers ...*resilience.BreakerRegistry) *SearchActivities {
+	a := &SearchActivities{
 		registry: registry,
 		metrics:  metrics,
 	}
+	if len(breakers) > 0 && breakers[0] != nil {
+		a.breakers = breakers[0]
+	}
+	return a
 }
 
 // SearchPapers searches multiple academic paper sources concurrently and aggregates the results.
@@ -163,6 +171,8 @@ func formatSourceTypes(sources []domain.SourceType) string {
 // SearchSingleSource searches a single paper source.
 // This activity is designed for rate-limited parallel execution where each source
 // is searched independently with its own rate limiting.
+// If a circuit breaker is configured and open for the source, the activity
+// returns a non-retryable application error so the workflow can handle it.
 func (a *SearchActivities) SearchSingleSource(ctx context.Context, input SearchSingleSourceInput) (*SearchSingleSourceOutput, error) {
 	logger := activity.GetLogger(ctx)
 	logger.Info("searching single source",
@@ -170,6 +180,23 @@ func (a *SearchActivities) SearchSingleSource(ctx context.Context, input SearchS
 		"query", input.Query,
 		"maxResults", input.MaxResults,
 	)
+
+	// Circuit breaker check.
+	sourceName := string(input.Source)
+	if a.breakers != nil {
+		cb := a.breakers.Get(sourceName)
+		if err := cb.Allow(); err != nil {
+			logger.Warn("circuit breaker open for source",
+				"source", input.Source,
+				"error", err,
+			)
+			return nil, temporal.NewNonRetryableApplicationError(
+				fmt.Sprintf("circuit_open: %s", sourceName),
+				"circuit_open",
+				err,
+			)
+		}
+	}
 
 	params := papersources.SearchParams{
 		Query:            input.Query,
@@ -180,7 +207,7 @@ func (a *SearchActivities) SearchSingleSource(ctx context.Context, input SearchS
 	}
 
 	if a.metrics != nil {
-		a.metrics.RecordSearchStarted(string(input.Source))
+		a.metrics.RecordSearchStarted(sourceName)
 	}
 
 	start := time.Now()
@@ -194,6 +221,9 @@ func (a *SearchActivities) SearchSingleSource(ctx context.Context, input SearchS
 
 	if len(results) == 0 {
 		output.Error = "no results returned from registry"
+		if a.breakers != nil {
+			a.breakers.Get(sourceName).RecordFailure()
+		}
 		return output, nil
 	}
 
@@ -204,10 +234,18 @@ func (a *SearchActivities) SearchSingleSource(ctx context.Context, input SearchS
 			"source", input.Source,
 			"error", sr.Error,
 		)
+		if a.breakers != nil {
+			a.breakers.Get(sourceName).RecordFailure()
+		}
 		if a.metrics != nil {
-			a.metrics.RecordSearchFailed(string(input.Source), time.Since(start).Seconds())
+			a.metrics.RecordSearchFailed(sourceName, time.Since(start).Seconds())
 		}
 		return output, nil // Non-fatal: return result with error field set
+	}
+
+	// Record success on the circuit breaker.
+	if a.breakers != nil {
+		a.breakers.Get(sourceName).RecordSuccess()
 	}
 
 	if sr.Result != nil {
@@ -222,8 +260,8 @@ func (a *SearchActivities) SearchSingleSource(ctx context.Context, input SearchS
 	)
 
 	if a.metrics != nil {
-		a.metrics.RecordSearchCompleted(string(input.Source), output.TotalFound, time.Since(start).Seconds())
-		a.metrics.RecordPapersDiscovered(string(input.Source), output.TotalFound)
+		a.metrics.RecordSearchCompleted(sourceName, output.TotalFound, time.Since(start).Seconds())
+		a.metrics.RecordPapersDiscovered(sourceName, output.TotalFound)
 	}
 
 	return output, nil

@@ -187,7 +187,7 @@ func TestLiteratureReviewWorkflow_ExtractionFailure(t *testing.T) {
 
 	err := env.GetWorkflowError()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "extract_keywords")
+	assert.Contains(t, err.Error(), "extracting_keywords")
 }
 
 func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
@@ -391,7 +391,7 @@ func TestLiteratureReviewWorkflow_Cancellation(t *testing.T) {
 	err := env.GetWorkflowError()
 	require.Error(t, err)
 	// The error should indicate the workflow failed during keyword extraction.
-	assert.Contains(t, err.Error(), "extract_keywords")
+	assert.Contains(t, err.Error(), "extracting_keywords")
 }
 
 func TestLiteratureReviewWorkflow_EmptySearchResults(t *testing.T) {

@@ -107,6 +107,9 @@ type ReviewWorkflowResult struct {
 	// ExpansionRounds is the number of expansion rounds completed.
 	ExpansionRounds int
 
+	// KeywordsFilteredByRelevance is the count of keywords dropped by the relevance gate.
+	KeywordsFilteredByRelevance int
+
 	// Duration is the total workflow execution time in seconds.
 	Duration float64
 }
@@ -121,10 +124,11 @@ type workflowProgress struct {
 	PapersIngested    int
 	PapersFailed      int
 	DuplicatesFound   int
-	BatchesSpawned    int
-	BatchesCompleted  int
-	ExpansionRound    int
-	MaxExpansionDepth int
+	BatchesSpawned              int
+	BatchesCompleted            int
+	ExpansionRound              int
+	MaxExpansionDepth           int
+	KeywordsFilteredByRelevance int
 
 	// Pause state
 	IsPaused      bool
@@ -235,6 +239,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	var searchAct *activities.SearchActivities
 	var statusAct *activities.StatusActivities
 	var eventAct *activities.EventActivities
+	var embeddingAct *activities.EmbeddingActivities
 
 	// Build activity option contexts with retry policies.
 	llmCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
@@ -382,6 +387,21 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	}).Get(cancelCtx, &saveKwOutput)
 	if err != nil {
 		return handleFailure(fmt.Errorf("save_keywords: %w", err))
+	}
+
+	// Embed query for relevance gate.
+	var queryEmbedding []float32
+	if input.Config.EnableRelevanceGate {
+		var embedOutput activities.EmbedTextOutput
+		err = workflow.ExecuteActivity(llmCtx, embeddingAct.EmbedText, activities.EmbedTextInput{
+			Text: queryText(input.Title, input.Description),
+		}).Get(cancelCtx, &embedOutput)
+		if err != nil {
+			logger.Warn("failed to embed query for relevance gate, disabling for this run", "error", err)
+			input.Config.EnableRelevanceGate = false
+		} else {
+			queryEmbedding = embedOutput.Embedding
+		}
 	}
 
 	// Fire-and-forget: publish review.started event.
@@ -689,6 +709,36 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			newKeywords = append(newKeywords, expExtractOutput.Keywords...)
 		}
 
+		// Relevance gate: filter drifting keywords.
+		if input.Config.EnableRelevanceGate && len(queryEmbedding) > 0 && len(newKeywords) > 0 {
+			var scoreOutput activities.ScoreKeywordRelevanceOutput
+			err = workflow.ExecuteActivity(llmCtx, embeddingAct.ScoreKeywordRelevance, activities.ScoreKeywordRelevanceInput{
+				Keywords:       newKeywords,
+				QueryEmbedding: queryEmbedding,
+				Threshold:      input.Config.RelevanceThreshold,
+			}).Get(cancelCtx, &scoreOutput)
+			if err != nil {
+				logger.Warn("relevance scoring failed, using all keywords", "round", round, "error", err)
+			} else {
+				filtered := make([]string, 0, len(scoreOutput.Accepted))
+				for _, kw := range scoreOutput.Accepted {
+					filtered = append(filtered, kw.Keyword)
+				}
+				logger.Info("relevance gate applied",
+					"round", round,
+					"accepted", len(scoreOutput.Accepted),
+					"rejected", len(scoreOutput.Rejected),
+				)
+				progress.KeywordsFilteredByRelevance += len(scoreOutput.Rejected)
+				newKeywords = filtered
+
+				if len(newKeywords) == 0 {
+					logger.Info("all expansion keywords filtered by relevance gate, stopping", "round", round)
+					break
+				}
+			}
+		}
+
 		if len(newKeywords) == 0 {
 			logger.Info("no new keywords from expansion, stopping", "round", round)
 			break
@@ -853,15 +903,16 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	duration := workflow.Now(ctx).Sub(startTime).Seconds()
 
 	result := &ReviewWorkflowResult{
-		RequestID:       input.RequestID,
-		Status:          string(domain.ReviewStatusCompleted),
-		KeywordsFound:   totalKeywords,
-		PapersFound:     totalPapersFound,
-		PapersIngested:  progress.PapersIngested,
-		DuplicatesFound: progress.DuplicatesFound,
-		PapersFailed:    progress.PapersFailed,
-		ExpansionRounds: expansionRounds,
-		Duration:        duration,
+		RequestID:                   input.RequestID,
+		Status:                      string(domain.ReviewStatusCompleted),
+		KeywordsFound:               totalKeywords,
+		PapersFound:                 totalPapersFound,
+		PapersIngested:              progress.PapersIngested,
+		DuplicatesFound:             progress.DuplicatesFound,
+		PapersFailed:                progress.PapersFailed,
+		ExpansionRounds:             expansionRounds,
+		KeywordsFilteredByRelevance: progress.KeywordsFilteredByRelevance,
+		Duration:                    duration,
 	}
 
 	// Fire-and-forget: publish review.completed event.

@@ -934,3 +934,99 @@ func TestLiteratureReviewWorkflow_ConcurrentStarts(t *testing.T) {
 		assert.NoError(t, err, "concurrent workflow %d failed", i)
 	}
 }
+
+func TestLiteratureReviewWorkflow_RelevanceGate(t *testing.T) {
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	input := newTestInput()
+	input.Config.MaxExpansionDepth = 1
+	input.Config.EnableRelevanceGate = true
+	input.Config.RelevanceThreshold = 0.5
+
+	var llmAct *activities.LLMActivities
+	var searchAct *activities.SearchActivities
+	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
+	var embeddingAct *activities.EmbeddingActivities
+
+	// Standard mocks.
+	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(statusAct.SaveKeywords, mock.Anything, mock.Anything).Return(
+		&activities.SaveKeywordsOutput{KeywordIDs: []uuid.UUID{uuid.New()}, NewCount: 1}, nil)
+
+	// Phase 1: Extract keywords.
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.MatchedBy(func(in activities.ExtractKeywordsInput) bool {
+		return in.Mode == "query"
+	})).Return(&activities.ExtractKeywordsOutput{
+		Keywords: []string{"CRISPR"}, Model: "test-model",
+	}, nil).Once()
+
+	// Phase 1: Embed query for relevance gate.
+	env.OnActivity(embeddingAct.EmbedText, mock.Anything, mock.Anything).Return(
+		&activities.EmbedTextOutput{Embedding: []float32{1.0, 0.0, 0.0}}, nil)
+
+	// Phase 2: Search returns paper with abstract.
+	paperID := uuid.New()
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.Anything).Return(
+		&activities.SearchSingleSourceOutput{
+			Papers: []*domain.Paper{{
+				ID: paperID, Title: "Test Paper", Abstract: "CRISPR mechanisms",
+				CanonicalID: "doi:test",
+			}},
+			TotalFound: 1,
+		}, nil)
+
+	// Phase 3: Save papers.
+	env.OnActivity(statusAct.SavePapers, mock.Anything, mock.Anything).Return(
+		&activities.SavePapersOutput{SavedCount: 1}, nil)
+
+	// Register PaperProcessingWorkflow for child workflow execution.
+	env.RegisterWorkflow(PaperProcessingWorkflow)
+
+	// Mock activities for child workflow.
+	var dedupAct *activities.DedupActivities
+	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
+		&activities.EmbedPapersOutput{
+			Embeddings: map[string][]float32{"doi:test": make([]float32, 768)},
+		}, nil)
+
+	env.OnActivity(dedupAct.BatchDedup, mock.Anything, mock.Anything).Return(
+		&activities.BatchDedupOutput{
+			NonDuplicateIDs: []uuid.UUID{paperID},
+			DuplicateCount:  0,
+		}, nil)
+
+	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.Anything).Return(
+		&activities.DownloadAndIngestOutput{
+			Successful: 0, Skipped: 0, Failed: 0,
+		}, nil)
+
+	env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).Return(
+		&activities.UpdatePaperIngestionResultsOutput{Updated: 0}, nil)
+
+	// Phase 4: Extract expansion keywords.
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.MatchedBy(func(in activities.ExtractKeywordsInput) bool {
+		return in.Mode == "abstract"
+	})).Return(&activities.ExtractKeywordsOutput{
+		Keywords: []string{"relevant term", "off-topic term"}, Model: "test-model",
+	}, nil)
+
+	// Phase 4: Relevance gate — filter keywords.
+	env.OnActivity(embeddingAct.ScoreKeywordRelevance, mock.Anything, mock.Anything).Return(
+		&activities.ScoreKeywordRelevanceOutput{
+			Accepted: []activities.ScoredKeyword{{Keyword: "relevant term", Score: 0.8}},
+			Rejected: []activities.ScoredKeyword{{Keyword: "off-topic term", Score: 0.2}},
+		}, nil)
+
+	env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	var result ReviewWorkflowResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	assert.Equal(t, 1, result.KeywordsFilteredByRelevance)
+}

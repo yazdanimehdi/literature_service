@@ -63,6 +63,12 @@ type ReviewRepository interface {
 	// If reason is empty, returns all paused reviews regardless of reason.
 	// Results are ordered by paused_at ascending (oldest paused first).
 	FindPausedByReason(ctx context.Context, orgID, projectID string, reason domain.PauseReason) ([]*domain.LiteratureReviewRequest, error)
+
+	// UpdatePauseState updates the pause-related fields of a review request.
+	// This sets the status, pause_reason, paused_at, and paused_at_phase columns.
+	// Returns domain.ErrNotFound if no matching review exists.
+	UpdatePauseState(ctx context.Context, orgID, projectID string, requestID uuid.UUID,
+		status domain.ReviewStatus, pauseReason domain.PauseReason, pausedAtPhase string) error
 }
 
 // ReviewFilter specifies criteria for listing literature review requests.

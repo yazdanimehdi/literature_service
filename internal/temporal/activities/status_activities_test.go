@@ -67,6 +67,19 @@ func (m *mockReviewRepository) GetByWorkflowID(ctx context.Context, workflowID s
 	return args.Get(0).(*domain.LiteratureReviewRequest), args.Error(1)
 }
 
+func (m *mockReviewRepository) FindPausedByReason(ctx context.Context, orgID, projectID string, reason domain.PauseReason) ([]*domain.LiteratureReviewRequest, error) {
+	args := m.Called(ctx, orgID, projectID, reason)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*domain.LiteratureReviewRequest), args.Error(1)
+}
+
+func (m *mockReviewRepository) UpdatePauseState(ctx context.Context, orgID, projectID string, requestID uuid.UUID, status domain.ReviewStatus, pauseReason domain.PauseReason, pausedAtPhase string) error {
+	args := m.Called(ctx, orgID, projectID, requestID, status, pauseReason, pausedAtPhase)
+	return args.Error(0)
+}
+
 // ---------------------------------------------------------------------------
 // Mock: KeywordRepository
 // ---------------------------------------------------------------------------
@@ -905,4 +918,101 @@ func TestUpdatePaperIngestionResults_MixedResults(t *testing.T) {
 	assert.Equal(t, 1, output.Failed)
 
 	paperRepo.AssertExpectations(t)
+}
+
+func TestUpdatePauseState_Success(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	requestID := uuid.New()
+
+	reviewRepo.On("UpdatePauseState", mock.Anything, "org-1", "proj-1", requestID,
+		domain.ReviewStatusPaused, domain.PauseReasonBudgetExhausted, "searching").
+		Return(nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdatePauseState)
+
+	input := UpdatePauseStateInput{
+		OrgID:         "org-1",
+		ProjectID:     "proj-1",
+		RequestID:     requestID,
+		Status:        domain.ReviewStatusPaused,
+		PauseReason:   domain.PauseReasonBudgetExhausted,
+		PausedAtPhase: "searching",
+	}
+
+	_, err := env.ExecuteActivity(act.UpdatePauseState, input)
+	require.NoError(t, err)
+
+	reviewRepo.AssertExpectations(t)
+}
+
+func TestUpdatePauseState_UserPause(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	requestID := uuid.New()
+
+	reviewRepo.On("UpdatePauseState", mock.Anything, "org-1", "proj-1", requestID,
+		domain.ReviewStatusPaused, domain.PauseReasonUser, "ingesting").
+		Return(nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdatePauseState)
+
+	input := UpdatePauseStateInput{
+		OrgID:         "org-1",
+		ProjectID:     "proj-1",
+		RequestID:     requestID,
+		Status:        domain.ReviewStatusPaused,
+		PauseReason:   domain.PauseReasonUser,
+		PausedAtPhase: "ingesting",
+	}
+
+	_, err := env.ExecuteActivity(act.UpdatePauseState, input)
+	require.NoError(t, err)
+
+	reviewRepo.AssertExpectations(t)
+}
+
+func TestUpdatePauseState_Error(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	requestID := uuid.New()
+
+	reviewRepo.On("UpdatePauseState", mock.Anything, "org-1", "proj-1", requestID,
+		domain.ReviewStatusPaused, domain.PauseReasonBudgetExhausted, "expanding").
+		Return(assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.UpdatePauseState)
+
+	input := UpdatePauseStateInput{
+		OrgID:         "org-1",
+		ProjectID:     "proj-1",
+		RequestID:     requestID,
+		Status:        domain.ReviewStatusPaused,
+		PauseReason:   domain.PauseReasonBudgetExhausted,
+		PausedAtPhase: "expanding",
+	}
+
+	_, err := env.ExecuteActivity(act.UpdatePauseState, input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "update pause state")
+
+	reviewRepo.AssertExpectations(t)
 }

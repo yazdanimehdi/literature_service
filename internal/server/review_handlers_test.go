@@ -81,6 +81,14 @@ func (m *mockReviewRepo) GetByWorkflowID(ctx context.Context, workflowID string)
 	return nil, domain.ErrNotFound
 }
 
+func (m *mockReviewRepo) FindPausedByReason(_ context.Context, _, _ string, _ domain.PauseReason) ([]*domain.LiteratureReviewRequest, error) {
+	return nil, nil
+}
+
+func (m *mockReviewRepo) UpdatePauseState(_ context.Context, _, _ string, _ uuid.UUID, _ domain.ReviewStatus, _ domain.PauseReason, _ string) error {
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // mockPaperRepo is a no-op PaperRepository mock used by review and stream handler tests.
 // ---------------------------------------------------------------------------

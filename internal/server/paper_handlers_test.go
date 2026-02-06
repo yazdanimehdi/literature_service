@@ -55,6 +55,14 @@ func (m *paperTestReviewRepo) GetByWorkflowID(_ context.Context, _ string) (*dom
 	return nil, nil
 }
 
+func (m *paperTestReviewRepo) FindPausedByReason(_ context.Context, _, _ string, _ domain.PauseReason) ([]*domain.LiteratureReviewRequest, error) {
+	return nil, nil
+}
+
+func (m *paperTestReviewRepo) UpdatePauseState(_ context.Context, _, _ string, _ uuid.UUID, _ domain.ReviewStatus, _ domain.PauseReason, _ string) error {
+	return nil
+}
+
 // paperTestPaperRepo is a mock PaperRepository for paper handler tests.
 type paperTestPaperRepo struct {
 	listFunc func(ctx context.Context, filter repository.PaperFilter) ([]*domain.Paper, int64, error)

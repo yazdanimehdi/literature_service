@@ -463,3 +463,24 @@ type BatchDedupOutput struct {
 	// DuplicateCount is the number of duplicates found.
 	DuplicateCount int `json:"duplicate_count"`
 }
+
+// UpdatePauseStateInput contains the data needed to update a review's pause state.
+type UpdatePauseStateInput struct {
+	// OrgID is the organization identifier.
+	OrgID string
+
+	// ProjectID is the project identifier.
+	ProjectID string
+
+	// RequestID is the review request identifier.
+	RequestID uuid.UUID
+
+	// Status is the new review status (typically ReviewStatusPaused).
+	Status domain.ReviewStatus
+
+	// PauseReason indicates why the workflow was paused.
+	PauseReason domain.PauseReason
+
+	// PausedAtPhase records which workflow phase was active when paused.
+	PausedAtPhase string
+}

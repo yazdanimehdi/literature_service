@@ -262,3 +262,33 @@ func (a *StatusActivities) UpdatePaperIngestionResults(ctx context.Context, inpu
 
 	return output, nil
 }
+
+// UpdatePauseState updates the pause state of a review request.
+// This is used when a workflow needs to pause (e.g., due to budget exhaustion or user request).
+func (a *StatusActivities) UpdatePauseState(ctx context.Context, input UpdatePauseStateInput) error {
+	logger := activity.GetLogger(ctx)
+	logger.Info("updating pause state",
+		"requestID", input.RequestID,
+		"status", input.Status,
+		"pauseReason", input.PauseReason,
+		"phase", input.PausedAtPhase,
+	)
+
+	err := a.reviewRepo.UpdatePauseState(ctx, input.OrgID, input.ProjectID, input.RequestID,
+		input.Status, input.PauseReason, input.PausedAtPhase)
+	if err != nil {
+		logger.Error("failed to update pause state",
+			"requestID", input.RequestID,
+			"error", err,
+		)
+		return fmt.Errorf("update pause state: %w", err)
+	}
+
+	logger.Info("pause state updated",
+		"requestID", input.RequestID,
+		"status", input.Status,
+		"pauseReason", input.PauseReason,
+	)
+
+	return nil
+}

@@ -594,6 +594,39 @@ func scanReviewFromRows(rows pgx.Rows) (*domain.LiteratureReviewRequest, error) 
 	return dest.finalize()
 }
 
+// UpdatePauseState updates the pause-related fields of a review request.
+func (r *PgReviewRepository) UpdatePauseState(
+	ctx context.Context,
+	orgID, projectID string,
+	requestID uuid.UUID,
+	status domain.ReviewStatus,
+	pauseReason domain.PauseReason,
+	pausedAtPhase string,
+) error {
+	query := `
+		UPDATE literature_review_requests
+		SET status = $1,
+			pause_reason = $2,
+			paused_at = CURRENT_TIMESTAMP,
+			paused_at_phase = $3,
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = $4 AND org_id = $5 AND project_id = $6`
+
+	result, err := r.db.Exec(ctx, query,
+		string(status), string(pauseReason), pausedAtPhase,
+		requestID, orgID, projectID,
+	)
+	if err != nil {
+		return fmt.Errorf("update pause state: %w", err)
+	}
+
+	if result.RowsAffected() == 0 {
+		return domain.NewNotFoundError("review", requestID.String())
+	}
+
+	return nil
+}
+
 // nullString returns a pointer to the string if non-empty, otherwise nil.
 func nullString(s string) *string {
 	if s == "" {

@@ -84,6 +84,14 @@ func (m *mockReviewRepo) GetByWorkflowID(ctx context.Context, workflowID string)
 	return nil, domain.ErrNotFound
 }
 
+func (m *mockReviewRepo) FindPausedByReason(_ context.Context, _, _ string, _ domain.PauseReason) ([]*domain.LiteratureReviewRequest, error) {
+	return nil, nil
+}
+
+func (m *mockReviewRepo) UpdatePauseState(_ context.Context, _, _ string, _ uuid.UUID, _ domain.ReviewStatus, _ domain.PauseReason, _ string) error {
+	return nil
+}
+
 // mockPaperRepo implements repository.PaperRepository for HTTP handler tests.
 type mockPaperRepo struct {
 	listFn func(ctx context.Context, filter repository.PaperFilter) ([]*domain.Paper, int64, error)

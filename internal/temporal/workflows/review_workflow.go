@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -194,8 +195,8 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	resumeCh := workflow.GetSignalChannel(ctx, SignalResume)
 	stopCh := workflow.GetSignalChannel(ctx, SignalStop)
 
-	// resumeCh is used by checkPausePoint helper (added in a later task) that blocks
-	// until resume is received. We declare it here to avoid unused variable errors.
+	// resumeCh is passed to checkPausePoint helper that blocks until resume is received.
+	// Until checkpoint logic is added in a later task, we suppress the unused variable error.
 	_ = resumeCh
 
 	var stopRequested bool
@@ -891,4 +892,85 @@ func extractAuthors(p *domain.Paper) []string {
 // isBudgetExhausted checks if an error is due to budget exhaustion.
 func isBudgetExhausted(err error) bool {
 	return sharedllm.ErrorKindOf(err) == sharedllm.ErrBudgetExceeded
+}
+
+// checkPausePoint checks if the workflow is paused and waits for resume if so.
+// Returns an error if the context is cancelled while waiting.
+func checkPausePoint(
+	ctx workflow.Context,
+	progress *workflowProgress,
+	resumeCh workflow.ReceiveChannel,
+	statusAct *activities.StatusActivities,
+	input ReviewWorkflowInput,
+	logger log.Logger,
+) error {
+	if !progress.IsPaused {
+		return nil
+	}
+
+	logger.Info("entering pause state", "reason", progress.PauseReason, "phase", progress.PausedAtPhase)
+
+	// Update status to paused in database.
+	statusCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+		StartToCloseTimeout: statusActivityTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    500 * time.Millisecond,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    10 * time.Second,
+			MaximumAttempts:    5,
+		},
+	})
+
+	err := workflow.ExecuteActivity(statusCtx, statusAct.UpdatePauseState, activities.UpdatePauseStateInput{
+		OrgID:         input.OrgID,
+		ProjectID:     input.ProjectID,
+		RequestID:     input.RequestID,
+		Status:        domain.ReviewStatusPaused,
+		PauseReason:   progress.PauseReason,
+		PausedAtPhase: progress.PausedAtPhase,
+	}).Get(ctx, nil)
+	if err != nil {
+		logger.Error("failed to update pause state", "error", err)
+		// Continue anyway - don't fail the workflow for status update failure.
+	}
+
+	// Wait for resume signal.
+	var resumeSignal ResumeSignal
+	resumeCh.Receive(ctx, &resumeSignal)
+
+	logger.Info("workflow resumed", "by", resumeSignal.ResumedBy)
+
+	// Clear pause state.
+	progress.IsPaused = false
+	progress.PauseReason = ""
+
+	// Update status back to running.
+	err = workflow.ExecuteActivity(statusCtx, statusAct.UpdateStatus, activities.UpdateStatusInput{
+		OrgID:     input.OrgID,
+		ProjectID: input.ProjectID,
+		RequestID: input.RequestID,
+		Status:    phaseToStatus(progress.Phase),
+		ErrorMsg:  "",
+	}).Get(ctx, nil)
+	if err != nil {
+		logger.Error("failed to update status after resume", "error", err)
+	}
+
+	return nil
+}
+
+// phaseToStatus maps workflow phase to ReviewStatus.
+func phaseToStatus(phase string) domain.ReviewStatus {
+	switch phase {
+	case "extracting_keywords":
+		return domain.ReviewStatusExtractingKeywords
+	case "searching":
+		return domain.ReviewStatusSearching
+	case "batching", "processing":
+		return domain.ReviewStatusIngesting
+	case "expanding":
+		return domain.ReviewStatusExpanding
+	default:
+		return domain.ReviewStatusPending
+	}
 }

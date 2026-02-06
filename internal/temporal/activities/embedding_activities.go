@@ -3,6 +3,7 @@ package activities
 import (
 	"context"
 	"fmt"
+	"math"
 
 	"go.temporal.io/sdk/activity"
 )
@@ -89,4 +90,73 @@ func (a *EmbeddingActivities) EmbedPapers(ctx context.Context, input EmbedPapers
 	)
 
 	return output, nil
+}
+
+// EmbedText generates an embedding for a single text string.
+func (a *EmbeddingActivities) EmbedText(ctx context.Context, input EmbedTextInput) (*EmbedTextOutput, error) {
+	if a.embedder == nil {
+		return nil, fmt.Errorf("embedder is not configured")
+	}
+	if input.Text == "" {
+		return nil, fmt.Errorf("text is required")
+	}
+
+	embeddings, err := a.embedder.EmbedBatch(ctx, []string{input.Text})
+	if err != nil {
+		return nil, fmt.Errorf("embed text: %w", err)
+	}
+	if len(embeddings) == 0 {
+		return nil, fmt.Errorf("embedder returned no embeddings")
+	}
+
+	return &EmbedTextOutput{Embedding: embeddings[0]}, nil
+}
+
+// ScoreKeywordRelevance scores keywords by cosine similarity against a query embedding
+// and partitions them into accepted (>= threshold) and rejected (< threshold).
+func (a *EmbeddingActivities) ScoreKeywordRelevance(ctx context.Context, input ScoreKeywordRelevanceInput) (*ScoreKeywordRelevanceOutput, error) {
+	output := &ScoreKeywordRelevanceOutput{}
+	if len(input.Keywords) == 0 {
+		return output, nil
+	}
+	if a.embedder == nil {
+		return nil, fmt.Errorf("embedder is not configured")
+	}
+
+	embeddings, err := a.embedder.EmbedBatch(ctx, input.Keywords)
+	if err != nil {
+		return nil, fmt.Errorf("embed keywords: %w", err)
+	}
+	if len(embeddings) != len(input.Keywords) {
+		return nil, fmt.Errorf("embedder returned %d embeddings for %d keywords", len(embeddings), len(input.Keywords))
+	}
+
+	for i, kw := range input.Keywords {
+		score := cosineSimilarity(input.QueryEmbedding, embeddings[i])
+		sk := ScoredKeyword{Keyword: kw, Score: score}
+		if score >= input.Threshold {
+			output.Accepted = append(output.Accepted, sk)
+		} else {
+			output.Rejected = append(output.Rejected, sk)
+		}
+	}
+	return output, nil
+}
+
+// cosineSimilarity computes the cosine similarity between two vectors.
+// Returns 0 if either vector has zero magnitude.
+func cosineSimilarity(a, b []float32) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, magA, magB float64
+	for i := range a {
+		dot += float64(a[i]) * float64(b[i])
+		magA += float64(a[i]) * float64(a[i])
+		magB += float64(b[i]) * float64(b[i])
+	}
+	if magA == 0 || magB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(magA) * math.Sqrt(magB))
 }

@@ -156,6 +156,9 @@ const (
 
 	// SourceTypeArXiv identifies the arXiv preprint repository as the paper source.
 	SourceTypeArXiv SourceType = "arxiv"
+
+	// SourceTypeMedRxiv identifies the medRxiv preprint server as the paper source.
+	SourceTypeMedRxiv SourceType = "medrxiv"
 )
 
 // validSourceTypes is the set of known source types for validation.
@@ -166,6 +169,7 @@ var validSourceTypes = map[SourceType]bool{
 	SourceTypePubMed:          true,
 	SourceTypeBioRxiv:         true,
 	SourceTypeArXiv:           true,
+	SourceTypeMedRxiv:         true,
 }
 
 // IsValidSourceType returns true if st is a recognized source type.

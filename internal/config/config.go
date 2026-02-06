@@ -403,6 +403,8 @@ type PaperSourcesConfig struct {
 	BioRxiv PaperSourceConfig `mapstructure:"biorxiv"`
 	// ArXiv contains arXiv API settings.
 	ArXiv PaperSourceConfig `mapstructure:"arxiv"`
+	// MedRxiv contains medRxiv API settings.
+	MedRxiv PaperSourceConfig `mapstructure:"medrxiv"`
 }
 
 // PaperSourceConfig holds configuration for a single paper source API.
@@ -548,6 +550,7 @@ func loadSecrets(cfg *Config) {
 	cfg.PaperSources.PubMed.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_PUBMED_API_KEY")
 	cfg.PaperSources.BioRxiv.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_BIORXIV_API_KEY")
 	cfg.PaperSources.ArXiv.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_ARXIV_API_KEY")
+	cfg.PaperSources.MedRxiv.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_MEDRXIV_API_KEY")
 }
 
 // setDefaults sets default configuration values.
@@ -682,12 +685,19 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("paper_sources.pubmed.rate_limit", 3.0) // NCBI recommends max 3 req/sec without API key
 	v.SetDefault("paper_sources.pubmed.max_results", 100)
 
-	// Paper sources defaults - bioRxiv
+	// Paper sources defaults - bioRxiv (via Europe PMC)
 	v.SetDefault("paper_sources.biorxiv.enabled", true)
-	v.SetDefault("paper_sources.biorxiv.base_url", "https://api.biorxiv.org")
+	v.SetDefault("paper_sources.biorxiv.base_url", "https://www.ebi.ac.uk/europepmc/webservices/rest")
 	v.SetDefault("paper_sources.biorxiv.timeout", "30s")
 	v.SetDefault("paper_sources.biorxiv.rate_limit", 5.0)
 	v.SetDefault("paper_sources.biorxiv.max_results", 100)
+
+	// Paper sources defaults - medRxiv (via Europe PMC)
+	v.SetDefault("paper_sources.medrxiv.enabled", true)
+	v.SetDefault("paper_sources.medrxiv.base_url", "https://www.ebi.ac.uk/europepmc/webservices/rest")
+	v.SetDefault("paper_sources.medrxiv.timeout", "30s")
+	v.SetDefault("paper_sources.medrxiv.rate_limit", 5.0)
+	v.SetDefault("paper_sources.medrxiv.max_results", 100)
 
 	// Paper sources defaults - arXiv
 	v.SetDefault("paper_sources.arxiv.enabled", true)

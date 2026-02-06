@@ -16,13 +16,17 @@ import (
 	"github.com/helixir/literature-review-service/internal/config"
 	"github.com/helixir/literature-review-service/internal/database"
 	"github.com/helixir/literature-review-service/internal/dedup"
+	"github.com/helixir/literature-review-service/internal/domain"
 	"github.com/helixir/literature-review-service/internal/ingestion"
 	"github.com/helixir/literature-review-service/internal/llm"
 	"github.com/helixir/literature-review-service/internal/observability"
 	"github.com/helixir/literature-review-service/internal/outbox"
 	"github.com/helixir/literature-review-service/internal/papersources"
+	"github.com/helixir/literature-review-service/internal/papersources/arxiv"
+	"github.com/helixir/literature-review-service/internal/papersources/biorxiv"
 	"github.com/helixir/literature-review-service/internal/papersources/openalex"
 	"github.com/helixir/literature-review-service/internal/papersources/pubmed"
+	"github.com/helixir/literature-review-service/internal/papersources/scopus"
 	"github.com/helixir/literature-review-service/internal/papersources/semanticscholar"
 	"github.com/helixir/literature-review-service/internal/pdf"
 	"github.com/helixir/literature-review-service/internal/qdrant"
@@ -380,5 +384,66 @@ func registerPaperSources(registry *papersources.Registry, cfg *config.Config, l
 		})
 		registry.Register(pmClient)
 		logger.Info().Msg("registered paper source: PubMed")
+	}
+
+	// arXiv.
+	if cfg.PaperSources.ArXiv.Enabled {
+		axCfg := cfg.PaperSources.ArXiv
+		axClient := arxiv.New(arxiv.Config{
+			BaseURL:    axCfg.BaseURL,
+			Timeout:    axCfg.Timeout,
+			RateLimit:  axCfg.RateLimit,
+			MaxResults: axCfg.MaxResults,
+			Enabled:    true,
+		})
+		registry.Register(axClient)
+		logger.Info().Msg("registered paper source: arXiv")
+	}
+
+	// Scopus (only if API key is provided).
+	if cfg.PaperSources.Scopus.Enabled && cfg.PaperSources.Scopus.APIKey != "" {
+		scCfg := cfg.PaperSources.Scopus
+		scClient := scopus.New(scopus.Config{
+			BaseURL:    scCfg.BaseURL,
+			APIKey:     scCfg.APIKey,
+			Timeout:    scCfg.Timeout,
+			RateLimit:  scCfg.RateLimit,
+			MaxResults: scCfg.MaxResults,
+			Enabled:    true,
+		})
+		registry.Register(scClient)
+		logger.Info().Msg("registered paper source: Scopus")
+	}
+
+	// bioRxiv (via Europe PMC).
+	if cfg.PaperSources.BioRxiv.Enabled {
+		brCfg := cfg.PaperSources.BioRxiv
+		brClient := biorxiv.New(biorxiv.Config{
+			BaseURL:    brCfg.BaseURL,
+			Server:     "bioRxiv",
+			SourceType: domain.SourceTypeBioRxiv,
+			Timeout:    brCfg.Timeout,
+			RateLimit:  brCfg.RateLimit,
+			MaxResults: brCfg.MaxResults,
+			Enabled:    true,
+		})
+		registry.Register(brClient)
+		logger.Info().Msg("registered paper source: bioRxiv")
+	}
+
+	// medRxiv (via Europe PMC).
+	if cfg.PaperSources.MedRxiv.Enabled {
+		mrCfg := cfg.PaperSources.MedRxiv
+		mrClient := biorxiv.New(biorxiv.Config{
+			BaseURL:    mrCfg.BaseURL,
+			Server:     "medRxiv",
+			SourceType: domain.SourceTypeMedRxiv,
+			Timeout:    mrCfg.Timeout,
+			RateLimit:  mrCfg.RateLimit,
+			MaxResults: mrCfg.MaxResults,
+			Enabled:    true,
+		})
+		registry.Register(mrClient)
+		logger.Info().Msg("registered paper source: medRxiv")
 	}
 }

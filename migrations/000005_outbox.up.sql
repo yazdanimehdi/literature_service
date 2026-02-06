@@ -21,24 +21,25 @@ CREATE TABLE outbox_events (
 
     -- Scope and ownership (multi-tenancy)
     scope TEXT NOT NULL DEFAULT 'public',
-    org_id TEXT,
-    project_id TEXT,
+    owner_org_id TEXT,
+    owner_project_id TEXT,
 
     -- Metadata (tracing context, correlation IDs)
     metadata JSONB,
 
     -- Processing state
     status TEXT NOT NULL DEFAULT 'pending',
-    sequence_num BIGSERIAL,
-    publish_attempts INTEGER NOT NULL DEFAULT 0,
+    sequence_number BIGSERIAL,
+    retry_count INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 5,
     last_error TEXT,
     next_attempt_at TIMESTAMPTZ,
 
     -- Lease-based locking for distributed processing
-    locked_by TEXT,
     locked_at TIMESTAMPTZ,
-    lock_expires_at TIMESTAMPTZ,
+    locked_until TIMESTAMPTZ,
+    locked_by TEXT,
+    lock_token TEXT,
 
     -- Timestamps
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -64,74 +65,83 @@ CREATE INDEX idx_outbox_events_aggregate
 CREATE INDEX idx_outbox_events_event_id
     ON outbox_events (event_id);
 
-CREATE INDEX idx_outbox_events_lock_expires
-    ON outbox_events (lock_expires_at)
-    WHERE status = 'in_progress' AND lock_expires_at IS NOT NULL;
+CREATE INDEX idx_outbox_events_locked_until
+    ON outbox_events (locked_until)
+    WHERE status = 'in_progress' AND locked_until IS NOT NULL;
 
 CREATE INDEX idx_outbox_events_cleanup
     ON outbox_events (processed_at)
     WHERE status = 'published';
 
 CREATE INDEX idx_outbox_events_scope
-    ON outbox_events (scope, org_id, project_id);
+    ON outbox_events (scope, owner_org_id, owner_project_id);
 
 COMMENT ON TABLE outbox_events IS 'Transactional outbox for reliable event publishing with lease-based distributed processing';
 COMMENT ON COLUMN outbox_events.event_id IS 'Stable event ID for consumer deduplication';
-COMMENT ON COLUMN outbox_events.sequence_num IS 'Monotonically increasing sequence for ordering';
-COMMENT ON COLUMN outbox_events.locked_by IS 'Worker ID that holds the lease';
-COMMENT ON COLUMN outbox_events.lock_expires_at IS 'Lease expiration time for distributed processing';
+COMMENT ON COLUMN outbox_events.sequence_number IS 'Monotonically increasing sequence for ordering';
+COMMENT ON COLUMN outbox_events.lock_token IS 'UUID token for lease validation';
+COMMENT ON COLUMN outbox_events.locked_until IS 'Lease expiration time for distributed processing';
 COMMENT ON COLUMN outbox_events.next_attempt_at IS 'Scheduled time for retry with exponential backoff';
 
 -- Outbox Dead Letter table
 -- Stores events that have permanently failed after exhausting retries
-CREATE TABLE outbox_dead_letter (
+CREATE TABLE outbox_deadletter (
     id BIGSERIAL PRIMARY KEY,
 
     -- Original event identification
-    original_event_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
     event_version INTEGER NOT NULL DEFAULT 1,
 
     -- Aggregate information
-    aggregate_type TEXT,
     aggregate_id TEXT NOT NULL,
+    aggregate_type TEXT,
     event_type TEXT NOT NULL,
 
-    -- Scope and ownership
-    org_id TEXT,
-    project_id TEXT,
-
-    -- Payload and metadata
+    -- Payload (JSON)
     payload BYTEA NOT NULL,
+
+    -- Scope and ownership
+    scope TEXT NOT NULL DEFAULT 'public',
+    owner_org_id TEXT,
+    owner_project_id TEXT,
+
+    -- Metadata (JSON with tracing context)
     metadata JSONB,
+    sequence_number BIGINT,
 
-    -- Failure information
-    original_created_at TIMESTAMPTZ NOT NULL,
+    -- Processing history
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 5,
+    last_error TEXT,
+
+    -- Timestamps
+    created_at TIMESTAMPTZ NOT NULL,
+    first_attempt_at TIMESTAMPTZ,
+    last_attempt_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    failure_reason TEXT,
-    retry_count INTEGER NOT NULL DEFAULT 0,
 
-    -- Reprocessing support
-    reprocessed_at TIMESTAMPTZ,
-    reprocess_count INTEGER NOT NULL DEFAULT 0
+    -- Retry support
+    retried_at TIMESTAMPTZ,
+    retry_count INTEGER NOT NULL DEFAULT 0
 );
 
 -- Indexes for dead letter queue
-CREATE INDEX idx_outbox_dead_letter_event_id
-    ON outbox_dead_letter (original_event_id);
+CREATE INDEX idx_outbox_deadletter_event_id
+    ON outbox_deadletter (event_id);
 
-CREATE INDEX idx_outbox_dead_letter_event_type
-    ON outbox_dead_letter (event_type);
+CREATE INDEX idx_outbox_deadletter_event_type
+    ON outbox_deadletter (event_type);
 
-CREATE INDEX idx_outbox_dead_letter_aggregate
-    ON outbox_dead_letter (aggregate_id, aggregate_type);
+CREATE INDEX idx_outbox_deadletter_aggregate
+    ON outbox_deadletter (aggregate_id, aggregate_type);
 
-CREATE INDEX idx_outbox_dead_letter_failed_at
-    ON outbox_dead_letter (failed_at DESC);
+CREATE INDEX idx_outbox_deadletter_failed_at
+    ON outbox_deadletter (failed_at DESC);
 
-CREATE INDEX idx_outbox_dead_letter_pending_reprocess
-    ON outbox_dead_letter (failed_at)
-    WHERE reprocessed_at IS NULL;
+CREATE INDEX idx_outbox_deadletter_pending_retry
+    ON outbox_deadletter (failed_at)
+    WHERE retried_at IS NULL;
 
-COMMENT ON TABLE outbox_dead_letter IS 'Dead letter queue for events that permanently failed after exhausting retries';
-COMMENT ON COLUMN outbox_dead_letter.original_event_id IS 'Event ID from the original outbox_events entry';
-COMMENT ON COLUMN outbox_dead_letter.failure_reason IS 'Final error message that caused the event to be dead-lettered';
+COMMENT ON TABLE outbox_deadletter IS 'Dead letter queue for events that permanently failed after exhausting retries';
+COMMENT ON COLUMN outbox_deadletter.event_id IS 'Event ID from the original outbox_events entry';
+COMMENT ON COLUMN outbox_deadletter.last_error IS 'Final error message that caused the event to be dead-lettered';

@@ -1,0 +1,3 @@
+-- Migration: 000010_add_paused_enum (rollback)
+-- NOTE: PostgreSQL does not support removing enum values.
+-- The 'paused' value will remain in the review_status enum after rollback.

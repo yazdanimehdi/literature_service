@@ -11,8 +11,6 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
-	sharedllm "github.com/helixir/llm"
-
 	"github.com/helixir/literature-review-service/internal/domain"
 	litemporal "github.com/helixir/literature-review-service/internal/temporal"
 	"github.com/helixir/literature-review-service/internal/temporal/activities"
@@ -287,6 +285,16 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		},
 	})
 
+	// llmPhaseCtx disables Temporal-level retries for LLM activities wrapped by
+	// resilience.ExecutePhase, which handles its own retry loop. This prevents
+	// multiplicative retry amplification (Temporal retries × phase retries).
+	llmPhaseCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
+		StartToCloseTimeout: llmActivityTimeout,
+		RetryPolicy: &temporal.RetryPolicy{
+			MaximumAttempts: 1,
+		},
+	})
+
 	statusCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
 		StartToCloseTimeout: statusActivityTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
@@ -429,7 +437,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 
 	var extractOutput activities.ExtractKeywordsOutput
 	phaseResult := resilience.ExecutePhase(cancelCtx, phaseConfigs["extracting_keywords"], retryProgress, func() error {
-		return workflow.ExecuteActivity(llmCtx, llmAct.ExtractKeywords, activities.ExtractKeywordsInput{
+		return workflow.ExecuteActivity(llmPhaseCtx, llmAct.ExtractKeywords, activities.ExtractKeywordsInput{
 			Text:             queryText(input.Title, input.Description),
 			Mode:             "query",
 			MaxKeywords:      maxKw,
@@ -444,7 +452,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		}
 		// Re-run after budget resume — recursive call through the same phase executor.
 		phaseResult = resilience.ExecutePhase(cancelCtx, phaseConfigs["extracting_keywords"], retryProgress, func() error {
-			return workflow.ExecuteActivity(llmCtx, llmAct.ExtractKeywords, activities.ExtractKeywordsInput{
+			return workflow.ExecuteActivity(llmPhaseCtx, llmAct.ExtractKeywords, activities.ExtractKeywordsInput{
 				Text:             queryText(input.Title, input.Description),
 				Mode:             "query",
 				MaxKeywords:      maxKw,
@@ -553,6 +561,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		source    domain.SourceType
 		keyword   string
 		keywordID uuid.UUID
+		dateFrom  *string
 		future    workflow.Future
 	}
 	var searchFutures []searchFuture
@@ -566,6 +575,9 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			source := source // capture
 
 			// Search deduplication: check if this keyword+source was already searched.
+			// When cached, use cached papers AND search forward from the cache date
+			// to discover newly published papers (prevents database freezing in time).
+			var forwardDateFrom *string
 			if kwID != uuid.Nil {
 				var checkOutput activities.CheckSearchCompletedOutput
 				checkErr := workflow.ExecuteActivity(statusCtx, statusAct.CheckSearchCompleted, activities.CheckSearchCompletedInput{
@@ -575,7 +587,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 				}).Get(cancelCtx, &checkOutput)
 
 				if checkErr == nil && checkOutput.AlreadyCompleted {
-					logger.Info("skipping search — already completed",
+					logger.Info("search cached — using cached results + searching forward",
 						"keyword", keyword,
 						"source", source,
 						"searchedAt", checkOutput.SearchedAt,
@@ -586,7 +598,10 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 						totalPapersFound += checkOutput.PapersFoundCount
 						progress.PapersFound = totalPapersFound
 					}
-					continue
+					// Search forward from the cached search date.
+					if checkOutput.SearchedAt != "" {
+						forwardDateFrom = &checkOutput.SearchedAt
+					}
 				}
 			}
 
@@ -612,9 +627,10 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 				IncludePreprints: input.Config.IncludePreprints,
 				OpenAccessOnly:   input.Config.RequireOpenAccess,
 				MinCitations:     input.Config.MinCitations,
+				DateFrom:         forwardDateFrom,
 			})
 
-			searchFutures = append(searchFutures, searchFuture{source: source, keyword: keyword, keywordID: kwID, future: future})
+			searchFutures = append(searchFutures, searchFuture{source: source, keyword: keyword, keywordID: kwID, dateFrom: forwardDateFrom, future: future})
 		}
 	}
 
@@ -633,8 +649,9 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 				_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
 					KeywordID:    sf.keywordID,
 					Source:       sf.source,
+					DateFrom:     sf.dateFrom,
 					PapersFound:  0,
-					Status:       "failed",
+					Status:       domain.SearchStatusFailed,
 					ErrorMessage: err.Error(),
 				}).Get(cancelCtx, nil)
 			}
@@ -647,6 +664,17 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 				"keyword", sf.keyword,
 				"error", output.Error,
 			)
+			// Record failed search for dedup tracking.
+			if sf.keywordID != uuid.Nil {
+				_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
+					KeywordID:    sf.keywordID,
+					Source:       sf.source,
+					DateFrom:     sf.dateFrom,
+					PapersFound:  0,
+					Status:       domain.SearchStatusFailed,
+					ErrorMessage: output.Error,
+				}).Get(cancelCtx, nil)
+			}
 			continue
 		}
 
@@ -666,9 +694,10 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
 				KeywordID:   sf.keywordID,
 				Source:      sf.source,
+				DateFrom:    sf.dateFrom,
 				PapersFound: output.TotalFound,
 				PaperIDs:    extractPaperIDs(output.Papers),
-				Status:      "completed",
+				Status:      domain.SearchStatusCompleted,
 			}).Get(cancelCtx, nil)
 		}
 	}
@@ -912,9 +941,11 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			source    domain.SourceType
 			keyword   string
 			keywordID uuid.UUID
+			dateFrom  *string
 			future    workflow.Future
 		}
 		var expSearchFutures []expSearchFuture
+		var expansionPapersFound []*domain.Paper
 
 		for _, keyword := range newKeywords {
 			keyword := keyword
@@ -924,6 +955,8 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 				source := source
 
 				// Search deduplication for expansion searches.
+				// When cached, use cached papers AND search forward from cache date.
+				var expForwardDateFrom *string
 				if kwID != uuid.Nil {
 					var checkOutput activities.CheckSearchCompletedOutput
 					checkErr := workflow.ExecuteActivity(statusCtx, statusAct.CheckSearchCompleted, activities.CheckSearchCompletedInput{
@@ -933,12 +966,21 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 					}).Get(cancelCtx, &checkOutput)
 
 					if checkErr == nil && checkOutput.AlreadyCompleted {
-						logger.Info("skipping expansion search — already completed",
+						logger.Info("expansion search cached — using cached results + searching forward",
 							"keyword", keyword,
 							"source", source,
 							"round", round,
+							"cachedPapers", checkOutput.PapersFoundCount,
 						)
-						continue
+						if len(checkOutput.PreviouslyFoundPapers) > 0 {
+							expansionPapersFound = append(expansionPapersFound, checkOutput.PreviouslyFoundPapers...)
+							totalPapersFound += checkOutput.PapersFoundCount
+							progress.PapersFound = totalPapersFound
+						}
+						// Search forward from the cached search date.
+						if checkOutput.SearchedAt != "" {
+							expForwardDateFrom = &checkOutput.SearchedAt
+						}
 					}
 				}
 
@@ -964,18 +1006,55 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 					IncludePreprints: input.Config.IncludePreprints,
 					OpenAccessOnly:   input.Config.RequireOpenAccess,
 					MinCitations:     input.Config.MinCitations,
+					DateFrom:         expForwardDateFrom,
 				})
 
-				expSearchFutures = append(expSearchFutures, expSearchFuture{source: source, keyword: keyword, keywordID: kwID, future: future})
+				expSearchFutures = append(expSearchFutures, expSearchFuture{source: source, keyword: keyword, keywordID: kwID, dateFrom: expForwardDateFrom, future: future})
 			}
 		}
 
 		// Process expansion results in deterministic order.
-		var expansionPapersFound []*domain.Paper
 		for _, sf := range expSearchFutures {
 			var output activities.SearchSingleSourceOutput
 			err := sf.future.Get(cancelCtx, &output)
-			if err != nil || output.Error != "" {
+			if err != nil {
+				logger.Warn("expansion search failed",
+					"source", sf.source,
+					"keyword", sf.keyword,
+					"round", round,
+					"error", err,
+				)
+				// Record failed search for dedup tracking.
+				if sf.keywordID != uuid.Nil {
+					_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
+						KeywordID:    sf.keywordID,
+						Source:       sf.source,
+						DateFrom:     sf.dateFrom,
+						PapersFound:  0,
+						Status:       domain.SearchStatusFailed,
+						ErrorMessage: err.Error(),
+					}).Get(cancelCtx, nil)
+				}
+				continue
+			}
+			if output.Error != "" {
+				logger.Warn("expansion search returned error",
+					"source", sf.source,
+					"keyword", sf.keyword,
+					"round", round,
+					"error", output.Error,
+				)
+				// Record failed search for dedup tracking.
+				if sf.keywordID != uuid.Nil {
+					_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
+						KeywordID:    sf.keywordID,
+						Source:       sf.source,
+						DateFrom:     sf.dateFrom,
+						PapersFound:  0,
+						Status:       domain.SearchStatusFailed,
+						ErrorMessage: output.Error,
+					}).Get(cancelCtx, nil)
+				}
 				continue
 			}
 
@@ -990,9 +1069,10 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 				_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
 					KeywordID:   sf.keywordID,
 					Source:      sf.source,
+					DateFrom:    sf.dateFrom,
 					PapersFound: output.TotalFound,
 					PaperIDs:    extractPaperIDs(output.Papers),
-					Status:      "completed",
+					Status:      domain.SearchStatusCompleted,
 				}).Get(cancelCtx, nil)
 			}
 		}
@@ -1114,7 +1194,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 
 		var coverageOutput activities.AssessCoverageOutput
 		coveragePhaseResult := resilience.ExecutePhase(cancelCtx, phaseConfigs["reviewing"], retryProgress, func() error {
-			return workflow.ExecuteActivity(llmCtx, llmAct.AssessCoverage, activities.AssessCoverageInput{
+			return workflow.ExecuteActivity(llmPhaseCtx, llmAct.AssessCoverage, activities.AssessCoverageInput{
 				Title:           input.Title,
 				Description:     input.Description,
 				SeedKeywords:    input.SeedKeywords,
@@ -1181,10 +1261,12 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 				}
 
 				// Search with gap topics (with search dedup).
+				var gapPapers []*domain.Paper
 				var gapSearchFutures []struct {
 					source    domain.SourceType
 					keyword   string
 					keywordID uuid.UUID
+					dateFrom  *string
 					future    workflow.Future
 				}
 
@@ -1192,6 +1274,8 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 					kwID := keywordIDMap[keyword]
 					for idx, source := range sources {
 						// Check search dedup before launching search.
+						// When cached, use cached papers AND search forward from cache date.
+						var gapForwardDateFrom *string
 						if kwID != uuid.Nil {
 							var gapCheckOutput activities.CheckSearchCompletedOutput
 							checkErr := workflow.ExecuteActivity(statusCtx, statusAct.CheckSearchCompleted, activities.CheckSearchCompletedInput{
@@ -1200,20 +1284,20 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 								Source:    source,
 							}).Get(cancelCtx, &gapCheckOutput)
 							if checkErr == nil && gapCheckOutput.AlreadyCompleted {
-								if len(gapCheckOutput.PreviouslyFoundPapers) > 0 {
-									gapSearchFutures = append(gapSearchFutures, struct {
-										source    domain.SourceType
-										keyword   string
-										keywordID uuid.UUID
-										future    workflow.Future
-									}{source: source, keyword: keyword, keywordID: kwID, future: nil})
-								}
-								logger.Info("gap search already completed, using cached results",
+								logger.Info("gap search cached — using cached results + searching forward",
 									"keyword", keyword,
 									"source", source,
-									"cachedPapers", len(gapCheckOutput.PreviouslyFoundPapers),
+									"cachedPapers", gapCheckOutput.PapersFoundCount,
 								)
-								continue
+								if len(gapCheckOutput.PreviouslyFoundPapers) > 0 {
+									gapPapers = append(gapPapers, gapCheckOutput.PreviouslyFoundPapers...)
+									totalPapersFound += gapCheckOutput.PapersFoundCount
+									progress.PapersFound = totalPapersFound
+								}
+								// Search forward from the cached search date.
+								if gapCheckOutput.SearchedAt != "" {
+									gapForwardDateFrom = &gapCheckOutput.SearchedAt
+								}
 							}
 						}
 
@@ -1236,41 +1320,76 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 							IncludePreprints: input.Config.IncludePreprints,
 							OpenAccessOnly:   input.Config.RequireOpenAccess,
 							MinCitations:     input.Config.MinCitations,
+							DateFrom:         gapForwardDateFrom,
 						})
 						gapSearchFutures = append(gapSearchFutures, struct {
 							source    domain.SourceType
 							keyword   string
 							keywordID uuid.UUID
+							dateFrom  *string
 							future    workflow.Future
-						}{source: source, keyword: keyword, keywordID: kwID, future: future})
+						}{source: source, keyword: keyword, keywordID: kwID, dateFrom: gapForwardDateFrom, future: future})
 					}
 				}
 
-				var gapPapers []*domain.Paper
 				for _, sf := range gapSearchFutures {
-					if sf.future == nil {
-						// Cached result — papers already counted during dedup check.
-						continue
-					}
 					var output activities.SearchSingleSourceOutput
-					if err := sf.future.Get(cancelCtx, &output); err != nil || output.Error != "" {
+					if err := sf.future.Get(cancelCtx, &output); err != nil {
+						logger.Warn("gap search failed",
+							"source", sf.source,
+							"keyword", sf.keyword,
+							"error", err,
+						)
+						// Record failed search for dedup tracking.
+						if sf.keywordID != uuid.Nil {
+							_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
+								KeywordID:    sf.keywordID,
+								Source:       sf.source,
+								DateFrom:     sf.dateFrom,
+								PapersFound:  0,
+								Status:       domain.SearchStatusFailed,
+								ErrorMessage: err.Error(),
+							}).Get(cancelCtx, nil)
+						}
 						continue
 					}
+
+					if output.Error != "" {
+						logger.Warn("gap search returned error",
+							"source", sf.source,
+							"keyword", sf.keyword,
+							"error", output.Error,
+						)
+						// Record failed search for dedup tracking.
+						if sf.keywordID != uuid.Nil {
+							_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
+								KeywordID:    sf.keywordID,
+								Source:       sf.source,
+								DateFrom:     sf.dateFrom,
+								PapersFound:  0,
+								Status:       domain.SearchStatusFailed,
+								ErrorMessage: output.Error,
+							}).Get(cancelCtx, nil)
+						}
+						continue
+					}
+
 					if len(output.Papers) > 0 {
 						gapPapers = append(gapPapers, output.Papers...)
 						totalPapersFound += output.TotalFound
 						progress.PapersFound = totalPapersFound
+					}
 
-						// Record search result for dedup.
-						if sf.keywordID != uuid.Nil {
-							_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
-								KeywordID:   sf.keywordID,
-								Source:      sf.source,
-								PapersFound: len(output.Papers),
-								PaperIDs:    extractPaperIDs(output.Papers),
-								Status:      "completed",
-							}).Get(cancelCtx, nil)
-						}
+					// Record completed search for dedup tracking.
+					if sf.keywordID != uuid.Nil {
+						_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
+							KeywordID:   sf.keywordID,
+							Source:      sf.source,
+							DateFrom:    sf.dateFrom,
+							PapersFound: output.TotalFound,
+							PaperIDs:    extractPaperIDs(output.Papers),
+							Status:      domain.SearchStatusCompleted,
+						}).Get(cancelCtx, nil)
 					}
 				}
 
@@ -1459,54 +1578,6 @@ func extractAuthors(p *domain.Paper) []string {
 		}
 	}
 	return names
-}
-
-// isBudgetExhausted checks if an error is due to budget exhaustion.
-func isBudgetExhausted(err error) bool {
-	return sharedllm.ErrorKindOf(err) == sharedllm.ErrBudgetExceeded
-}
-
-// executeWithBudgetPause executes an activity and handles budget exhaustion by pausing.
-// If budget is exhausted, it sets pause state and waits for resume before retrying.
-func executeWithBudgetPause[T any](
-	ctx workflow.Context,
-	progress *workflowProgress,
-	resumeCh workflow.ReceiveChannel,
-	statusAct *activities.StatusActivities,
-	input ReviewWorkflowInput,
-	logger log.Logger,
-	activity interface{},
-	activityInput interface{},
-) (T, error) {
-	var result T
-
-	for {
-		future := workflow.ExecuteActivity(ctx, activity, activityInput)
-		err := future.Get(ctx, &result)
-
-		if err == nil {
-			return result, nil
-		}
-
-		if !isBudgetExhausted(err) {
-			return result, err // Non-budget error, propagate
-		}
-
-		// Budget exhausted - pause and wait
-		logger.Warn("budget exhausted, pausing workflow", "phase", progress.Phase)
-
-		progress.IsPaused = true
-		progress.PauseReason = domain.PauseReasonBudgetExhausted
-		progress.PausedAt = workflow.Now(ctx)
-		progress.PausedAtPhase = progress.Phase
-
-		if err := checkPausePoint(ctx, progress, resumeCh, statusAct, input, logger); err != nil {
-			return result, err
-		}
-
-		// Retry after resume
-		logger.Info("retrying activity after budget refill")
-	}
 }
 
 // checkPausePoint checks if the workflow is paused and waits for resume if so.

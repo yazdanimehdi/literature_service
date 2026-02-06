@@ -53,34 +53,36 @@ metrics collection.
                                 +----------v----------+
                                 | Literature Review   |
                                 |     Service         |
-                                +--+-----+-----+-----+
-                                   |     |     |
-                   +---------------+     |     +----------------+
-                   |                     |                      |
-          +--------v--------+  +---------v---------+  +---------v--------+
-          |  Temporal Server |  | PostgreSQL        |  | Ingestion Service|
-          |  (Workflows)     |  | (State + Outbox)  |  | (gRPC)           |
-          +---------+--------+  +---------+---------+  +------------------+
-                    |                     |
-                    |             +-------v--------+
-                    |             | Outbox Relay   |
-                    |             +-------+--------+
-                    |                     |
-          +---------v--------+   +--------v--------+
-          | LLM Providers    |   | Apache Kafka    |
-          | (OpenAI,         |   | (Events)        |
-          |  Anthropic, ...) |   +---------+-------+
-          +------------------+             |
-                                  +--------v--------+
-          +------------------+    | Observability   |
-          | Paper Source APIs |    | Service         |
-          | (S2, OA, PubMed) |    +-----------------+
+                                +--+--+-----+--+--+--+
+                                   |  |     |  |  |
+                   +---------------+  |     |  |  +----------+
+                   |                  |     |  |             |
+          +--------v--------+ +------v-+ +-v--v------+ +----v---------+
+          |  Temporal Server | |Qdrant  | |PostgreSQL | |Ingestion Svc |
+          |  (Workflows)     | |Vector  | |(State +   | |(gRPC)        |
+          +---------+--------+ |Store   | | Outbox)   | +--------------+
+                    |          +--------+ +----+------+
+                    |                          |
+                    |                  +-------v--------+
+                    |                  | Outbox Relay   |
+                    |                  +-------+--------+
+                    |                          |
+          +---------v--------+        +--------v--------+
+          | LLM Providers    |        | Apache Kafka    |
+          | (OpenAI,         |        | (Events)        |
+          |  Anthropic, ...) |        +---------+-------+
+          +------------------+                  |
+                                       +--------v--------+
+          +------------------+         | Observability   |
+          | Paper Source APIs |         | Service         |
+          | (S2, OA, PubMed) |         +-----------------+
           +------------------+
 ```
 
 The service has three binaries (`cmd/server/`, `cmd/worker/`, `cmd/migrate/`),
 connects to Temporal for durable workflow execution, PostgreSQL for state and
-the transactional outbox, external LLM providers for keyword extraction, three
+the transactional outbox, Qdrant for semantic deduplication and embedding storage,
+external LLM providers for keyword extraction and coverage assessment, three
 academic paper source APIs, and the Ingestion Service for PDF processing.
 
 ---
@@ -148,7 +150,7 @@ depends only on inner layers, never on peer layers at the same level.
 - Query length validation: 3-10000 characters.
 
 **Proto definition** (`api/proto/literaturereview/v1/`):
-- Enums: `ReviewStatus` (9 values), `IngestionStatus` (6 values),
+- Enums: `ReviewStatus` (11 values), `IngestionStatus` (6 values),
   `KeywordSourceType`, `SortOrder`.
 - Streaming RPC: `StreamLiteratureReviewProgress` returns
   `stream LiteratureReviewProgressEvent`.
@@ -190,11 +192,13 @@ the Temporal worker.
 
 | Activity Struct        | Responsibility                                            |
 |------------------------|-----------------------------------------------------------|
-| `LLMActivities`       | Keyword extraction via LLM, budget usage reporting        |
+| `LLMActivities`       | Keyword extraction and coverage assessment via LLM, budget usage reporting |
 | `SearchActivities`    | Concurrent paper search across sources via registry       |
-| `StatusActivities`    | Review status updates, keyword/paper persistence, counter increments |
-| `IngestionActivities` | Paper submission to ingestion service (single + batch)    |
+| `StatusActivities`    | Review status updates, pause state, keyword/paper persistence, counter increments |
+| `IngestionActivities` | Paper download and ingestion via the Ingestion Service    |
 | `EventActivities`     | Outbox event publishing for Kafka relay                   |
+| `EmbeddingActivities` | Embed text/papers, score keyword relevance for gate       |
+| `DedupActivities`     | Semantic deduplication against Qdrant vector store        |
 
 All activity structs accept interfaces (not concrete types) for their
 dependencies, enabling straightforward mock-based testing:
@@ -203,6 +207,8 @@ dependencies, enabling straightforward mock-based testing:
 - `StatusActivities` depends on `ReviewRepository`, `KeywordRepository`, `PaperRepository`
 - `IngestionActivities` depends on `IngestionClient`
 - `EventActivities` depends on `EventPublisher`
+- `EmbeddingActivities` depends on `Embedder` (shared `llm.Embedder` interface)
+- `DedupActivities` depends on `DedupChecker` (Qdrant vector store client)
 
 ### 4. Domain Layer -- `domain/`
 
@@ -217,7 +223,8 @@ Core models, enums, errors, and business rules with zero external dependencies.
 
 | Enum              | Count | Values                                                                |
 |-------------------|-------|-----------------------------------------------------------------------|
-| `ReviewStatus`    | 9     | pending, extracting_keywords, searching, expanding, ingesting, completed, partial, failed, cancelled |
+| `ReviewStatus`    | 11    | pending, extracting_keywords, searching, expanding, ingesting, reviewing, completed, partial, failed, cancelled, paused |
+| `PauseReason`     | 2     | user, budget_exhausted                                                |
 | `SearchStatus`    | 5     | pending, in_progress, completed, failed, rate_limited                 |
 | `IngestionStatus` | 6     | pending, submitted, processing, completed, failed, skipped            |
 | `SourceType`      | 6     | semantic_scholar, openalex, scopus, pubmed, biorxiv, arxiv            |
@@ -324,6 +331,7 @@ Worker (cmd/worker/)
   |  Picks up workflow task, dispatches to LiteratureReviewWorkflow
   v
 Phase 1: Extract Keywords (status: extracting_keywords)
+  |  Save user-provided seed keywords (if any)
   |  Activity: LLMActivities.ExtractKeywords
   |    -> clientAdapter.ExtractKeywords()
   |    -> BuildExtractionPrompt(mode="query")
@@ -333,46 +341,70 @@ Phase 1: Extract Keywords (status: extracting_keywords)
   |    -> Report budget usage via outbox (if lease provided)
   |  Activity: StatusActivities.SaveKeywords
   |    -> KeywordRepository.BulkGetOrCreate()
+  |  If relevance gate enabled:
+  |    Activity: EmbeddingActivities.EmbedText(queryText)
+  |    -> Embed query for keyword drift prevention
   |  Activity (fire-and-forget): EventActivities.PublishEvent("review.started")
+  |  checkPausePoint() / checkStopPoint()
   v
 Phase 2: Search Papers (status: searching)
-  |  For each extracted keyword:
-  |    Activity: SearchActivities.SearchPapers
-  |      -> Registry.SearchSources(params, sourceTypes)
-  |      -> Concurrent goroutines per source:
-  |           Semantic Scholar, OpenAlex, PubMed
-  |      -> Each: rate limit -> HTTP request -> parse -> domain.Paper
-  |      -> Aggregate results, record per-source metrics
-  |      -> On failure: log warning, continue with next keyword
+  |  For each keyword x each source (with 500ms stagger):
+  |    Activity: SearchActivities.SearchSingleSource
+  |      -> Source client: rate limit -> HTTP request -> parse -> domain.Paper
+  |      -> On failure: log warning, continue with next
+  |  Collect results in deterministic order (futures, not goroutines)
   |  Activity: StatusActivities.SavePapers
   |    -> PaperRepository.BulkUpsert() (dedup by canonical_id)
-  |    -> ReviewRepository.IncrementCounters()
+  |  checkPausePoint() / checkStopPoint()
   v
-Phase 3: Expansion Rounds (status: expanding, 1..MaxExpansionDepth)
+Phase 3: Batch Processing (status: ingesting)
+  |  Convert papers to PaperForProcessing format
+  |  Create batches of 5 papers each
+  |  For each batch, spawn PaperProcessingWorkflow (child workflow):
+  |    Stage 1: EmbeddingActivities.EmbedPapers (embed abstracts)
+  |    Stage 2: DedupActivities.BatchDedup (check Qdrant, non-fatal failure)
+  |    Stage 3: IngestionActivities.DownloadAndIngestPapers (PDF download + ingest)
+  |    Stage 4: StatusActivities.UpdatePaperIngestionResults
+  |    -> Signal parent: BatchCompleteSignal{processed, dupes, ingested, failed}
+  |  Await all batches complete (progress.BatchesCompleted >= BatchesSpawned)
+  |  checkPausePoint() / checkStopPoint()
+  v
+Phase 4: Expansion Rounds (status: expanding, 1..MaxExpansionDepth)
   |  Check paper limit: totalPapersFound >= MaxPapers? -> stop
   |  Select top 5 papers with non-empty abstracts
   |  For each selected paper:
   |    Activity: LLMActivities.ExtractKeywords(abstract, mode="abstract",
   |              existingKeywords, context=originalQuery)
   |    -> On failure: log warning, skip paper, continue
+  |  Relevance Gate (if enabled):
+  |    Activity: EmbeddingActivities.ScoreKeywordRelevance
+  |    -> Filter keywords with cosine similarity below threshold
+  |    -> If all filtered: stop expansion
   |  Activity: StatusActivities.SaveKeywords(newKeywords, round=N)
-  |  For each new keyword:
-  |    Activity: SearchActivities.SearchPapers
-  |  Activity: StatusActivities.SavePapers(expansionPapers)
+  |  Search with new keywords (same as Phase 2)
+  |  Save papers, spawn batch processing child workflows (same as Phase 3)
+  |  Await batch completion
+  |  checkPausePoint() / checkStopPoint()
   v
-Phase 4: Ingestion (status: ingesting)
-  |  Filter papers with non-empty PDF URLs
-  |  Activity: IngestionActivities.SubmitPapersForIngestion
-  |    -> For each paper: ingestionClient.StartIngestion()
-  |    -> Heartbeat progress to Temporal
-  |    -> Idempotency key: "litreview/{requestID}/{paperID}"
-  |    -> Non-fatal: failure logged, workflow continues to completion
+Phase 5: Coverage Review (status: reviewing, optional)
+  |  If config.EnableCoverageReview:
+  |    Select up to 20 papers with abstracts
+  |    Activity: LLMActivities.AssessCoverage
+  |      -> LLM evaluates corpus against original research intent
+  |      -> Returns: coverage_score, reasoning, gap_topics, is_sufficient
+  |    If coverage < threshold AND gap topics found AND depth available:
+  |      Save gap topics as keywords (source: "coverage_gap")
+  |      Search with gap topics, process via child workflows
+  |      Await gap batch completion
+  |  Non-fatal: on failure, complete without coverage score
   v
-Phase 5: Complete (status: completed)
+Phase 6: Complete (status: completed)
   |  Activity: StatusActivities.UpdateStatus(completed)
   |  Activity (fire-and-forget): EventActivities.PublishEvent("review.completed")
   |  Return ReviewWorkflowResult{RequestID, Status, KeywordsFound, PapersFound,
-  |         PapersIngested, ExpansionRounds, Duration}
+  |         PapersIngested, DuplicatesFound, PapersFailed, ExpansionRounds,
+  |         KeywordsFilteredByRelevance, CoverageScore, CoverageReasoning,
+  |         GapTopics, Duration}
   v
 Client polls GetLiteratureReviewStatus or receives StreamProgress events
 ```
@@ -393,15 +425,37 @@ exactly-once execution semantics even across process restarts.
 
 ### Signals and Queries
 
-| Mechanism | Name       | Direction      | Purpose                                    |
-|-----------|------------|----------------|--------------------------------------------|
-| Signal    | `cancel`   | Client -> WF   | Request graceful cancellation              |
-| Query     | `progress` | Client -> WF   | Read current `workflowProgress` snapshot   |
+| Mechanism | Name        | Direction      | Purpose                                    |
+|-----------|-------------|----------------|--------------------------------------------|
+| Signal    | `cancel`    | Client -> WF   | Request graceful cancellation              |
+| Signal    | `pause`     | Client -> WF   | Pause at next checkpoint (user or budget)  |
+| Signal    | `resume`    | Client -> WF   | Resume from paused state                   |
+| Signal    | `stop`      | Client -> WF   | Graceful stop with partial results         |
+| Query     | `progress`  | Client -> WF   | Read current `workflowProgress` snapshot   |
 
-Signal handling uses `workflow.WithCancel` to create a cancellable context. A
+**Cancel** handling uses `workflow.WithCancel` to create a cancellable context. A
 background goroutine (`workflow.Go`) listens on the signal channel and invokes
 the cancel function when received. All activity contexts derive from this
 cancellable context.
+
+**Pause/resume** handling listens on a dedicated pause channel. When a pause
+signal is received, the workflow sets `IsPaused = true` and at the next
+checkpoint (between phases), enters `checkPausePoint()` which updates the
+database status to `paused` and blocks waiting for a resume signal. On resume,
+the workflow clears the pause state and continues from where it left off.
+Budget exhaustion during LLM calls triggers automatic pause with
+`PauseReasonBudgetExhausted`.
+
+**Stop** handling sets a `stopRequested` flag. At the next checkpoint, the
+workflow completes with status `partial` and returns all results gathered so far.
+
+**Parent-child signals** coordinate batch processing:
+
+| Signal                | Direction       | Purpose                                    |
+|-----------------------|-----------------|--------------------------------------------|
+| `batch_complete`      | Child -> Parent | Reports batch results (processed, dupes, ingested, failed) |
+| `claim_papers`        | Child -> Parent | Claims papers for processing               |
+| `register_embeddings` | Child -> Parent | Registers embeddings with parent           |
 
 Query handling registers a synchronous handler that returns the
 `workflowProgress` struct, which is updated in-place as the workflow progresses
@@ -409,14 +463,26 @@ through phases:
 
 ```go
 type workflowProgress struct {
-    Status            string
-    Phase             string
-    KeywordsFound     int
-    PapersFound       int
-    PapersIngested    int
-    PapersFailed      int
-    ExpansionRound    int
-    MaxExpansionDepth int
+    Status                      string
+    Phase                       string
+    KeywordsFound               int
+    PapersFound                 int
+    PapersIngested              int
+    PapersFailed                int
+    DuplicatesFound             int
+    BatchesSpawned              int
+    BatchesCompleted            int
+    ExpansionRound              int
+    MaxExpansionDepth           int
+    KeywordsFilteredByRelevance int
+    CoverageScore               float64
+    CoverageReasoning           string
+
+    // Pause state
+    IsPaused      bool
+    PauseReason   domain.PauseReason
+    PausedAt      time.Time
+    PausedAtPhase string
 }
 ```
 
@@ -428,23 +494,31 @@ construct them without importing the workflow package:
 ```go
 // temporal/client.go
 type ReviewWorkflowInput struct {
-    RequestID uuid.UUID
-    OrgID     string
-    ProjectID string
-    UserID    string
-    Query     string
-    Config    domain.ReviewConfiguration
+    RequestID    uuid.UUID
+    OrgID        string
+    ProjectID    string
+    UserID       string
+    Title        string
+    Description  string
+    SeedKeywords []string
+    Config       domain.ReviewConfiguration
 }
 
 // temporal/workflows/review_workflow.go
 type ReviewWorkflowResult struct {
-    RequestID       uuid.UUID
-    Status          string
-    KeywordsFound   int
-    PapersFound     int
-    PapersIngested  int
-    ExpansionRounds int
-    Duration        float64  // seconds
+    RequestID                   uuid.UUID
+    Status                      string
+    KeywordsFound               int
+    PapersFound                 int
+    PapersIngested              int
+    DuplicatesFound             int
+    PapersFailed                int
+    ExpansionRounds             int
+    KeywordsFilteredByRelevance int
+    CoverageScore               float64       // 0.0-1.0
+    CoverageReasoning           string
+    GapTopics                   []string
+    Duration                    float64       // seconds
 }
 ```
 
@@ -457,38 +531,48 @@ Each activity type has tailored timeout and retry policies:
 | LLM           | 2 min       | --               | 3           | 1s, 2x, 30s                     |
 | Search        | 5 min       | --               | 3           | 2s, 2x, 60s                     |
 | Status        | 30 sec      | --               | 5           | 500ms, 2x, 10s                  |
-| Ingestion     | 5 min       | 2 min            | 3           | 2s, 2x, 60s                     |
+| Ingestion     | 5 min       | 2 min            | 5           | 2s, 2x, 60s                     |
 | Event         | 30 sec      | --               | 5           | 500ms, 2x, 10s                  |
+| Embedding     | 2 min       | 1 min            | 5           | 1s, 2x, 30s                     |
+| Dedup         | 1 min       | 30 sec           | 3           | 500ms, 2x, 10s                  |
 
 ### Error Handling Strategy
 
 ```
                     Error occurs in activity
                               |
-              +---------------+---------------+
-              |               |               |
-        Search failure   LLM expansion    Status/Save
-        (per-keyword)    failure           failure
-              |          (per-paper)            |
-              v               v               v
-        Log warning,     Log warning,    handleFailure():
-        continue with    skip paper,       1. Update status to "failed"
-        next keyword     continue            using ROOT context
-                                            2. Publish "review.failed"
-                                               event (fire-and-forget)
-                                            3. Return original error
+              +-------+-------+-------+-------+
+              |       |       |       |       |
+        Search    LLM exp.  Dedup   Budget  Status/Save
+        failure   failure   failure  exhaust failure
+        (per-kw)  (per-paper)(batch) (LLM)       |
+              |       |       |       |          v
+              v       v       v       v    handleFailure():
+        Log warn, Log warn, Log warn, Pause WF   1. Update status "failed"
+        continue  skip      continue  auto-resume    using ROOT context
+        next kw   paper     all papers on refill  2. Publish "review.failed"
+                                                  3. Return original error
 ```
 
 - **Search failures** are per-keyword and non-fatal. The workflow logs a warning
   and continues with the next keyword.
 - **LLM failures** during expansion are per-paper and non-fatal. The paper is
   skipped and the expansion continues.
+- **Dedup failures** are per-batch and non-fatal. The batch continues with all
+  papers (assumes none are duplicates).
+- **Budget exhaustion** during LLM calls triggers automatic workflow pause with
+  `PauseReasonBudgetExhausted`. The workflow blocks until a resume signal is
+  received (e.g., after budget refill), then retries the activity.
 - **Ingestion failures** are non-fatal. The workflow completes with partial
   results and logs the failure.
+- **Coverage review failures** are non-fatal. The workflow completes without a
+  coverage score.
 - **Status update**, **keyword save**, and **paper save** failures are fatal.
   The workflow enters `handleFailure()`.
 - `handleFailure()` uses the **root context** (not the cancelled context) to
   ensure status updates and failure events are delivered even after cancellation.
+- Error messages stored in DB and published to events are **sanitized** to avoid
+  leaking internal details (stack traces, connection strings, file paths).
 
 ### Worker Configuration
 

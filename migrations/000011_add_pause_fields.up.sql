@@ -1,6 +1,7 @@
--- Migration: 000010_add_pause_fields
+-- Migration: 000011_add_pause_fields
 -- Description: Add pause tracking fields to literature_review_requests for resumable jobs
 -- Created: 2026-02-05
+-- Depends on: 000010_add_paused_enum (adds 'paused' to review_status enum)
 
 -- Add pause tracking fields to literature_review_requests
 ALTER TABLE literature_review_requests

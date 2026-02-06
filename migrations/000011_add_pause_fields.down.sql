@@ -1,4 +1,4 @@
--- Migration: 000010_add_pause_fields (rollback)
+-- Migration: 000011_add_pause_fields (rollback)
 -- Description: Remove pause tracking fields from literature_review_requests
 
 DROP INDEX IF EXISTS idx_review_requests_pause_reason;

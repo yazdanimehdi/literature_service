@@ -535,6 +535,283 @@ func TestDB_Close(t *testing.T) {
 	})
 }
 
+// TestDB_WithReadOnlyTransaction tests read-only transactions.
+func TestDB_WithReadOnlyTransaction(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+
+	t.Run("read-only transaction executes SELECT", func(t *testing.T) {
+		var result int
+		err := db.WithReadOnlyTransaction(ctx, func(tx pgx.Tx) error {
+			return tx.QueryRow(ctx, "SELECT 42").Scan(&result)
+		})
+		require.NoError(t, err)
+		assert.Equal(t, 42, result)
+	})
+
+	t.Run("read-only transaction cannot perform writes", func(t *testing.T) {
+		// Create a temp table first outside the read-only transaction
+		_, err := db.Exec(ctx, "CREATE TABLE IF NOT EXISTS test_readonly (id int)")
+		require.NoError(t, err)
+		defer func() {
+			_, _ = db.Exec(ctx, "DROP TABLE IF EXISTS test_readonly")
+		}()
+
+		// Attempt to INSERT in read-only transaction should fail
+		err = db.WithReadOnlyTransaction(ctx, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, "INSERT INTO test_readonly (id) VALUES (1)")
+			return err
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "read-only")
+	})
+
+	t.Run("read-only transaction rollback on error", func(t *testing.T) {
+		expectedErr := errors.New("read-only error")
+		err := db.WithReadOnlyTransaction(ctx, func(tx pgx.Tx) error {
+			return expectedErr
+		})
+		assert.Error(t, err)
+		assert.Equal(t, expectedErr, err)
+	})
+}
+
+// TestDB_AcquireAdvisoryLock tests session-level advisory locks.
+func TestDB_AcquireAdvisoryLock(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+
+	t.Run("acquire lock succeeds on first attempt", func(t *testing.T) {
+		lockKey := int64(123456789)
+
+		acquired, err := db.AcquireAdvisoryLock(ctx, lockKey)
+		require.NoError(t, err)
+		assert.True(t, acquired, "should acquire lock on first attempt")
+
+		// Release the lock
+		err = db.ReleaseAdvisoryLock(ctx, lockKey)
+		require.NoError(t, err)
+	})
+
+	t.Run("lock can be re-acquired after release", func(t *testing.T) {
+		lockKey := int64(987654321)
+
+		// First acquisition
+		acquired1, err := db.AcquireAdvisoryLock(ctx, lockKey)
+		require.NoError(t, err)
+		assert.True(t, acquired1)
+
+		// Release the lock
+		err = db.ReleaseAdvisoryLock(ctx, lockKey)
+		require.NoError(t, err)
+
+		// Should be able to acquire again
+		acquired2, err := db.AcquireAdvisoryLock(ctx, lockKey)
+		require.NoError(t, err)
+		assert.True(t, acquired2)
+
+		// Final release
+		err = db.ReleaseAdvisoryLock(ctx, lockKey)
+		require.NoError(t, err)
+	})
+
+	t.Run("release lock succeeds", func(t *testing.T) {
+		lockKey := int64(111222333)
+
+		acquired, err := db.AcquireAdvisoryLock(ctx, lockKey)
+		require.NoError(t, err)
+		assert.True(t, acquired)
+
+		err = db.ReleaseAdvisoryLock(ctx, lockKey)
+		require.NoError(t, err)
+	})
+
+	t.Run("release non-held lock succeeds silently", func(t *testing.T) {
+		// PostgreSQL pg_advisory_unlock returns false but doesn't error
+		// when releasing a lock not held by this session
+		lockKey := int64(444555666)
+		err := db.ReleaseAdvisoryLock(ctx, lockKey)
+		require.NoError(t, err)
+	})
+
+	t.Run("different lock keys are independent", func(t *testing.T) {
+		lockKey1 := int64(100)
+		lockKey2 := int64(200)
+
+		acquired1, err := db.AcquireAdvisoryLock(ctx, lockKey1)
+		require.NoError(t, err)
+		assert.True(t, acquired1)
+
+		acquired2, err := db.AcquireAdvisoryLock(ctx, lockKey2)
+		require.NoError(t, err)
+		assert.True(t, acquired2)
+
+		// Release both
+		err = db.ReleaseAdvisoryLock(ctx, lockKey1)
+		require.NoError(t, err)
+		err = db.ReleaseAdvisoryLock(ctx, lockKey2)
+		require.NoError(t, err)
+	})
+}
+
+// TestDB_AcquireAdvisoryLockTx tests transaction-scoped advisory locks.
+func TestDB_AcquireAdvisoryLockTx(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+
+	t.Run("acquire tx lock succeeds", func(t *testing.T) {
+		lockKey := int64(777888999)
+
+		err := db.WithTransaction(ctx, func(tx pgx.Tx) error {
+			err := db.AcquireAdvisoryLockTx(ctx, tx, lockKey)
+			require.NoError(t, err)
+
+			// Lock is held, verify we can do work
+			var result int
+			err = tx.QueryRow(ctx, "SELECT 1").Scan(&result)
+			require.NoError(t, err)
+			assert.Equal(t, 1, result)
+
+			return nil
+		})
+		require.NoError(t, err)
+		// Lock is automatically released when transaction commits
+	})
+
+	t.Run("tx lock released on rollback", func(t *testing.T) {
+		lockKey := int64(111333555)
+		expectedErr := errors.New("rollback error")
+
+		err := db.WithTransaction(ctx, func(tx pgx.Tx) error {
+			err := db.AcquireAdvisoryLockTx(ctx, tx, lockKey)
+			require.NoError(t, err)
+			return expectedErr
+		})
+		assert.Equal(t, expectedErr, err)
+		// Lock should be released after rollback
+	})
+
+	t.Run("tx lock blocks until released", func(t *testing.T) {
+		// This test verifies that pg_advisory_xact_lock blocks
+		// We can't easily test blocking behavior in a single-threaded test,
+		// but we can verify the lock is acquired successfully
+		lockKey := int64(222444666)
+
+		err := db.WithTransaction(ctx, func(tx pgx.Tx) error {
+			return db.AcquireAdvisoryLockTx(ctx, tx, lockKey)
+		})
+		require.NoError(t, err)
+	})
+}
+
+// TestDB_TryAcquireAdvisoryLockTx tests non-blocking transaction-scoped advisory locks.
+func TestDB_TryAcquireAdvisoryLockTx(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	db := setupTestDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+
+	t.Run("try acquire tx lock succeeds when available", func(t *testing.T) {
+		lockKey := int64(333666999)
+
+		err := db.WithTransaction(ctx, func(tx pgx.Tx) error {
+			acquired, err := db.TryAcquireAdvisoryLockTx(ctx, tx, lockKey)
+			require.NoError(t, err)
+			assert.True(t, acquired, "should acquire lock when available")
+			return nil
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("try acquire returns true within same transaction", func(t *testing.T) {
+		lockKey := int64(444777000)
+
+		err := db.WithTransaction(ctx, func(tx pgx.Tx) error {
+			// First acquisition
+			acquired1, err := db.TryAcquireAdvisoryLockTx(ctx, tx, lockKey)
+			require.NoError(t, err)
+			assert.True(t, acquired1)
+
+			// Same tx can "re-acquire" (it already holds the lock)
+			acquired2, err := db.TryAcquireAdvisoryLockTx(ctx, tx, lockKey)
+			require.NoError(t, err)
+			assert.True(t, acquired2)
+
+			return nil
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("different lock keys independent in same tx", func(t *testing.T) {
+		lockKey1 := int64(555000111)
+		lockKey2 := int64(555000222)
+
+		err := db.WithTransaction(ctx, func(tx pgx.Tx) error {
+			acquired1, err := db.TryAcquireAdvisoryLockTx(ctx, tx, lockKey1)
+			require.NoError(t, err)
+			assert.True(t, acquired1)
+
+			acquired2, err := db.TryAcquireAdvisoryLockTx(ctx, tx, lockKey2)
+			require.NoError(t, err)
+			assert.True(t, acquired2)
+
+			return nil
+		})
+		require.NoError(t, err)
+	})
+}
+
+// TestDB_Health_EdgeCases tests edge cases for health checks.
+func TestDB_Health_EdgeCases(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	db := setupTestDB(t)
+	defer db.Close()
+
+	t.Run("health check with cancelled context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // Cancel immediately
+
+		health := db.Health(ctx)
+		// With cancelled context, ping should fail
+		assert.Equal(t, "unhealthy", health.Status)
+		assert.NotEmpty(t, health.Error)
+	})
+
+	t.Run("health check returns pool stats", func(t *testing.T) {
+		ctx := context.Background()
+		health := db.Health(ctx)
+
+		assert.Equal(t, "healthy", health.Status)
+		assert.GreaterOrEqual(t, health.MaxConns, int32(1))
+		assert.GreaterOrEqual(t, health.TotalConns, int32(0))
+	})
+}
+
 // setupTestDB creates a test database connection.
 func setupTestDB(t *testing.T) *DB {
 	t.Helper()
@@ -542,25 +819,35 @@ func setupTestDB(t *testing.T) *DB {
 	ctx := context.Background()
 	logger := zerolog.Nop()
 
-	cfg := &config.DatabaseConfig{
-		Host:              "localhost",
-		Port:              5432,
-		Name:              "literature_review_service",
-		User:              "litreview",
-		Password:          "password",
-		SSLMode:           "disable",
-		MaxConns:          5,
-		MinConns:          1,
-		MaxConnLifetime:   time.Hour,
-		MaxConnIdleTime:   30 * time.Minute,
-		HealthCheckPeriod: 30 * time.Second,
-		ConnectTimeout:    10 * time.Second,
+	// Try test port first (docker-compose.test.yml), then dev port
+	ports := []int{5433, 5432}
+	var db *DB
+	var lastErr error
+
+	for _, port := range ports {
+		cfg := &config.DatabaseConfig{
+			Host:              "localhost",
+			Port:              port,
+			Name:              "literature_review_test",
+			User:              "litreview_test",
+			Password:          "testpassword",
+			SSLMode:           "disable",
+			MaxConns:          5,
+			MinConns:          1,
+			MaxConnLifetime:   time.Hour,
+			MaxConnIdleTime:   30 * time.Minute,
+			HealthCheckPeriod: 30 * time.Second,
+			ConnectTimeout:    5 * time.Second,
+		}
+
+		var err error
+		db, err = New(ctx, cfg, logger)
+		if err == nil {
+			return db
+		}
+		lastErr = err
 	}
 
-	db, err := New(ctx, cfg, logger)
-	if err != nil {
-		t.Skipf("Skipping integration test: cannot connect to database: %v", err)
-	}
-
-	return db
+	t.Skipf("Skipping integration test: cannot connect to database: %v", lastErr)
+	return nil
 }

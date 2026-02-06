@@ -1204,3 +1204,150 @@ func TestLiteratureReviewWorkflow_CoverageReview_GapExpansion(t *testing.T) {
 	// original "CRISPR".
 	assert.Equal(t, 2, result.KeywordsFound)
 }
+
+func TestLiteratureReviewWorkflow_SearchDedup(t *testing.T) {
+	// This test verifies incremental search deduplication:
+	// When CheckSearchCompleted reports a cached search, the workflow:
+	// 1. Uses cached papers from the previous search
+	// 2. Launches a NEW forward search with DateFrom=searchedAt to find newer papers
+	// 3. Records the new search result
+	// This prevents the database from "freezing in time".
+	testSuite := &testsuite.WorkflowTestSuite{}
+	env := testSuite.NewTestWorkflowEnvironment()
+
+	input := newTestInput()
+	// Single source to simplify the test.
+	input.Config.Sources = []domain.SourceType{domain.SourceTypeSemanticScholar}
+
+	var llmAct *activities.LLMActivities
+	var searchAct *activities.SearchActivities
+	var statusAct *activities.StatusActivities
+	var eventAct *activities.EventActivities
+
+	env.OnActivity(statusAct.UpdateStatus, mock.Anything, mock.Anything).Return(nil)
+	env.OnActivity(eventAct.PublishEvent, mock.Anything, mock.Anything).Return(nil)
+
+	// Phase 1: Extract keywords — returns two keywords.
+	env.OnActivity(llmAct.ExtractKeywords, mock.Anything, mock.Anything).Return(
+		&activities.ExtractKeywordsOutput{
+			Keywords: []string{"CRISPR", "gene therapy"}, Model: "test-model",
+		}, nil,
+	)
+
+	// SaveKeywords returns KeywordIDMap so dedup can look up keyword UUIDs.
+	kwID1 := uuid.New()
+	kwID2 := uuid.New()
+	env.OnActivity(statusAct.SaveKeywords, mock.Anything, mock.Anything).Return(
+		&activities.SaveKeywordsOutput{
+			KeywordIDs: []uuid.UUID{kwID1, kwID2},
+			KeywordIDMap: map[string]uuid.UUID{
+				"CRISPR":       kwID1,
+				"gene therapy": kwID2,
+			},
+			NewCount: 2,
+		}, nil,
+	)
+
+	// CheckSearchCompleted — first keyword is cached, second is not.
+	cachedSearchDate := "2026-02-05T10:00:00Z"
+	cachedPaperID := uuid.New()
+	env.OnActivity(statusAct.CheckSearchCompleted, mock.Anything, mock.MatchedBy(func(in activities.CheckSearchCompletedInput) bool {
+		return in.KeywordID == kwID1
+	})).Return(
+		&activities.CheckSearchCompletedOutput{
+			AlreadyCompleted: true,
+			PreviouslyFoundPapers: []*domain.Paper{
+				{
+					ID:          cachedPaperID,
+					CanonicalID: "doi:cached",
+					Title:       "Cached Paper",
+					Abstract:    "This was already found",
+				},
+			},
+			PapersFoundCount: 1,
+			SearchedAt:       cachedSearchDate,
+		}, nil,
+	)
+	env.OnActivity(statusAct.CheckSearchCompleted, mock.Anything, mock.MatchedBy(func(in activities.CheckSearchCompletedInput) bool {
+		return in.KeywordID == kwID2
+	})).Return(
+		&activities.CheckSearchCompletedOutput{AlreadyCompleted: false}, nil,
+	)
+
+	// SearchSingleSource — called for BOTH keywords:
+	// - Keyword 1 (cached): forward search with DateFrom=cachedSearchDate
+	// - Keyword 2 (not cached): full search without DateFrom
+	forwardPaperID := uuid.New()
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.MatchedBy(func(in activities.SearchSingleSourceInput) bool {
+		// Keyword 1 forward search: should have DateFrom set to cached search date.
+		return in.DateFrom != nil && *in.DateFrom == cachedSearchDate
+	})).Return(
+		&activities.SearchSingleSourceOutput{
+			Source: domain.SourceTypeSemanticScholar,
+			Papers: []*domain.Paper{
+				{
+					ID:          forwardPaperID,
+					CanonicalID: "doi:forward-new",
+					Title:       "New Paper Since Cache",
+					Abstract:    "Published after the cached search",
+					PDFURL:      "https://example.com/forward.pdf",
+				},
+			},
+			TotalFound: 1,
+		}, nil,
+	)
+
+	newPaperID := uuid.New()
+	env.OnActivity(searchAct.SearchSingleSource, mock.Anything, mock.MatchedBy(func(in activities.SearchSingleSourceInput) bool {
+		// Keyword 2 full search: should have no DateFrom.
+		return in.DateFrom == nil
+	})).Return(
+		&activities.SearchSingleSourceOutput{
+			Source: domain.SourceTypeSemanticScholar,
+			Papers: []*domain.Paper{
+				{
+					ID:          newPaperID,
+					CanonicalID: "doi:new",
+					Title:       "New Paper",
+					Abstract:    "Fresh result",
+					PDFURL:      "https://example.com/new.pdf",
+				},
+			},
+			TotalFound: 1,
+		}, nil,
+	)
+
+	// RecordSearchResult — called for both searches.
+	env.OnActivity(statusAct.RecordSearchResult, mock.Anything, mock.Anything).Return(nil)
+
+	// SavePapers — 3 papers total: 1 cached + 1 forward + 1 new.
+	env.OnActivity(statusAct.SavePapers, mock.Anything, mock.Anything).Return(
+		&activities.SavePapersOutput{SavedCount: 3, DuplicateCount: 0}, nil,
+	)
+
+	// Child workflow mocks.
+	env.RegisterWorkflow(PaperProcessingWorkflow)
+	var embeddingAct *activities.EmbeddingActivities
+	var dedupAct *activities.DedupActivities
+	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
+		&activities.EmbedPapersOutput{Embeddings: map[string][]float32{"doi:new": make([]float32, 768)}}, nil)
+	env.OnActivity(dedupAct.BatchDedup, mock.Anything, mock.Anything).Return(
+		&activities.BatchDedupOutput{NonDuplicateIDs: []uuid.UUID{newPaperID}}, nil)
+	env.OnActivity(ingestionAct.DownloadAndIngestPapers, mock.Anything, mock.Anything).Return(
+		&activities.DownloadAndIngestOutput{Successful: 0}, nil)
+	env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).Return(
+		&activities.UpdatePaperIngestionResultsOutput{}, nil)
+
+	env.ExecuteWorkflow(LiteratureReviewWorkflow, input)
+	require.True(t, env.IsWorkflowCompleted())
+	require.NoError(t, env.GetWorkflowError())
+
+	var result ReviewWorkflowResult
+	require.NoError(t, env.GetWorkflowResult(&result))
+	assert.Equal(t, string(domain.ReviewStatusCompleted), result.Status)
+	// Papers: 1 cached + 1 forward search + 1 new search = 3 total
+	assert.Equal(t, 3, result.PapersFound)
+	assert.Equal(t, 2, result.KeywordsFound)
+}

@@ -98,24 +98,35 @@ all without custom state machine code.
                   +---------------------------v---------------------------+
                   |                  Temporal Worker                      |
                   |                                                       |
-                  |   LiteratureReviewWorkflow                            |
+                  |   LiteratureReviewWorkflow (parent)                   |
                   |     Phase 1: Extract Keywords  (LLM Activity)         |
                   |     Phase 2: Search Papers     (Search Activity)      |
-                  |     Phase 3: Expand Search     (LLM + Search)         |
-                  |     Phase 4: Ingest Papers     (Ingestion Activity)   |
-                  |     Phase 5: Complete           (Status Activity)     |
+                  |     Phase 3: Batch Processing  (Child Workflows)      |
+                  |       +-> PaperProcessingWorkflow (per batch of 5)    |
+                  |       |     Stage 1: Embed abstracts (Embedding Act.) |
+                  |       |     Stage 2: Dedup via Qdrant (Dedup Act.)    |
+                  |       |     Stage 3: Ingest papers   (Ingestion Act.) |
+                  |       |     Stage 4: Update records  (Status Act.)    |
+                  |       +-> Signals parent on completion                |
+                  |     Phase 4: Expand Search     (LLM + Search)         |
+                  |       +-> Relevance Gate (embedding-based filtering)  |
+                  |       +-> Spawns child workflows per expansion round  |
+                  |     Phase 5: Coverage Review   (LLM Activity)         |
+                  |       +-> Gap expansion if coverage < threshold       |
+                  |     Phase 6: Complete           (Status Activity)     |
                   |                                                       |
-                  |   Supports: cancel signal, progress query             |
-                  +---+----------+----------+----------+----------+------+
-                      |          |          |          |          |
-                      v          v          v          v          v
-                 +---------+ +--------+ +--------+ +--------+ +--------+
-                 |  LLM    | |Semantic| |OpenAlex| | PubMed | |Ingest. |
-                 |Provider | |Scholar | |  API   | |  API   | |Service |
-                 |(6 opts) | |  API   | |        | |        | | (gRPC) |
-                 +---------+ +--------+ +--------+ +--------+ +--------+
-                                                                  |
-                  +-----------------------------------------------+
+                  |   Signals: cancel, pause, resume, stop                |
+                  |   Queries: progress (real-time counters)              |
+                  +---+------+------+------+------+------+------+---+----+
+                      |      |      |      |      |      |      |   |
+                      v      v      v      v      v      v      v   v
+                 +------+ +------+ +------+ +------+ +------+ +------+
+                 | LLM  | |Seman.| |Open  | |PubMed| |Ingest| |Qdrant|
+                 |Provdr | |Scholr| |Alex  | | API  | |Srvce | |Vector|
+                 |(6opt) | | API  | | API  | |      | |(gRPC)| |Store |
+                 +------+ +------+ +------+ +------+ +------+ +------+
+                                                         |
+                  +--------------------------------------+
                   |            Outbox Pattern                      |
                   |  outbox table --> relay --> Kafka topic         |
                   |  topic: events.outbox.literature_review_service|
@@ -196,10 +207,14 @@ literature_service/
 │   │   ├── keyword.go               # Keyword models
 │   │   ├── events.go                # OutboxEvent, event type constants + payloads
 │   │   └── errors.go                # Domain error types
+│   ├── budget/                      # LLM budget tracking
+│   ├── dedup/                       # Semantic deduplication logic
 │   ├── ingestion/                   # gRPC client for the Ingestion Service
 │   ├── llm/                         # LLM factory, KeywordExtractor interface
 │   │   ├── extractor.go             # Prompt engineering, JSON response parsing
 │   │   └── errors.go                # LLM-specific error types
+│   ├── pdf/                         # PDF handling utilities
+│   ├── qdrant/                      # Qdrant vector store integration
 │   ├── observability/
 │   │   ├── logger.go                # zerolog logger factory
 │   │   ├── temporal_logger.go       # zerolog adapter for Temporal SDK logger
@@ -242,14 +257,19 @@ literature_service/
 │       ├── worker.go                # WorkerManager, activity/workflow registration
 │       ├── activities/
 │       │   ├── types.go             # Activity input/output structs
-│       │   ├── llm_activities.go    # ExtractKeywords activity
-│       │   ├── search_activities.go # SearchPapers activity
-│       │   ├── status_activities.go # UpdateStatus, SaveKeywords, SavePapers
-│       │   ├── ingestion_activities.go # SubmitPapersForIngestion activity
+│       │   ├── llm_activities.go    # ExtractKeywords + AssessCoverage activities
+│       │   ├── search_activities.go # SearchSingleSource activity
+│       │   ├── status_activities.go # UpdateStatus, SaveKeywords, SavePapers, UpdatePauseState
+│       │   ├── ingestion_activities.go # DownloadAndIngestPapers activity
 │       │   ├── event_activities.go  # PublishEvent activity (outbox)
+│       │   ├── embedding_activities.go # EmbedText, EmbedPapers, ScoreKeywordRelevance
+│       │   ├── dedup_activities.go  # BatchDedup against Qdrant vector store
 │       │   └── budget_reporter.go   # LLM budget tracking via outbox
 │       └── workflows/
-│           ├── review_workflow.go   # LiteratureReviewWorkflow (main orchestrator)
+│           ├── review_workflow.go   # LiteratureReviewWorkflow (parent orchestrator)
+│           ├── paper_processing_workflow.go # PaperProcessingWorkflow (child, batch processing)
+│           ├── pipeline_types.go    # Pipeline types, parent-child signals, batch types
+│           ├── signals.go           # PauseSignal, ResumeSignal, StopSignal structs
 │           ├── determinism.go       # Workflow determinism utilities
 │           └── replay_test.go       # Workflow replay tests
 ├── migrations/                      # SQL migration files (8 migrations)
@@ -265,6 +285,8 @@ literature_service/
 │   ├── chaos/                       # Chaos engineering tests
 │   ├── e2e/                         # End-to-end tests (full stack)
 │   ├── integration/                 # Integration tests (DB, Temporal, outbox)
+│   ├── pipeline/                    # Pipeline workflow tests
+│   ├── loadtest/                    # k6 load test scripts
 │   └── security/                    # Fuzz testing, injection tests
 ├── Dockerfile                       # Multi-stage Docker build
 ├── docker-compose.yml               # Local development stack
@@ -314,12 +336,14 @@ workflow activities. On startup, it initializes:
 - **Ingestion gRPC client** -- connects to the Ingestion Service.
 - **Outbox publisher** -- for transactional event publishing to Kafka.
 - **Prometheus metrics** -- shared metrics instance across all activities.
-- **Five activity structs** registered with the Temporal worker:
-  - `LLMActivities` -- keyword extraction via LLM
+- **Seven activity structs** registered with the Temporal worker:
+  - `LLMActivities` -- keyword extraction and coverage assessment via LLM
   - `SearchActivities` -- concurrent paper searches across sources
-  - `StatusActivities` -- database status updates, save keywords/papers
-  - `IngestionActivities` -- submit papers to the Ingestion Service
+  - `StatusActivities` -- database status updates, save keywords/papers, pause state
+  - `IngestionActivities` -- download and ingest papers via the Ingestion Service
   - `EventActivities` -- publish outbox events
+  - `EmbeddingActivities` -- generate embeddings for paper abstracts and relevance scoring
+  - `DedupActivities` -- semantic deduplication against Qdrant vector store
 
 Multiple worker replicas can run in parallel for horizontal scaling.
 
@@ -367,8 +391,10 @@ Every operation in the service is scoped to a specific organization and project.
 | **PostgreSQL**            | Data persistence, LISTEN/NOTIFY for real-time progress updates, outbox event storage |
 | **Temporal Server**       | Workflow orchestration, automatic retries, cancellation, progress queries, durable execution |
 | **Kafka**                 | Event streaming via the transactional outbox pattern           |
+| **Qdrant**                | Vector store for semantic deduplication and embedding storage  |
 | **Ingestion Service**     | Paper PDF ingestion and full-text processing (gRPC at port 9095) |
 | **LLM Provider (1 of 6)**| Keyword extraction from queries and paper abstracts            |
+| **Embedding Provider**    | Vector embeddings for relevance gating and semantic dedup (OpenAI embeddings) |
 | **Semantic Scholar API**  | Academic paper search (graph-based, citation-aware)            |
 | **OpenAlex API**          | Academic paper search (open bibliographic data)                |
 | **PubMed E-utilities API**| Academic paper search (biomedical focus, MeSH terms)           |
@@ -378,68 +404,104 @@ Every operation in the service is scoped to a specific organization and project.
 ## Workflow Pipeline
 
 The `LiteratureReviewWorkflow` is the central orchestration unit. It is a deterministic
-Temporal workflow that proceeds through five phases:
+Temporal workflow that uses a concurrent two-phase pipeline architecture with parent-child
+workflow coordination. The workflow proceeds through six phases:
 
 ```
-Phase 1: Extract Keywords
-  Input:  Natural language query
+Phase 1: Extract Keywords (status: extracting_keywords)
+  Input:  Natural language title + description, optional seed keywords
   Action: LLM extracts 3-10 searchable academic keywords
+          Optionally embeds query text for relevance gating
   Output: Keyword list saved to keywords + request_keyword_mappings
   Event:  review.started published to outbox
 
-Phase 2: Search Papers
+Phase 2: Search Papers (status: searching)
   Input:  Keywords from Phase 1
   Action: For each keyword, search all enabled sources concurrently
+          with rate limiting (500ms stagger between sources)
   Output: Papers saved to papers + request_paper_mappings (deduplicated by canonical_id)
   Note:   Individual keyword search failures are non-fatal
 
-Phase 3: Expand Search (0-5 rounds)
+Phase 3: Batch Processing (status: ingesting)
+  Input:  All discovered papers, batched into groups of 5
+  Action: Spawn PaperProcessingWorkflow child workflows per batch:
+          Stage 1: Embed paper abstracts (EmbeddingActivities)
+          Stage 2: Semantic dedup against Qdrant vector store (DedupActivities)
+          Stage 3: Download & ingest non-duplicate papers with PDF URLs (IngestionActivities)
+          Stage 4: Update paper records in database (StatusActivities)
+  Output: Child workflows signal parent with BatchCompleteSignal on completion
+  Note:   Dedup failure is non-fatal (continues with all papers).
+          Embedding failure is fatal for the batch.
+
+Phase 4: Expand Search (status: expanding, 0-N rounds)
   Input:  Top 5 papers with abstracts from the current result set
-  Action: LLM extracts new keywords from abstracts (passing existing keywords to avoid dupes),
-          then searches all sources with the new keywords
-  Output: Additional papers discovered, saved, and appended to result set
-  Guard:  Stops if no new keywords, paper limit reached, or no papers have abstracts
+  Action: LLM extracts new keywords from abstracts (passing existing keywords to avoid dupes)
+          Relevance Gate: if enabled, filters drifting keywords via embedding similarity
+          Searches all sources with new keywords, spawns batch processing child workflows
+  Output: Additional papers discovered, processed, and appended to result set
+  Guard:  Stops if no new keywords, paper limit reached, no papers have abstracts,
+          or all expansion keywords filtered by relevance gate
 
-Phase 4: Ingest Papers
-  Input:  Papers with non-empty pdf_url
-  Action: Submit batch to Ingestion Service via gRPC
-  Output: Ingestion status tracked per paper (submitted/completed/failed/skipped)
-  Note:   Non-fatal -- workflow completes with partial results on failure
+Phase 5: Coverage Review (status: reviewing, optional)
+  Input:  Up to 20 papers with abstracts, all keywords, original query
+  Action: LLM assesses corpus coverage against original research intent
+          Returns: coverage_score (0.0-1.0), reasoning, gap_topics
+  Output: If coverage < threshold and gap topics identified:
+          Auto-triggers gap expansion round (searches gap topics, processes via child workflows)
+  Note:   Non-fatal -- workflow completes without score on assessment failure
 
-Phase 5: Complete
+Phase 6: Complete (status: completed)
   Action: Update review status to completed
   Event:  review.completed published to outbox with final statistics
-  Return: ReviewWorkflowResult (keywords, papers, ingested, rounds, duration)
+  Return: ReviewWorkflowResult (keywords, papers, ingested, duplicates,
+          failed, rounds, coverage score, gap topics, duration)
 ```
 
 ### Signals and Queries
 
-| Type   | Name       | Purpose                                                        |
-|--------|------------|----------------------------------------------------------------|
-| Signal | `cancel`   | Cancels the running workflow via `workflow.WithCancel` context  |
-| Query  | `progress` | Returns real-time `workflowProgress` (status, phase, counters) |
+| Type   | Name        | Direction     | Purpose                                                        |
+|--------|-------------|---------------|----------------------------------------------------------------|
+| Signal | `cancel`    | Client -> WF  | Cancels the running workflow via `workflow.WithCancel` context  |
+| Signal | `pause`     | Client -> WF  | Pauses the workflow at the next checkpoint (user or budget)    |
+| Signal | `resume`    | Client -> WF  | Resumes a paused workflow                                      |
+| Signal | `stop`      | Client -> WF  | Graceful stop with partial results at next checkpoint          |
+| Query  | `progress`  | Client -> WF  | Returns real-time `workflowProgress` (status, phase, counters) |
+
+**Parent-Child Signals:**
+
+| Signal               | Direction       | Purpose                                           |
+|----------------------|-----------------|---------------------------------------------------|
+| `batch_complete`     | Child -> Parent | Reports batch processing results (counts, errors) |
+| `claim_papers`       | Child -> Parent | Claims papers for processing (dedup coordination) |
+| `register_embeddings`| Child -> Parent | Registers paper embeddings with parent            |
 
 ### Activity Timeout Configuration
 
-| Activity    | Start-to-Close | Max Attempts | Backoff                     |
-|-------------|----------------|--------------|------------------------------|
-| LLM         | 2 minutes      | 3            | 1s initial, 2x, max 30s     |
-| Search      | 5 minutes      | 3            | 2s initial, 2x, max 1m      |
-| Status (DB) | 30 seconds     | 5            | 500ms initial, 2x, max 10s  |
-| Ingestion   | 5 minutes      | 3            | 2s initial, 2x, max 1m, 2m heartbeat |
-| Events      | 30 seconds     | 5            | 500ms initial, 2x, max 10s  |
+| Activity     | Start-to-Close | Heartbeat | Max Attempts | Backoff                     |
+|--------------|----------------|-----------|--------------|------------------------------|
+| LLM          | 2 minutes      | --        | 3            | 1s initial, 2x, max 30s     |
+| Search       | 5 minutes      | --        | 3            | 2s initial, 2x, max 1m      |
+| Status (DB)  | 30 seconds     | --        | 5            | 500ms initial, 2x, max 10s  |
+| Ingestion    | 5 minutes      | 2 min     | 5            | 2s initial, 2x, max 1m      |
+| Events       | 30 seconds     | --        | 5            | 500ms initial, 2x, max 10s  |
+| Embedding    | 2 minutes      | 1 min     | 5            | 1s initial, 2x, max 30s     |
+| Dedup        | 1 minute       | 30s       | 3            | 500ms initial, 2x, max 10s  |
 
 ### Workflow Constants
 
 | Constant                    | Value | Description                              |
 |-----------------------------|-------|------------------------------------------|
+| Batch size                  | 5     | Papers per child workflow batch           |
 | Max papers for expansion    | 5     | Papers selected per round for keyword extraction |
 | Default max keywords/round  | 10    | Maximum keywords extracted per LLM call  |
 | Default min keywords (query)| 3     | Minimum keywords from initial query      |
 | Default max papers          | 100   | Maximum total papers per review          |
+| Search rate limit delay     | 500ms | Stagger between source searches          |
 | Workflow execution timeout  | 4 hr  | Maximum workflow running time             |
 | Stream max duration         | 4 hr  | Maximum gRPC progress stream duration    |
 | Stream poll interval        | 2 sec | How often progress stream polls the DB   |
+| Ingestion poll interval     | 30s   | How often to poll ingestion status        |
+| Ingestion max poll time     | 30 min| Maximum time to wait for ingestion        |
 
 ---
 
@@ -511,12 +573,13 @@ The database uses PostgreSQL with 8 sequential migrations across these groups:
 
 | Enum               | Values                                                                              |
 |--------------------|-------------------------------------------------------------------------------------|
-| `review_status`    | pending, extracting_keywords, searching, expanding, ingesting, completed, partial, failed, cancelled |
+| `review_status`    | pending, extracting_keywords, searching, expanding, ingesting, reviewing, completed, partial, failed, cancelled, paused |
 | `search_status`    | pending, in_progress, completed, failed, rate_limited                               |
 | `ingestion_status` | pending, submitted, processing, completed, failed, skipped                          |
 | `identifier_type`  | doi, arxiv_id, pubmed_id, semantic_scholar_id, openalex_id, scopus_id              |
 | `mapping_type`     | author_keyword, mesh_term, extracted, query_match                                   |
 | `source_type`      | semantic_scholar, openalex, scopus, pubmed, biorxiv, arxiv                         |
+| `pause_reason`     | user, budget_exhausted                                                              |
 
 ### Core Tables (Migration 3)
 
@@ -652,6 +715,7 @@ to Kafka by the outbox publisher.
 | `review.started`               | Workflow begins keyword extraction              |
 | `review.completed`             | Workflow finishes successfully                  |
 | `review.failed`                | Workflow encounters unrecoverable error         |
+| `review.stopped`               | Workflow stopped gracefully with partial results|
 | `review.cancelled`             | User or system cancels the review              |
 | `review.keywords_extracted`    | LLM extracts keywords from query or paper      |
 | `review.papers_discovered`     | New papers found from source search            |
@@ -924,31 +988,51 @@ metadata (relevance scores, result rankings) as JSONB.
                                 +-----+-----+
                                       |
                          +------------v-------------+
-                         | extracting_keywords      |
-                         +------------+-------------+
-                                      |
-                           +----------v----------+
-                           |     searching       |
-                           +----------+----------+
-                                      |
-                      +---------------v----------------+
-                      |  expanding (rounds 1..N)       |<--+
-                      +---------------+----------------+   |
-                      |               |                     |
-                      |  (more rounds)|---------------------+
-                      |               |
-                      +-------v-------+
-                      |   ingesting   |
-                      +-------+-------+
-                              |
-              +-------+-------+-------+-------+
-              |       |               |       |
-        +-----v-+  +-v------+  +-----v--+  +-v--------+
-        |completed| |partial |  |failed  |  |cancelled |
-        +---------+ +--------+  +--------+  +----------+
+                         | extracting_keywords      |<----+
+                         +------------+-------------+     |
+                                      |                    |
+                           +----------v----------+         |
+                           |     searching       |<---+    |
+                           +----------+----------+    |    |
+                                      |               |    |  resume
+                           +----------v----------+    |    |  signal
+                           |     ingesting       |<-+ |    |
+                           +----------+----------+  | |    |
+                                      |             | |    |
+                      +---------------v-----------+ | |    |
+                      |  expanding (rounds 1..N)  |-+ |    |
+                      +---------------+-----------+   |    |
+                      |               |               |    |
+                      |  (more rounds)|---------------+    |
+                      |               |                    |
+                      +-------v-------+                    |
+                      |   reviewing   |                    |
+                      |   (optional)  |                    |
+                      +---+---+---+---+                    |
+                          |   |   |                        |
+       +-----+   gap     |   |   |                        |
+       |     |  expansion |   |   |                        |
+       | expanding <------+   |   |                        |
+       |     |                |   |                        |
+       +-----+                |   |       +-----------+    |
+                              |   |       |  paused   |----+
+              +-------+-------+---+---+   +-----------+
+              |       |               |     ^         ^
+        +-----v-+  +-v------+  +-----v--+  |         |
+        |completed| |partial |  |failed  |  | pause   | budget
+        +---------+ +--------+  +--------+  | signal  | exhausted
+                                            |         |
+        +-----------+              (from any non-terminal state)
+        | cancelled |
+        +-----------+
 ```
 
-Terminal states: `completed`, `partial`, `failed`, `cancelled`.
+**11 Review States:**
+- **Active states:** `pending`, `extracting_keywords`, `searching`, `ingesting`, `expanding`, `reviewing`
+- **Pausable state:** `paused` (reachable from any non-terminal state via pause signal or budget exhaustion)
+- **Terminal states:** `completed`, `partial`, `failed`, `cancelled`
+
+**Pause reasons:** `user` (manual pause), `budget_exhausted` (automatic when LLM budget runs out)
 
 ---
 

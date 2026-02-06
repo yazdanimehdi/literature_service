@@ -496,6 +496,54 @@ func (r *PgKeywordRepository) GetPapersForKeyword(ctx context.Context, keywordID
 	return papers, totalCount, nil
 }
 
+// GetPapersForKeywordAndSource retrieves papers associated with a specific keyword
+// and discovered via a specific source type.
+func (r *PgKeywordRepository) GetPapersForKeywordAndSource(ctx context.Context, keywordID uuid.UUID, source domain.SourceType, limit, offset int) ([]*domain.Paper, int64, error) {
+	applyPaginationDefaults(&limit, &offset)
+
+	// Count total matching records
+	countQuery := `SELECT COUNT(*) FROM keyword_paper_mappings WHERE keyword_id = $1 AND source_type = $2`
+	var totalCount int64
+	if err := r.db.QueryRow(ctx, countQuery, keywordID, source).Scan(&totalCount); err != nil {
+		return nil, 0, fmt.Errorf("failed to count papers: %w", err)
+	}
+
+	// Query with pagination, filtered by source_type
+	selectQuery := `
+		SELECT p.id, p.canonical_id, p.title, p.abstract, p.authors,
+			p.publication_date, p.publication_year, p.venue, p.journal,
+			p.volume, p.issue, p.pages, p.citation_count, p.reference_count,
+			p.pdf_url, p.open_access, p.keywords_extracted,
+			p.file_id, p.ingestion_run_id,
+			p.raw_metadata, p.created_at, p.updated_at
+		FROM papers p
+		INNER JOIN keyword_paper_mappings kpm ON p.id = kpm.paper_id
+		WHERE kpm.keyword_id = $1 AND kpm.source_type = $2
+		ORDER BY kpm.created_at DESC
+		LIMIT $3 OFFSET $4`
+
+	rows, err := r.db.Query(ctx, selectQuery, keywordID, source, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get papers for keyword and source: %w", err)
+	}
+	defer rows.Close()
+
+	papers := make([]*domain.Paper, 0, limit)
+	for rows.Next() {
+		paper, err := scanPaperFromRows(rows)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to scan paper: %w", err)
+		}
+		papers = append(papers, paper)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, 0, fmt.Errorf("error iterating papers: %w", err)
+	}
+
+	return papers, totalCount, nil
+}
+
 // List retrieves keywords matching the filter criteria.
 func (r *PgKeywordRepository) List(ctx context.Context, filter KeywordFilter) ([]*domain.Keyword, int64, error) {
 	if err := filter.Validate(); err != nil {

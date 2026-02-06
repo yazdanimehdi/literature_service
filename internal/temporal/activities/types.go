@@ -430,6 +430,11 @@ type SearchSingleSourceInput struct {
 	OpenAccessOnly bool `json:"open_access_only"`
 	// MinCitations filters papers by minimum citation count.
 	MinCitations int `json:"min_citations"`
+	// DateFrom filters papers published on or after this date (YYYY-MM-DD or RFC3339).
+	// Used for incremental searches after cached results.
+	DateFrom *string `json:"date_from,omitempty"`
+	// DateTo filters papers published on or before this date (YYYY-MM-DD or RFC3339).
+	DateTo *string `json:"date_to,omitempty"`
 }
 
 // SearchSingleSourceOutput contains the results of searching a single paper source.
@@ -634,8 +639,8 @@ type RecordSearchResultInput struct {
 	// PaperIDs are the IDs of papers found (for keyword_paper_mappings).
 	PaperIDs []uuid.UUID `json:"paper_ids"`
 
-	// Status is the search status ("completed" or "failed").
-	Status string `json:"status"`
+	// Status is the search status (completed or failed).
+	Status domain.SearchStatus `json:"status"`
 
 	// ErrorMessage is set when the search failed.
 	ErrorMessage string `json:"error_message,omitempty"`

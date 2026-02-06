@@ -2,6 +2,7 @@ package domain
 
 import (
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"regexp"
 	"strings"
@@ -75,7 +76,7 @@ func ComputeSearchWindowHash(keywordID uuid.UUID, source SourceType, dateFrom, d
 	}
 	raw := fmt.Sprintf("%s|%s|%s|%s", keywordID, source, dfStr, dtStr)
 	hash := sha256.Sum256([]byte(raw))
-	return fmt.Sprintf("%x", hash)
+	return hex.EncodeToString(hash[:])
 }
 
 // KeywordSearch records a search operation for idempotency and audit.

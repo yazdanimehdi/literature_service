@@ -206,6 +206,22 @@ func (a *SearchActivities) SearchSingleSource(ctx context.Context, input SearchS
 		MinCitations:     input.MinCitations,
 	}
 
+	// Parse optional date filters for incremental searches.
+	if input.DateFrom != nil {
+		if t, err := parseSearchDate(*input.DateFrom); err == nil {
+			params.DateFrom = &t
+		} else {
+			logger.Warn("invalid DateFrom in search input, ignoring", "dateFrom", *input.DateFrom, "error", err)
+		}
+	}
+	if input.DateTo != nil {
+		if t, err := parseSearchDate(*input.DateTo); err == nil {
+			params.DateTo = &t
+		} else {
+			logger.Warn("invalid DateTo in search input, ignoring", "dateTo", *input.DateTo, "error", err)
+		}
+	}
+
 	if a.metrics != nil {
 		a.metrics.RecordSearchStarted(sourceName)
 	}
@@ -265,4 +281,15 @@ func (a *SearchActivities) SearchSingleSource(ctx context.Context, input SearchS
 	}
 
 	return output, nil
+}
+
+// parseSearchDate parses a date string in either YYYY-MM-DD or RFC3339 format.
+func parseSearchDate(s string) (time.Time, error) {
+	if len(s) > 40 {
+		return time.Time{}, fmt.Errorf("date string too long: %d characters", len(s))
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, s)
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	"go.temporal.io/sdk/temporal"
+
 	sharedllm "github.com/helixir/llm"
 
 	"github.com/helixir/literature-review-service/internal/domain"
@@ -147,8 +149,86 @@ func TestClassify_MessageSubstrings(t *testing.T) {
 
 func TestClassify_NilError(t *testing.T) {
 	got := Classify(nil)
+	if got != Permanent {
+		t.Errorf("Classify(nil) = %v, want Permanent", got)
+	}
+}
+
+func TestClassify_TemporalApplicationError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		expected ErrorCategory
+	}{
+		{
+			name:     "circuit_open type",
+			err:      temporal.NewNonRetryableApplicationError("circuit_open: llm", "circuit_open", nil),
+			expected: Transient,
+		},
+		{
+			name:     "budget_exceeded type",
+			err:      temporal.NewApplicationError("budget exhausted", "budget_exceeded", nil),
+			expected: Budget,
+		},
+		{
+			name:     "non-retryable without known type",
+			err:      temporal.NewNonRetryableApplicationError("something failed", "UNKNOWN_TYPE", nil),
+			expected: Permanent,
+		},
+		{
+			name:     "wrapped circuit_open",
+			err:      fmt.Errorf("activity failed: %w", temporal.NewNonRetryableApplicationError("circuit_open: search", "circuit_open", nil)),
+			expected: Transient,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Classify(tt.err)
+			if got != tt.expected {
+				t.Errorf("Classify(%v) = %v, want %v", tt.err, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestClassify_NarrowedSubstrings(t *testing.T) {
+	tests := []struct {
+		name     string
+		msg      string
+		expected ErrorCategory
+	}{
+		// "auth" alone should NOT match permanent (could be "author").
+		{"author is not permanent", "paper author not available", Transient},
+		// But "unauthorized" and "authentication failed" should.
+		{"unauthorized is permanent", "unauthorized: invalid token", Permanent},
+		{"authentication failed is permanent", "authentication failed for user", Permanent},
+		{"authorization failed is permanent", "authorization failed: insufficient scope", Permanent},
+		// "invalid" alone should NOT match permanent (could be "invalidated cache").
+		{"invalidated is not permanent", "cache invalidated during refresh", Transient},
+		// But "invalid_input" and "invalid request" should.
+		{"invalid_input is permanent", "invalid_input: missing field", Permanent},
+		{"invalid request is permanent", "invalid request body", Permanent},
+		{"invalid parameter is permanent", "invalid parameter: max_results", Permanent},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := Classify(errors.New(tt.msg))
+			if got != tt.expected {
+				t.Errorf("Classify(%q) = %v, want %v", tt.msg, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestClassify_TransientBeforePermanent(t *testing.T) {
+	// An error containing both transient and permanent substrings should be
+	// classified as transient (fail-safe bias).
+	err := errors.New("service unavailable: not found but temporary")
+	got := Classify(err)
 	if got != Transient {
-		t.Errorf("Classify(nil) = %v, want Transient", got)
+		t.Errorf("Classify(%q) = %v, want Transient (fail-safe bias)", err.Error(), got)
 	}
 }
 

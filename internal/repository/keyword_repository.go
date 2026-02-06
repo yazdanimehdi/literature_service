@@ -69,6 +69,12 @@ type KeywordRepository interface {
 	// Returns the matching papers and total count for pagination.
 	GetPapersForKeyword(ctx context.Context, keywordID uuid.UUID, limit, offset int) ([]*domain.Paper, int64, error)
 
+	// GetPapersForKeywordAndSource retrieves papers associated with a specific keyword
+	// and discovered via a specific source type. This prevents cross-source paper leakage
+	// when checking search deduplication for a single source.
+	// Papers are returned in order of association creation time (most recent first).
+	GetPapersForKeywordAndSource(ctx context.Context, keywordID uuid.UUID, source domain.SourceType, limit, offset int) ([]*domain.Paper, int64, error)
+
 	// List retrieves keywords matching the filter criteria.
 	// Returns the matching keywords and total count for pagination.
 	// The total count reflects all matching records regardless of limit/offset.

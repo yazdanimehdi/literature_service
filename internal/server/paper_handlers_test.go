@@ -164,6 +164,10 @@ func (m *paperTestKeywordRepo) GetPapersForKeyword(_ context.Context, _ uuid.UUI
 	return nil, 0, nil
 }
 
+func (m *paperTestKeywordRepo) GetPapersForKeywordAndSource(_ context.Context, _ uuid.UUID, _ domain.SourceType, _, _ int) ([]*domain.Paper, int64, error) {
+	return nil, 0, nil
+}
+
 func (m *paperTestKeywordRepo) List(ctx context.Context, filter repository.KeywordFilter) ([]*domain.Keyword, int64, error) {
 	if m.listFunc != nil {
 		return m.listFunc(ctx, filter)

@@ -135,7 +135,7 @@ func (c *Client) Upsert(ctx context.Context, point PaperPoint) error {
 		Points: []*pb.PointStruct{
 			{
 				Id:      pb.NewIDUUID(point.PaperID.String()),
-				Vectors: pb.NewVectorsDense(point.Embedding),
+				Vectors: pb.NewVectors(point.Embedding...),
 			},
 		},
 	})

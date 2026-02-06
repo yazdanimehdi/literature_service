@@ -164,6 +164,14 @@ func (m *mockKeywordRepository) GetPapersForKeyword(ctx context.Context, keyword
 	return args.Get(0).([]*domain.Paper), args.Get(1).(int64), args.Error(2)
 }
 
+func (m *mockKeywordRepository) GetPapersForKeywordAndSource(ctx context.Context, keywordID uuid.UUID, source domain.SourceType, limit, offset int) ([]*domain.Paper, int64, error) {
+	args := m.Called(ctx, keywordID, source, limit, offset)
+	if args.Get(0) == nil {
+		return nil, args.Get(1).(int64), args.Error(2)
+	}
+	return args.Get(0).([]*domain.Paper), args.Get(1).(int64), args.Error(2)
+}
+
 func (m *mockKeywordRepository) List(ctx context.Context, filter repository.KeywordFilter) ([]*domain.Keyword, int64, error) {
 	args := m.Called(ctx, filter)
 	if args.Get(0) == nil {
@@ -1015,4 +1023,469 @@ func TestUpdatePauseState_Error(t *testing.T) {
 	assert.Contains(t, err.Error(), "update pause state")
 
 	reviewRepo.AssertExpectations(t)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: CheckSearchCompleted
+// ---------------------------------------------------------------------------
+
+func TestCheckSearchCompleted_CacheHit(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	keywordID := uuid.New()
+	searchedAt := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
+
+	keywordRepo.On("GetLastSearch", mock.Anything, keywordID, domain.SourceTypeSemanticScholar).
+		Return(&domain.KeywordSearch{
+			ID:          uuid.New(),
+			KeywordID:   keywordID,
+			SourceAPI:   domain.SourceTypeSemanticScholar,
+			SearchedAt:  searchedAt,
+			PapersFound: 5,
+			Status:      domain.SearchStatusCompleted,
+		}, nil)
+
+	paper1ID := uuid.New()
+	paper2ID := uuid.New()
+	paper3ID := uuid.New()
+	cachedPapers := []*domain.Paper{
+		{ID: paper1ID, CanonicalID: "doi:10.1234/p1", Title: "Paper 1"},
+		{ID: paper2ID, CanonicalID: "doi:10.1234/p2", Title: "Paper 2"},
+		{ID: paper3ID, CanonicalID: "doi:10.1234/p3", Title: "Paper 3"},
+	}
+
+	keywordRepo.On("GetPapersForKeywordAndSource", mock.Anything, keywordID, domain.SourceTypeSemanticScholar, 200, 0).
+		Return(cachedPapers, int64(3), nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.CheckSearchCompleted)
+
+	input := CheckSearchCompletedInput{
+		KeywordID: keywordID,
+		Keyword:   "CRISPR",
+		Source:    domain.SourceTypeSemanticScholar,
+	}
+
+	result, err := env.ExecuteActivity(act.CheckSearchCompleted, input)
+	require.NoError(t, err)
+
+	var output CheckSearchCompletedOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.True(t, output.AlreadyCompleted)
+	assert.Equal(t, 5, output.PapersFoundCount)
+	assert.Len(t, output.PreviouslyFoundPapers, 3)
+	assert.Equal(t, "2026-02-01T12:00:00Z", output.SearchedAt)
+
+	keywordRepo.AssertExpectations(t)
+}
+
+func TestCheckSearchCompleted_NeverSearched(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	keywordID := uuid.New()
+
+	keywordRepo.On("GetLastSearch", mock.Anything, keywordID, domain.SourceTypeOpenAlex).
+		Return(nil, domain.NewNotFoundError("search", keywordID.String()))
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.CheckSearchCompleted)
+
+	input := CheckSearchCompletedInput{
+		KeywordID: keywordID,
+		Keyword:   "gene therapy",
+		Source:    domain.SourceTypeOpenAlex,
+	}
+
+	result, err := env.ExecuteActivity(act.CheckSearchCompleted, input)
+	require.NoError(t, err)
+
+	var output CheckSearchCompletedOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.False(t, output.AlreadyCompleted)
+	assert.Empty(t, output.PreviouslyFoundPapers)
+
+	keywordRepo.AssertExpectations(t)
+}
+
+func TestCheckSearchCompleted_PreviousSearchFailed(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	keywordID := uuid.New()
+
+	keywordRepo.On("GetLastSearch", mock.Anything, keywordID, domain.SourceTypePubMed).
+		Return(&domain.KeywordSearch{
+			ID:        uuid.New(),
+			KeywordID: keywordID,
+			SourceAPI: domain.SourceTypePubMed,
+			Status:    domain.SearchStatusFailed,
+		}, nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.CheckSearchCompleted)
+
+	input := CheckSearchCompletedInput{
+		KeywordID: keywordID,
+		Keyword:   "protein folding",
+		Source:    domain.SourceTypePubMed,
+	}
+
+	result, err := env.ExecuteActivity(act.CheckSearchCompleted, input)
+	require.NoError(t, err)
+
+	var output CheckSearchCompletedOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.False(t, output.AlreadyCompleted)
+
+	keywordRepo.AssertExpectations(t)
+	// GetPapersForKeywordAndSource should NOT be called since the search was not completed.
+	keywordRepo.AssertNotCalled(t, "GetPapersForKeywordAndSource", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestCheckSearchCompleted_PaperFetchError(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	keywordID := uuid.New()
+
+	keywordRepo.On("GetLastSearch", mock.Anything, keywordID, domain.SourceTypeSemanticScholar).
+		Return(&domain.KeywordSearch{
+			ID:          uuid.New(),
+			KeywordID:   keywordID,
+			SourceAPI:   domain.SourceTypeSemanticScholar,
+			SearchedAt:  time.Now(),
+			PapersFound: 10,
+			Status:      domain.SearchStatusCompleted,
+		}, nil)
+
+	keywordRepo.On("GetPapersForKeywordAndSource", mock.Anything, keywordID, domain.SourceTypeSemanticScholar, 200, 0).
+		Return(nil, int64(0), assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.CheckSearchCompleted)
+
+	input := CheckSearchCompletedInput{
+		KeywordID: keywordID,
+		Keyword:   "RNA interference",
+		Source:    domain.SourceTypeSemanticScholar,
+	}
+
+	result, err := env.ExecuteActivity(act.CheckSearchCompleted, input)
+	require.NoError(t, err)
+
+	var output CheckSearchCompletedOutput
+	require.NoError(t, result.Get(&output))
+
+	// Falls back to re-search when paper fetch fails.
+	assert.False(t, output.AlreadyCompleted)
+
+	keywordRepo.AssertExpectations(t)
+}
+
+func TestCheckSearchCompleted_UsesSourceFilter(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	keywordID := uuid.New()
+
+	keywordRepo.On("GetLastSearch", mock.Anything, keywordID, domain.SourceTypeSemanticScholar).
+		Return(&domain.KeywordSearch{
+			ID:          uuid.New(),
+			KeywordID:   keywordID,
+			SourceAPI:   domain.SourceTypeSemanticScholar,
+			SearchedAt:  time.Now(),
+			PapersFound: 3,
+			Status:      domain.SearchStatusCompleted,
+		}, nil)
+
+	// Verify the source filter is passed correctly using mock.MatchedBy.
+	keywordRepo.On("GetPapersForKeywordAndSource",
+		mock.Anything,
+		keywordID,
+		mock.MatchedBy(func(src domain.SourceType) bool {
+			return src == domain.SourceTypeSemanticScholar
+		}),
+		200,
+		0,
+	).Return([]*domain.Paper{
+		{ID: uuid.New(), Title: "Filtered Paper"},
+	}, int64(1), nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.CheckSearchCompleted)
+
+	input := CheckSearchCompletedInput{
+		KeywordID: keywordID,
+		Keyword:   "CRISPR-Cas9",
+		Source:    domain.SourceTypeSemanticScholar,
+	}
+
+	result, err := env.ExecuteActivity(act.CheckSearchCompleted, input)
+	require.NoError(t, err)
+
+	var output CheckSearchCompletedOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.True(t, output.AlreadyCompleted)
+	assert.Len(t, output.PreviouslyFoundPapers, 1)
+
+	keywordRepo.AssertExpectations(t)
+	// Verify GetPapersForKeyword (without source filter) was NOT called.
+	keywordRepo.AssertNotCalled(t, "GetPapersForKeyword", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: RecordSearchResult
+// ---------------------------------------------------------------------------
+
+func TestRecordSearchResult_Success(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	keywordID := uuid.New()
+	paperID1 := uuid.New()
+	paperID2 := uuid.New()
+
+	keywordRepo.On("RecordSearch", mock.Anything, mock.MatchedBy(func(s *domain.KeywordSearch) bool {
+		return s.KeywordID == keywordID &&
+			s.SourceAPI == domain.SourceTypeOpenAlex &&
+			s.PapersFound == 2 &&
+			s.Status == domain.SearchStatusCompleted &&
+			s.SearchWindowHash != ""
+	})).Return(nil)
+
+	keywordRepo.On("BulkAddPaperMappings", mock.Anything, mock.MatchedBy(func(mappings []*domain.KeywordPaperMapping) bool {
+		if len(mappings) != 2 {
+			return false
+		}
+		for _, m := range mappings {
+			if m.KeywordID != keywordID {
+				return false
+			}
+			if m.MappingType != domain.MappingTypeQueryMatch {
+				return false
+			}
+			if m.SourceType != domain.SourceTypeOpenAlex {
+				return false
+			}
+		}
+		return mappings[0].PaperID == paperID1 && mappings[1].PaperID == paperID2
+	})).Return(nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.RecordSearchResult)
+
+	input := RecordSearchResultInput{
+		KeywordID:   keywordID,
+		Source:      domain.SourceTypeOpenAlex,
+		PapersFound: 2,
+		PaperIDs:    []uuid.UUID{paperID1, paperID2},
+		Status:      domain.SearchStatusCompleted,
+	}
+
+	_, err := env.ExecuteActivity(act.RecordSearchResult, input)
+	require.NoError(t, err)
+
+	keywordRepo.AssertExpectations(t)
+}
+
+func TestRecordSearchResult_WithDateFrom_RFC3339(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	keywordID := uuid.New()
+	dateFrom := "2026-02-01T10:00:00Z"
+
+	expectedHash := domain.ComputeSearchWindowHash(keywordID, domain.SourceTypeSemanticScholar, &dateFrom, nil)
+
+	keywordRepo.On("RecordSearch", mock.Anything, mock.MatchedBy(func(s *domain.KeywordSearch) bool {
+		return s.KeywordID == keywordID &&
+			s.SourceAPI == domain.SourceTypeSemanticScholar &&
+			s.SearchWindowHash == expectedHash &&
+			s.DateFrom != nil &&
+			s.DateFrom.Year() == 2026 &&
+			s.DateFrom.Month() == time.February &&
+			s.DateFrom.Day() == 1
+	})).Return(nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.RecordSearchResult)
+
+	input := RecordSearchResultInput{
+		KeywordID:   keywordID,
+		Source:      domain.SourceTypeSemanticScholar,
+		DateFrom:    &dateFrom,
+		PapersFound: 0,
+		PaperIDs:    nil,
+		Status:      domain.SearchStatusCompleted,
+	}
+
+	_, err := env.ExecuteActivity(act.RecordSearchResult, input)
+	require.NoError(t, err)
+
+	keywordRepo.AssertExpectations(t)
+	// BulkAddPaperMappings should NOT be called when PaperIDs is empty.
+	keywordRepo.AssertNotCalled(t, "BulkAddPaperMappings", mock.Anything, mock.Anything)
+}
+
+func TestRecordSearchResult_FailedSearch(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	keywordID := uuid.New()
+
+	keywordRepo.On("RecordSearch", mock.Anything, mock.MatchedBy(func(s *domain.KeywordSearch) bool {
+		return s.KeywordID == keywordID &&
+			s.Status == domain.SearchStatusFailed &&
+			s.ErrorMessage == "timeout" &&
+			s.PapersFound == 0
+	})).Return(nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.RecordSearchResult)
+
+	input := RecordSearchResultInput{
+		KeywordID:    keywordID,
+		Source:       domain.SourceTypePubMed,
+		PapersFound:  0,
+		PaperIDs:     nil,
+		Status:       domain.SearchStatusFailed,
+		ErrorMessage: "timeout",
+	}
+
+	_, err := env.ExecuteActivity(act.RecordSearchResult, input)
+	require.NoError(t, err)
+
+	keywordRepo.AssertExpectations(t)
+	// BulkAddPaperMappings should NOT be called when there are no paper IDs.
+	keywordRepo.AssertNotCalled(t, "BulkAddPaperMappings", mock.Anything, mock.Anything)
+}
+
+func TestRecordSearchResult_MappingFailureNonFatal(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	keywordID := uuid.New()
+	paperID := uuid.New()
+
+	keywordRepo.On("RecordSearch", mock.Anything, mock.MatchedBy(func(s *domain.KeywordSearch) bool {
+		return s.KeywordID == keywordID && s.Status == domain.SearchStatusCompleted
+	})).Return(nil)
+
+	keywordRepo.On("BulkAddPaperMappings", mock.Anything, mock.Anything).
+		Return(assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.RecordSearchResult)
+
+	input := RecordSearchResultInput{
+		KeywordID:   keywordID,
+		Source:      domain.SourceTypeSemanticScholar,
+		PapersFound: 1,
+		PaperIDs:    []uuid.UUID{paperID},
+		Status:      domain.SearchStatusCompleted,
+	}
+
+	// The activity should still succeed even when BulkAddPaperMappings fails.
+	_, err := env.ExecuteActivity(act.RecordSearchResult, input)
+	require.NoError(t, err)
+
+	keywordRepo.AssertExpectations(t)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: parseDate
+// ---------------------------------------------------------------------------
+
+func TestParseDate_Formats(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+		year    int
+		month   time.Month
+		day     int
+	}{
+		{
+			name:    "YYYY-MM-DD format",
+			input:   "2026-01-15",
+			wantErr: false,
+			year:    2026,
+			month:   time.January,
+			day:     15,
+		},
+		{
+			name:    "RFC3339 format",
+			input:   "2026-02-01T10:00:00Z",
+			wantErr: false,
+			year:    2026,
+			month:   time.February,
+			day:     1,
+		},
+		{
+			name:    "invalid date string",
+			input:   "invalid",
+			wantErr: true,
+		},
+		{
+			name:    "string exceeds max length",
+			input:   "01234567890123456789012345678901234567890123456789",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseDate(tt.input)
+			if tt.wantErr {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.year, result.Year())
+			assert.Equal(t, tt.month, result.Month())
+			assert.Equal(t, tt.day, result.Day())
+		})
+	}
 }

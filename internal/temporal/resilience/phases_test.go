@@ -106,6 +106,22 @@ func TestPhaseConfig_BackoffCapping(t *testing.T) {
 	}
 }
 
+func TestPhaseConfig_BackoffZeroValues(t *testing.T) {
+	// A zero-valued PhaseConfig should still produce sensible backoffs
+	// rather than returning 0 or looping forever.
+	cfg := PhaseConfig{} // all zero values
+
+	got := cfg.backoffForAttempt(0)
+	if got != 1*time.Second {
+		t.Errorf("backoffForAttempt(0) with zero config = %v, want 1s (default)", got)
+	}
+
+	got = cfg.backoffForAttempt(1)
+	if got != 2*time.Second {
+		t.Errorf("backoffForAttempt(1) with zero config = %v, want 2s (1s * 2.0 default)", got)
+	}
+}
+
 func TestPhaseCriticality_String(t *testing.T) {
 	tests := []struct {
 		c    PhaseCriticality

@@ -162,6 +162,19 @@ func (a *IngestionActivities) SubmitPapersForIngestion(ctx context.Context, inpu
 		"paperCount", len(input.Papers),
 	)
 
+	// Circuit breaker check — fail the entire batch early if ingestion is down.
+	if a.breakers != nil {
+		cb := a.breakers.Get("ingestion")
+		if cbErr := cb.Allow(); cbErr != nil {
+			logger.Warn("ingestion circuit breaker open", "error", cbErr)
+			return nil, temporal.NewNonRetryableApplicationError(
+				"circuit_open: ingestion",
+				"circuit_open",
+				cbErr,
+			)
+		}
+	}
+
 	result := &SubmitPapersForIngestionOutput{
 		RunIDs: make(map[string]string),
 	}
@@ -188,10 +201,16 @@ func (a *IngestionActivities) SubmitPapersForIngestion(ctx context.Context, inpu
 				"paperID", paper.PaperID,
 				"error", err,
 			)
+			if a.breakers != nil {
+				a.breakers.Get("ingestion").RecordFailure()
+			}
 			result.Failed++
 			continue
 		}
 
+		if a.breakers != nil {
+			a.breakers.Get("ingestion").RecordSuccess()
+		}
 		result.RunIDs[paper.PaperID.String()] = res.RunID
 		result.Submitted++
 	}
@@ -220,6 +239,19 @@ func (a *IngestionActivities) DownloadAndIngestPapers(ctx context.Context, input
 	}
 	if a.streamingClient == nil {
 		return nil, fmt.Errorf("streaming client is not configured")
+	}
+
+	// Circuit breaker check — fail the entire batch early if ingestion is down.
+	if a.breakers != nil {
+		cb := a.breakers.Get("ingestion")
+		if cbErr := cb.Allow(); cbErr != nil {
+			logger.Warn("ingestion circuit breaker open for download+ingest", "error", cbErr)
+			return nil, temporal.NewNonRetryableApplicationError(
+				"circuit_open: ingestion",
+				"circuit_open",
+				cbErr,
+			)
+		}
 	}
 
 	output := &DownloadAndIngestOutput{
@@ -289,12 +321,18 @@ func (a *IngestionActivities) DownloadAndIngestPapers(ctx context.Context, input
 				"paperID", paper.PaperID,
 				"error", err,
 			)
+			if a.breakers != nil {
+				a.breakers.Get("ingestion").RecordFailure()
+			}
 			output.Failed++
 			result.Error = fmt.Sprintf("ingestion failed: %v", err)
 			output.Results = append(output.Results, result)
 			continue
 		}
 
+		if a.breakers != nil {
+			a.breakers.Get("ingestion").RecordSuccess()
+		}
 		result.FileID = ingestionResult.FileID
 		result.IngestionRunID = ingestionResult.RunID
 		result.Status = ingestionResult.Status

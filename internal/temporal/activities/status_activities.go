@@ -104,10 +104,19 @@ func (a *StatusActivities) SaveKeywords(ctx context.Context, input SaveKeywordsI
 	}
 
 	keywordIDs := make([]uuid.UUID, 0, len(keywords))
-	keywordIDMap := make(map[string]uuid.UUID, len(keywords))
+	keywordIDMap := make(map[string]uuid.UUID, len(keywords)*2)
 	for _, kw := range keywords {
 		keywordIDs = append(keywordIDs, kw.ID)
+		// Store by both original keyword and normalized form so callers
+		// can look up by either the original or normalized string.
 		keywordIDMap[kw.Keyword] = kw.ID
+		keywordIDMap[kw.NormalizedKeyword] = kw.ID
+	}
+	// Also map back from the input keywords (which may differ in case/whitespace).
+	for i, kw := range keywords {
+		if i < len(input.Keywords) {
+			keywordIDMap[input.Keywords[i]] = kw.ID
+		}
 	}
 
 	// NewCount approximation: we cannot distinguish new from existing in BulkGetOrCreate
@@ -329,8 +338,12 @@ func (a *StatusActivities) CheckSearchCompleted(ctx context.Context, input Check
 		return &CheckSearchCompletedOutput{AlreadyCompleted: false}, nil
 	}
 
-	// Fetch cached papers from keyword_paper_mappings.
-	papers, _, err := a.keywordRepo.GetPapersForKeyword(ctx, input.KeywordID, 1000, 0)
+	// Fetch cached papers from keyword_paper_mappings, filtered by source
+	// to avoid cross-source paper leakage.
+	// Limit to 200 papers to prevent workflow history bloat — each paper is ~7KB,
+	// so 200 papers ≈ 1.4MB per cached search in Temporal serialization.
+	const maxCachedPapers = 200
+	papers, _, err := a.keywordRepo.GetPapersForKeywordAndSource(ctx, input.KeywordID, input.Source, maxCachedPapers, 0)
 	if err != nil {
 		logger.Warn("failed to fetch cached papers, will re-search",
 			"keyword", input.Keyword,
@@ -370,9 +383,9 @@ func (a *StatusActivities) RecordSearchResult(ctx context.Context, input RecordS
 	// Compute search window hash for idempotency.
 	hash := domain.ComputeSearchWindowHash(input.KeywordID, input.Source, input.DateFrom, input.DateTo)
 
-	status := domain.SearchStatusCompleted
-	if input.Status == "failed" {
-		status = domain.SearchStatusFailed
+	status := input.Status
+	if status == "" {
+		status = domain.SearchStatusCompleted
 	}
 
 	search := &domain.KeywordSearch{
@@ -387,13 +400,23 @@ func (a *StatusActivities) RecordSearchResult(ctx context.Context, input RecordS
 	// Parse optional date range.
 	if input.DateFrom != nil {
 		t, err := parseDate(*input.DateFrom)
-		if err == nil {
+		if err != nil {
+			logger.Warn("invalid DateFrom format, ignoring",
+				"dateFrom", *input.DateFrom,
+				"error", err,
+			)
+		} else {
 			search.DateFrom = &t
 		}
 	}
 	if input.DateTo != nil {
 		t, err := parseDate(*input.DateTo)
-		if err == nil {
+		if err != nil {
+			logger.Warn("invalid DateTo format, ignoring",
+				"dateTo", *input.DateTo,
+				"error", err,
+			)
+		} else {
 			search.DateTo = &t
 		}
 	}
@@ -434,7 +457,19 @@ func (a *StatusActivities) RecordSearchResult(ctx context.Context, input RecordS
 	return nil
 }
 
-// parseDate parses a date string in YYYY-MM-DD format.
+// maxDateStringLen is the maximum length of a date string we accept for parsing.
+// RFC3339 with timezone offset is at most ~35 chars ("2006-01-02T15:04:05.999999999Z07:00").
+const maxDateStringLen = 40
+
+// parseDate parses a date string in YYYY-MM-DD or RFC3339 format.
+// RFC3339 support is needed because SearchedAt timestamps are formatted as RFC3339
+// and flow through as DateFrom values for forward searches.
 func parseDate(s string) (time.Time, error) {
-	return time.Parse("2006-01-02", s)
+	if len(s) > maxDateStringLen {
+		return time.Time{}, fmt.Errorf("date string too long: %d characters (max %d)", len(s), maxDateStringLen)
+	}
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339, s)
 }

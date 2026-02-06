@@ -51,7 +51,7 @@ var defaultBreakerConfigs = map[string]llm.CircuitBreakerConfig{
 // Temporal's workflow determinism requirements. The workflow sees circuit-open
 // errors as transient errors and retries after backoff.
 type BreakerRegistry struct {
-	mu       sync.Mutex
+	mu       sync.RWMutex
 	breakers map[string]*llm.CircuitBreaker
 	configs  map[string]llm.CircuitBreakerConfig
 }
@@ -85,9 +85,19 @@ func NewBreakerRegistryWithConfigs(configs map[string]llm.CircuitBreakerConfig) 
 // If no breaker exists yet, one is created using the configured (or default)
 // parameters. This method is safe for concurrent use.
 func (r *BreakerRegistry) Get(name string) *llm.CircuitBreaker {
+	// Fast path: read lock for existing breakers.
+	r.mu.RLock()
+	if cb, ok := r.breakers[name]; ok {
+		r.mu.RUnlock()
+		return cb
+	}
+	r.mu.RUnlock()
+
+	// Slow path: write lock to create new breaker.
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// Double-check after acquiring write lock.
 	if cb, ok := r.breakers[name]; ok {
 		return cb
 	}
@@ -109,9 +119,9 @@ func (r *BreakerRegistry) Get(name string) *llm.CircuitBreaker {
 // State returns the current state of the named breaker, or CircuitClosed
 // if the breaker has not been created yet.
 func (r *BreakerRegistry) State(name string) llm.CircuitState {
-	r.mu.Lock()
+	r.mu.RLock()
 	cb, ok := r.breakers[name]
-	r.mu.Unlock()
+	r.mu.RUnlock()
 
 	if !ok {
 		return llm.CircuitClosed

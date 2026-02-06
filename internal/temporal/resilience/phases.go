@@ -56,12 +56,27 @@ type PhaseConfig struct {
 }
 
 // backoffForAttempt computes the backoff duration for the given attempt (0-indexed).
+// If InitialBackoff or BackoffMultiplier are zero, sensible defaults are used.
 func (p PhaseConfig) backoffForAttempt(attempt int) time.Duration {
 	backoff := p.InitialBackoff
+	if backoff <= 0 {
+		backoff = 1 * time.Second
+	}
+
+	multiplier := p.BackoffMultiplier
+	if multiplier <= 0 {
+		multiplier = 2.0
+	}
+
+	maxBackoff := p.MaxBackoff
+	if maxBackoff <= 0 {
+		maxBackoff = 60 * time.Second
+	}
+
 	for i := 0; i < attempt; i++ {
-		backoff = time.Duration(float64(backoff) * p.BackoffMultiplier)
-		if backoff > p.MaxBackoff {
-			backoff = p.MaxBackoff
+		backoff = time.Duration(float64(backoff) * multiplier)
+		if backoff > maxBackoff {
+			backoff = maxBackoff
 			break
 		}
 	}

@@ -264,9 +264,13 @@ func run() error {
 
 	// Create and register all activity structs.
 	budgetReporter := activities.NewOutboxBudgetReporter(db.Pool())
-	llmActivities := activities.NewLLMActivities(extractor, metrics,
+	llmOpts := []activities.LLMActivitiesOption{
 		activities.WithBudgetReporter(budgetReporter),
-	)
+	}
+	if ca, ok := extractor.(llm.CoverageAssessor); ok {
+		llmOpts = append(llmOpts, activities.WithCoverageAssessor(ca))
+	}
+	llmActivities := activities.NewLLMActivities(extractor, metrics, llmOpts...)
 	searchActivities := activities.NewSearchActivities(registry, metrics)
 	statusActivities := activities.NewStatusActivities(reviewRepo, keywordRepo, paperRepo, metrics)
 	ingestionActivities := activities.NewIngestionActivities(ingestionClient, pdfDownloader, ingestionClient, metrics)

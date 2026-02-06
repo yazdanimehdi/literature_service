@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +13,7 @@ import (
 	"github.com/helixir/literature-review-service/internal/domain"
 	"github.com/helixir/literature-review-service/internal/repository"
 	"github.com/helixir/literature-review-service/internal/temporal"
+	"github.com/helixir/literature-review-service/internal/temporal/workflows"
 
 	pb "github.com/helixir/literature-review-service/gen/proto/literaturereview/v1"
 )
@@ -227,4 +229,166 @@ func (s *LiteratureReviewServer) ListLiteratureReviews(ctx context.Context, req 
 		NextPageToken: encodePageToken(offset, limit, totalCount),
 		TotalCount:    int32(totalCount),
 	}, nil
+}
+
+// PauseReview requests the workflow to pause at the next checkpoint.
+// The workflow will complete its current activity and then enter a paused state.
+func (s *LiteratureReviewServer) PauseReview(ctx context.Context, req *pb.PauseReviewRequest) (*pb.PauseReviewResponse, error) {
+	if err := validateOrgProject(req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
+	if err := validateTenantAccess(ctx, req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
+	reviewID, err := validateUUID(req.ReviewId, "review_id")
+	if err != nil {
+		return nil, err
+	}
+
+	review, err := s.reviewRepo.Get(ctx, req.OrgId, req.ProjectId, reviewID)
+	if err != nil {
+		return nil, domainErrToGRPC(err)
+	}
+
+	if review.Status.IsTerminal() || review.Status == domain.ReviewStatusPaused {
+		return nil, status.Error(codes.FailedPrecondition,
+			fmt.Sprintf("cannot pause review in %s status", review.Status))
+	}
+
+	err = s.workflowClient.SignalWorkflow(ctx, review.TemporalWorkflowID, review.TemporalRunID,
+		temporal.SignalPause,
+		workflows.PauseSignal{Reason: domain.PauseReasonUser},
+	)
+	if err != nil {
+		return nil, domainErrToGRPC(err)
+	}
+
+	return &pb.PauseReviewResponse{Success: true, Message: "Review pausing"}, nil
+}
+
+// ResumeReview requests the workflow to resume from a paused state.
+// The workflow will continue from where it was paused.
+func (s *LiteratureReviewServer) ResumeReview(ctx context.Context, req *pb.ResumeReviewRequest) (*pb.ResumeReviewResponse, error) {
+	if err := validateOrgProject(req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
+	if err := validateTenantAccess(ctx, req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
+	reviewID, err := validateUUID(req.ReviewId, "review_id")
+	if err != nil {
+		return nil, err
+	}
+
+	review, err := s.reviewRepo.Get(ctx, req.OrgId, req.ProjectId, reviewID)
+	if err != nil {
+		return nil, domainErrToGRPC(err)
+	}
+
+	if review.Status != domain.ReviewStatusPaused {
+		return nil, status.Error(codes.FailedPrecondition,
+			fmt.Sprintf("cannot resume review in %s status", review.Status))
+	}
+
+	err = s.workflowClient.SignalWorkflow(ctx, review.TemporalWorkflowID, review.TemporalRunID,
+		temporal.SignalResume,
+		workflows.ResumeSignal{ResumedBy: "user"},
+	)
+	if err != nil {
+		return nil, domainErrToGRPC(err)
+	}
+
+	return &pb.ResumeReviewResponse{Success: true, Message: "Review resuming"}, nil
+}
+
+// StopReview requests graceful termination of the workflow with partial results.
+// If the review is paused, it is first resumed before stopping.
+func (s *LiteratureReviewServer) StopReview(ctx context.Context, req *pb.StopReviewRequest) (*pb.StopReviewResponse, error) {
+	if err := validateOrgProject(req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
+	if err := validateTenantAccess(ctx, req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
+	reviewID, err := validateUUID(req.ReviewId, "review_id")
+	if err != nil {
+		return nil, err
+	}
+
+	review, err := s.reviewRepo.Get(ctx, req.OrgId, req.ProjectId, reviewID)
+	if err != nil {
+		return nil, domainErrToGRPC(err)
+	}
+
+	if review.Status.IsTerminal() {
+		return nil, status.Error(codes.FailedPrecondition,
+			fmt.Sprintf("cannot stop review in %s status", review.Status))
+	}
+
+	// If paused, resume first so the workflow can receive the stop signal.
+	if review.Status == domain.ReviewStatusPaused {
+		_ = s.workflowClient.SignalWorkflow(ctx, review.TemporalWorkflowID, review.TemporalRunID,
+			temporal.SignalResume,
+			workflows.ResumeSignal{ResumedBy: "stop_request"},
+		)
+	}
+
+	err = s.workflowClient.SignalWorkflow(ctx, review.TemporalWorkflowID, review.TemporalRunID,
+		temporal.SignalStop,
+		workflows.StopSignal{Reason: "user_requested"},
+	)
+	if err != nil {
+		return nil, domainErrToGRPC(err)
+	}
+
+	return &pb.StopReviewResponse{Success: true, Message: "Review stopping"}, nil
+}
+
+// ListPausedReviews returns all paused reviews for the given org and project.
+// Optionally filters by pause reason (user, budget_exhausted).
+func (s *LiteratureReviewServer) ListPausedReviews(ctx context.Context, req *pb.ListPausedReviewsRequest) (*pb.ListPausedReviewsResponse, error) {
+	if req.OrgId == "" {
+		return nil, status.Error(codes.InvalidArgument, "org_id is required")
+	}
+
+	if err := validateTenantAccess(ctx, req.OrgId, req.ProjectId); err != nil {
+		return nil, err
+	}
+
+	var reason domain.PauseReason
+	if req.PauseReason != "" {
+		if req.PauseReason != string(domain.PauseReasonUser) &&
+			req.PauseReason != string(domain.PauseReasonBudgetExhausted) {
+			return nil, status.Error(codes.InvalidArgument,
+				fmt.Sprintf("invalid pause_reason: must be 'user' or 'budget_exhausted', got %q", req.PauseReason))
+		}
+		reason = domain.PauseReason(req.PauseReason)
+	}
+
+	reviews, err := s.reviewRepo.FindPausedByReason(ctx, req.OrgId, req.ProjectId, reason)
+	if err != nil {
+		return nil, domainErrToGRPC(err)
+	}
+
+	pbReviews := make([]*pb.PausedReview, 0, len(reviews))
+	for _, r := range reviews {
+		pbReview := &pb.PausedReview{
+			ReviewId:      r.ID.String(),
+			ProjectId:     r.ProjectID,
+			PauseReason:   string(r.PauseReason),
+			PausedAtPhase: r.PausedAtPhase,
+		}
+		if r.PausedAt != nil {
+			pbReview.PausedAt = timestamppb.New(*r.PausedAt)
+		}
+		pbReviews = append(pbReviews, pbReview)
+	}
+
+	return &pb.ListPausedReviewsResponse{Reviews: pbReviews}, nil
 }

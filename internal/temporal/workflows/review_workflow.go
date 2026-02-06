@@ -195,10 +195,6 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	resumeCh := workflow.GetSignalChannel(ctx, SignalResume)
 	stopCh := workflow.GetSignalChannel(ctx, SignalStop)
 
-	// resumeCh is passed to checkPausePoint helper that blocks until resume is received.
-	// Until checkpoint logic is added in a later task, we suppress the unused variable error.
-	_ = resumeCh
-
 	var stopRequested bool
 
 	// Pause signal handler goroutine - listens for pause signals.
@@ -225,10 +221,6 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		stopRequested = true
 		logger.Info("stop requested, will complete current phase", "reason", signal.Reason)
 	})
-
-	// stopRequested is used by checkpoint logic (added in a later task).
-	// We reference it here to avoid unused variable errors.
-	_ = stopRequested
 
 	// Activity nil-pointer variables for method references.
 	var llmAct *activities.LLMActivities
@@ -377,6 +369,14 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		},
 	}).Get(cancelCtx, nil)
 
+	// Check for pause/stop after keyword extraction.
+	if err := checkPausePoint(ctx, progress, resumeCh, statusAct, input, logger); err != nil {
+		return handleFailure(err)
+	}
+	if shouldReturn, result, _ := checkStopPoint(ctx, stopRequested, progress, input, startTime, totalKeywords, totalPapersFound, 0, statusAct, eventAct, logger); shouldReturn {
+		return result, nil
+	}
+
 	// =========================================================================
 	// Phase 2: Concurrent paper search with rate limiting
 	// =========================================================================
@@ -487,6 +487,14 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	}
 	logger.Info("all searches completed", "totalPapers", len(allPapers))
 
+	// Check for pause/stop after searches complete.
+	if err := checkPausePoint(ctx, progress, resumeCh, statusAct, input, logger); err != nil {
+		return handleFailure(err)
+	}
+	if shouldReturn, result, _ := checkStopPoint(ctx, stopRequested, progress, input, startTime, totalKeywords, totalPapersFound, 0, statusAct, eventAct, logger); shouldReturn {
+		return result, nil
+	}
+
 	// Save discovered papers.
 	if len(allPapers) > 0 {
 		var savePapersOutput activities.SavePapersOutput
@@ -566,6 +574,14 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		}
 	}
 
+	// Check for pause/stop after batch spawn.
+	if err := checkPausePoint(ctx, progress, resumeCh, statusAct, input, logger); err != nil {
+		return handleFailure(err)
+	}
+	if shouldReturn, result, _ := checkStopPoint(ctx, stopRequested, progress, input, startTime, totalKeywords, totalPapersFound, 0, statusAct, eventAct, logger); shouldReturn {
+		return result, nil
+	}
+
 	// Wait for all batches to complete.
 	if progress.BatchesSpawned > 0 {
 		logger.Info("waiting for batch completion",
@@ -590,6 +606,14 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 
 	expansionRounds := 0
 	for round := 1; round <= input.Config.MaxExpansionDepth; round++ {
+		// Check for pause/stop at start of expansion round.
+		if err := checkPausePoint(ctx, progress, resumeCh, statusAct, input, logger); err != nil {
+			return handleFailure(err)
+		}
+		if shouldReturn, result, _ := checkStopPoint(ctx, stopRequested, progress, input, startTime, totalKeywords, totalPapersFound, expansionRounds, statusAct, eventAct, logger); shouldReturn {
+			return result, nil
+		}
+
 		// Check if we have reached the paper limit.
 		if totalPapersFound >= input.Config.MaxPapers && input.Config.MaxPapers > 0 {
 			logger.Info("paper limit reached, stopping expansion",

@@ -52,6 +52,8 @@ type Config struct {
 	Qdrant QdrantConfig `mapstructure:"qdrant"`
 	// Workflow contains workflow execution configuration.
 	Workflow WorkflowConfig `mapstructure:"workflow"`
+	// BudgetListener contains budget event listener settings.
+	BudgetListener BudgetListenerConfig `mapstructure:"budget_listener"`
 }
 
 // ServerConfig holds server configuration.
@@ -430,6 +432,16 @@ type IngestionServiceConfig struct {
 	TLS bool `mapstructure:"tls"`
 }
 
+// BudgetListenerConfig holds budget event listener settings.
+type BudgetListenerConfig struct {
+	// Enabled controls whether the budget listener is active.
+	Enabled bool `mapstructure:"enabled"`
+	// Topic is the Kafka topic for budget refill events from core_service.
+	Topic string `mapstructure:"topic"`
+	// GroupID is the Kafka consumer group ID.
+	GroupID string `mapstructure:"group_id"`
+}
+
 // QdrantConfig holds Qdrant vector store settings.
 type QdrantConfig struct {
 	// Address is the Qdrant gRPC address.
@@ -738,6 +750,11 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("workflow.batching.batch_size", 5)
 	v.SetDefault("workflow.batching.batch_timeout", "5s")
+
+	// Budget listener defaults
+	v.SetDefault("budget_listener.enabled", false)
+	v.SetDefault("budget_listener.topic", "events.budget.refilled")
+	v.SetDefault("budget_listener.group_id", "literature-review-service-budget-listener")
 }
 
 // Validate validates the configuration.

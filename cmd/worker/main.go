@@ -12,6 +12,7 @@ import (
 	"github.com/rs/zerolog"
 	"go.temporal.io/sdk/client"
 
+	"github.com/helixir/literature-review-service/internal/budget"
 	"github.com/helixir/literature-review-service/internal/config"
 	"github.com/helixir/literature-review-service/internal/database"
 	"github.com/helixir/literature-review-service/internal/dedup"
@@ -280,6 +281,37 @@ func run() error {
 	manager.RegisterActivity(eventActivities)
 	manager.RegisterActivity(dedupActivities)
 	manager.RegisterActivity(embeddingActivities)
+
+	// Start budget listener if enabled and Kafka is configured.
+	if cfg.BudgetListener.Enabled && cfg.Kafka.Enabled {
+		budgetListener := budget.NewListener(
+			budget.Config{
+				Brokers: cfg.Kafka.Brokers,
+				Topic:   cfg.BudgetListener.Topic,
+				GroupID: cfg.BudgetListener.GroupID,
+			},
+			temporalClient,
+			reviewRepo,
+			logger,
+		)
+		defer func() {
+			if err := budgetListener.Close(); err != nil {
+				logger.Error().Err(err).Msg("failed to close budget listener")
+			}
+		}()
+
+		// Run budget listener in background goroutine.
+		go func() {
+			if err := budgetListener.Run(ctx); err != nil && ctx.Err() == nil {
+				logger.Error().Err(err).Msg("budget listener error")
+			}
+		}()
+
+		logger.Info().
+			Str("topic", cfg.BudgetListener.Topic).
+			Str("group_id", cfg.BudgetListener.GroupID).
+			Msg("budget listener started")
+	}
 
 	logger.Info().
 		Str("task_queue", cfg.Temporal.TaskQueue).

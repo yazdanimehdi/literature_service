@@ -894,6 +894,49 @@ func isBudgetExhausted(err error) bool {
 	return sharedllm.ErrorKindOf(err) == sharedllm.ErrBudgetExceeded
 }
 
+// executeWithBudgetPause executes an activity and handles budget exhaustion by pausing.
+// If budget is exhausted, it sets pause state and waits for resume before retrying.
+func executeWithBudgetPause[T any](
+	ctx workflow.Context,
+	progress *workflowProgress,
+	resumeCh workflow.ReceiveChannel,
+	statusAct *activities.StatusActivities,
+	input ReviewWorkflowInput,
+	logger log.Logger,
+	activity interface{},
+	activityInput interface{},
+) (T, error) {
+	var result T
+
+	for {
+		future := workflow.ExecuteActivity(ctx, activity, activityInput)
+		err := future.Get(ctx, &result)
+
+		if err == nil {
+			return result, nil
+		}
+
+		if !isBudgetExhausted(err) {
+			return result, err // Non-budget error, propagate
+		}
+
+		// Budget exhausted - pause and wait
+		logger.Warn("budget exhausted, pausing workflow", "phase", progress.Phase)
+
+		progress.IsPaused = true
+		progress.PauseReason = domain.PauseReasonBudgetExhausted
+		progress.PausedAt = workflow.Now(ctx)
+		progress.PausedAtPhase = progress.Phase
+
+		if err := checkPausePoint(ctx, progress, resumeCh, statusAct, input, logger); err != nil {
+			return result, err
+		}
+
+		// Retry after resume
+		logger.Info("retrying activity after budget refill")
+	}
+}
+
 // checkPausePoint checks if the workflow is paused and waits for resume if so.
 // Returns an error if the context is cancelled while waiting.
 func checkPausePoint(

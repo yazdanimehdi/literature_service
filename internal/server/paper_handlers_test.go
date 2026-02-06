@@ -197,7 +197,7 @@ func newTestReview() *domain.LiteratureReviewRequest {
 		OrgID:         "org-1",
 		ProjectID:     "proj-1",
 		UserID:        "user-1",
-		OriginalQuery: "CRISPR gene editing",
+		Title: "CRISPR gene editing",
 		Status:        domain.ReviewStatusCompleted,
 		CreatedAt:     now,
 		UpdatedAt:     now,

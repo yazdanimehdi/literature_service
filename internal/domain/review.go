@@ -40,6 +40,22 @@ type ReviewConfiguration struct {
 	// MinCitations filters papers by minimum citation count.
 	MinCitations int `json:"min_citations,omitempty"`
 
+	// EnableRelevanceGate enables embedding-based keyword drift prevention
+	// during expansion rounds.
+	EnableRelevanceGate bool `json:"enable_relevance_gate"`
+
+	// RelevanceThreshold is the minimum cosine similarity (0.0-1.0) for a
+	// keyword to pass the relevance gate. Default: 0.3.
+	RelevanceThreshold float64 `json:"relevance_threshold,omitempty"`
+
+	// EnableCoverageReview enables LLM-based corpus coverage assessment
+	// after expansion rounds complete.
+	EnableCoverageReview bool `json:"enable_coverage_review"`
+
+	// CoverageThreshold is the minimum coverage score (0.0-1.0) below which
+	// the workflow will auto-trigger one more expansion round. Default: 0.7.
+	CoverageThreshold float64 `json:"coverage_threshold,omitempty"`
+
 	// LLMModel specifies the LLM to use for keyword extraction.
 	LLMModel string `json:"llm_model,omitempty"`
 
@@ -58,9 +74,13 @@ func DefaultReviewConfiguration() ReviewConfiguration {
 			SourceTypeOpenAlex,
 			SourceTypePubMed,
 		},
-		IncludePreprints:  true,
-		RequireOpenAccess: false,
-		MinCitations:      0,
+		IncludePreprints:     true,
+		RequireOpenAccess:    false,
+		MinCitations:         0,
+		EnableRelevanceGate:  true,
+		RelevanceThreshold:   0.3,
+		EnableCoverageReview: false,
+		CoverageThreshold:    0.7,
 	}
 }
 
@@ -104,8 +124,14 @@ type LiteratureReviewRequest struct {
 	ProjectID string `json:"project_id"`
 	UserID    string `json:"user_id"`
 
-	// Request details
-	OriginalQuery string `json:"original_query"`
+	// Title is the research topic title (required).
+	Title string `json:"title"`
+
+	// Description is an extended description of the review scope (optional).
+	Description string `json:"description,omitempty"`
+
+	// SeedKeywords are user-provided starting keywords (optional).
+	SeedKeywords []string `json:"seed_keywords,omitempty"`
 
 	// Temporal workflow tracking
 	TemporalWorkflowID string `json:"temporal_workflow_id,omitempty"`
@@ -118,6 +144,13 @@ type LiteratureReviewRequest struct {
 	PapersFoundCount    int          `json:"papers_found_count"`
 	PapersIngestedCount int          `json:"papers_ingested_count"`
 	PapersFailedCount   int          `json:"papers_failed_count"`
+
+	// CoverageScore is the LLM-assessed corpus coverage (0.0-1.0).
+	// Nil/zero if coverage review was not enabled.
+	CoverageScore *float64 `json:"coverage_score,omitempty"`
+
+	// CoverageReasoning is the LLM's assessment of coverage strengths and gaps.
+	CoverageReasoning string `json:"coverage_reasoning,omitempty"`
 
 	// Configuration (stored as JSONB)
 	Configuration ReviewConfiguration `json:"configuration"`

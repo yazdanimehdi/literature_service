@@ -235,6 +235,7 @@ func TestReviewStatus_IsTerminal(t *testing.T) {
 		{ReviewStatusSearching, false},
 		{ReviewStatusExpanding, false},
 		{ReviewStatusIngesting, false},
+		{ReviewStatusReviewing, false},
 		{ReviewStatusPaused, false},
 		{ReviewStatusCompleted, true},
 		{ReviewStatusPartial, true},
@@ -386,6 +387,7 @@ func TestLiteratureReviewRequest_IsActive(t *testing.T) {
 		{"searching is active", ReviewStatusSearching, true},
 		{"expanding is active", ReviewStatusExpanding, true},
 		{"ingesting is active", ReviewStatusIngesting, true},
+		{"reviewing is active", ReviewStatusReviewing, true},
 		{"completed is not active", ReviewStatusCompleted, false},
 		{"partial is not active", ReviewStatusPartial, false},
 		{"failed is not active", ReviewStatusFailed, false},
@@ -1545,6 +1547,18 @@ func TestLiteratureReviewRequest_PauseFields(t *testing.T) {
 		}
 		assert.True(t, req.IsActive())
 	})
+}
+
+func TestReviewStatusReviewing_IsNotTerminal(t *testing.T) {
+	assert.False(t, ReviewStatusReviewing.IsTerminal())
+}
+
+func TestDefaultReviewConfiguration_RelevanceGateDefaults(t *testing.T) {
+	cfg := DefaultReviewConfiguration()
+	assert.True(t, cfg.EnableRelevanceGate)
+	assert.InDelta(t, 0.3, cfg.RelevanceThreshold, 0.001)
+	assert.False(t, cfg.EnableCoverageReview)
+	assert.InDelta(t, 0.7, cfg.CoverageThreshold, 0.001)
 }
 
 func TestTenantFromIDs(t *testing.T) {

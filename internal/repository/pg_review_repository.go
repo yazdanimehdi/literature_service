@@ -49,6 +49,13 @@ var validStatusTransitions = map[domain.ReviewStatus][]domain.ReviewStatus{
 		domain.ReviewStatusCancelled,
 	},
 	domain.ReviewStatusIngesting: {
+		domain.ReviewStatusReviewing,
+		domain.ReviewStatusCompleted,
+		domain.ReviewStatusPartial,
+		domain.ReviewStatusFailed,
+		domain.ReviewStatusCancelled,
+	},
+	domain.ReviewStatusReviewing: {
 		domain.ReviewStatusCompleted,
 		domain.ReviewStatusPartial,
 		domain.ReviewStatusFailed,
@@ -97,26 +104,37 @@ func (r *PgReviewRepository) Create(ctx context.Context, review *domain.Literatu
 		return fmt.Errorf("failed to marshal source filters: %w", err)
 	}
 
+	seedKeywordsJSON, err := json.Marshal(review.SeedKeywords)
+	if err != nil {
+		return fmt.Errorf("failed to marshal seed keywords: %w", err)
+	}
+
 	query := `
 		INSERT INTO literature_review_requests (
-			id, org_id, project_id, user_id, original_query,
+			id, org_id, project_id, user_id, title,
+			description, seed_keywords,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
 			config_snapshot, source_filters,
+			coverage_score, coverage_reasoning,
 			created_at, updated_at, started_at, completed_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
-			$6, $7, $8,
-			$9, $10, $11, $12,
-			$13, $14,
-			$15, $16, $17, $18
+			$6, $7,
+			$8, $9, $10,
+			$11, $12, $13, $14,
+			$15, $16,
+			$17, $18,
+			$19, $20, $21, $22
 		)`
 
 	_, err = r.db.Exec(ctx, query,
-		review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+		review.ID, review.OrgID, review.ProjectID, review.UserID, review.Title,
+		review.Description, seedKeywordsJSON,
 		nullString(review.TemporalWorkflowID), nullString(review.TemporalRunID), review.Status,
 		review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 		configJSON, sourceFiltersJSON,
+		review.CoverageScore, nullString(review.CoverageReasoning),
 		review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
 	)
 
@@ -133,10 +151,12 @@ func (r *PgReviewRepository) Create(ctx context.Context, review *domain.Literatu
 // Get retrieves a literature review request by its ID within a tenant context.
 func (r *PgReviewRepository) Get(ctx context.Context, orgID, projectID string, id uuid.UUID) (*domain.LiteratureReviewRequest, error) {
 	query := `
-		SELECT id, org_id, project_id, user_id, original_query,
+		SELECT id, org_id, project_id, user_id, title,
+			description, seed_keywords,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
 			config_snapshot, source_filters,
+			coverage_score, coverage_reasoning,
 			created_at, updated_at, started_at, completed_at,
 			pause_reason, paused_at, paused_at_phase
 		FROM literature_review_requests
@@ -185,10 +205,12 @@ func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string
 	// This method requires the caller to wrap calls in an explicit transaction.
 
 	selectQuery := `
-		SELECT id, org_id, project_id, user_id, original_query,
+		SELECT id, org_id, project_id, user_id, title,
+			description, seed_keywords,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
 			config_snapshot, source_filters,
+			coverage_score, coverage_reasoning,
 			created_at, updated_at, started_at, completed_at,
 			pause_reason, paused_at, paused_at_phase
 		FROM literature_review_requests
@@ -227,25 +249,36 @@ func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string
 		return fmt.Errorf("failed to marshal source filters: %w", err)
 	}
 
+	seedKeywordsJSON, err := json.Marshal(review.SeedKeywords)
+	if err != nil {
+		return fmt.Errorf("failed to marshal seed keywords: %w", err)
+	}
+
 	updateQuery := `
 		UPDATE literature_review_requests SET
-			original_query = $1,
-			temporal_workflow_id = $2,
-			temporal_run_id = $3,
-			status = $4,
-			keywords_found_count = $5,
-			papers_found_count = $6,
-			papers_ingested_count = $7,
-			papers_failed_count = $8,
-			config_snapshot = $9,
-			source_filters = $10,
-			updated_at = $11,
-			started_at = $12,
-			completed_at = $13
-		WHERE id = $14 AND org_id = $15 AND project_id = $16`
+			title = $1,
+			description = $2,
+			seed_keywords = $3,
+			temporal_workflow_id = $4,
+			temporal_run_id = $5,
+			status = $6,
+			keywords_found_count = $7,
+			papers_found_count = $8,
+			papers_ingested_count = $9,
+			papers_failed_count = $10,
+			config_snapshot = $11,
+			source_filters = $12,
+			coverage_score = $13,
+			coverage_reasoning = $14,
+			updated_at = $15,
+			started_at = $16,
+			completed_at = $17
+		WHERE id = $18 AND org_id = $19 AND project_id = $20`
 
 	_, err = r.db.Exec(ctx, updateQuery,
-		review.OriginalQuery,
+		review.Title,
+		review.Description,
+		seedKeywordsJSON,
 		nullString(review.TemporalWorkflowID),
 		nullString(review.TemporalRunID),
 		review.Status,
@@ -255,6 +288,8 @@ func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string
 		review.PapersFailedCount,
 		configJSON,
 		sourceFiltersJSON,
+		review.CoverageScore,
+		nullString(review.CoverageReasoning),
 		review.UpdatedAt,
 		review.StartedAt,
 		review.CompletedAt,
@@ -342,10 +377,12 @@ func (r *PgReviewRepository) List(ctx context.Context, filter ReviewFilter) ([]*
 
 	// Query with pagination
 	selectQuery := fmt.Sprintf(`
-		SELECT id, org_id, project_id, user_id, original_query,
+		SELECT id, org_id, project_id, user_id, title,
+			description, seed_keywords,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
 			config_snapshot, source_filters,
+			coverage_score, coverage_reasoning,
 			created_at, updated_at, started_at, completed_at,
 			pause_reason, paused_at, paused_at_phase
 		FROM literature_review_requests
@@ -412,10 +449,12 @@ func (r *PgReviewRepository) GetByWorkflowID(ctx context.Context, workflowID str
 	}
 
 	query := `
-		SELECT id, org_id, project_id, user_id, original_query,
+		SELECT id, org_id, project_id, user_id, title,
+			description, seed_keywords,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
 			config_snapshot, source_filters,
+			coverage_score, coverage_reasoning,
 			created_at, updated_at, started_at, completed_at,
 			pause_reason, paused_at, paused_at_phase
 		FROM literature_review_requests
@@ -440,10 +479,12 @@ func (r *PgReviewRepository) FindPausedByReason(ctx context.Context, orgID, proj
 	}
 
 	query := `
-		SELECT id, org_id, project_id, user_id, original_query,
+		SELECT id, org_id, project_id, user_id, title,
+			description, seed_keywords,
 			temporal_workflow_id, temporal_run_id, status,
 			keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count,
 			config_snapshot, source_filters,
+			coverage_score, coverage_reasoning,
 			created_at, updated_at, started_at, completed_at,
 			pause_reason, paused_at, paused_at_phase
 		FROM literature_review_requests
@@ -511,8 +552,10 @@ type reviewScanDest struct {
 	review             domain.LiteratureReviewRequest
 	configJSON         []byte
 	sourceFiltersJSON  []byte
+	seedKeywordsJSON   []byte
 	temporalWorkflowID *string
 	temporalRunID      *string
+	coverageReasoning  *string
 	pauseReason        *string
 	pausedAtPhase      *string
 }
@@ -520,10 +563,12 @@ type reviewScanDest struct {
 // destinations returns the slice of pointers for Scan operations.
 func (d *reviewScanDest) destinations() []interface{} {
 	return []interface{}{
-		&d.review.ID, &d.review.OrgID, &d.review.ProjectID, &d.review.UserID, &d.review.OriginalQuery,
+		&d.review.ID, &d.review.OrgID, &d.review.ProjectID, &d.review.UserID, &d.review.Title,
+		&d.review.Description, &d.seedKeywordsJSON,
 		&d.temporalWorkflowID, &d.temporalRunID, &d.review.Status,
 		&d.review.KeywordsFoundCount, &d.review.PapersFoundCount, &d.review.PapersIngestedCount, &d.review.PapersFailedCount,
 		&d.configJSON, &d.sourceFiltersJSON,
+		&d.review.CoverageScore, &d.coverageReasoning,
 		&d.review.CreatedAt, &d.review.UpdatedAt, &d.review.StartedAt, &d.review.CompletedAt,
 		&d.pauseReason, &d.review.PausedAt, &d.pausedAtPhase,
 	}
@@ -536,6 +581,9 @@ func (d *reviewScanDest) finalize() (*domain.LiteratureReviewRequest, error) {
 	}
 	if d.temporalRunID != nil {
 		d.review.TemporalRunID = *d.temporalRunID
+	}
+	if d.coverageReasoning != nil {
+		d.review.CoverageReasoning = *d.coverageReasoning
 	}
 	if d.pauseReason != nil {
 		d.review.PauseReason = domain.PauseReason(*d.pauseReason)
@@ -556,6 +604,12 @@ func (d *reviewScanDest) finalize() (*domain.LiteratureReviewRequest, error) {
 			return nil, fmt.Errorf("failed to unmarshal source filters: %w", err)
 		}
 		d.review.SourceFilters = &sourceFilters
+	}
+
+	if len(d.seedKeywordsJSON) > 0 {
+		if err := json.Unmarshal(d.seedKeywordsJSON, &d.review.SeedKeywords); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal seed keywords: %w", err)
+		}
 	}
 
 	return &d.review, nil

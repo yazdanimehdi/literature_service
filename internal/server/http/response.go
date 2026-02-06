@@ -160,7 +160,7 @@ func domainConfigToResponse(c domain.ReviewConfiguration) *configResponse {
 func domainReviewToSummary(r *domain.LiteratureReviewRequest) reviewSummaryResponse {
 	resp := reviewSummaryResponse{
 		ReviewID:       r.ID.String(),
-		OriginalQuery:  r.OriginalQuery,
+		OriginalQuery:  r.Title,
 		Status:         string(r.Status),
 		PapersFound:    r.PapersFoundCount,
 		PapersIngested: r.PapersIngestedCount,

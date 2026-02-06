@@ -26,7 +26,7 @@ func TestPgReviewRepository_Integration(t *testing.T) {
 			OrgID:         "org-integration",
 			ProjectID:     "proj-integration",
 			UserID:        "user-integration",
-			OriginalQuery: "integration test query",
+			Title: "integration test query",
 			Status:        domain.ReviewStatusPending,
 			Configuration: domain.DefaultReviewConfiguration(),
 			CreatedAt:     time.Now().UTC().Truncate(time.Microsecond),
@@ -39,7 +39,7 @@ func TestPgReviewRepository_Integration(t *testing.T) {
 		got, err := repo.Get(ctx, "org-integration", "proj-integration", review.ID)
 		require.NoError(t, err)
 		assert.Equal(t, review.ID, got.ID)
-		assert.Equal(t, review.OriginalQuery, got.OriginalQuery)
+		assert.Equal(t, review.Title, got.Title)
 		assert.Equal(t, domain.ReviewStatusPending, got.Status)
 		assert.Equal(t, review.OrgID, got.OrgID)
 		assert.Equal(t, review.ProjectID, got.ProjectID)
@@ -53,7 +53,7 @@ func TestPgReviewRepository_Integration(t *testing.T) {
 			OrgID:         "org-integration",
 			ProjectID:     "proj-integration",
 			UserID:        "user-integration",
-			OriginalQuery: "duplicate test",
+			Title: "duplicate test",
 			Status:        domain.ReviewStatusPending,
 			Configuration: domain.DefaultReviewConfiguration(),
 			CreatedAt:     time.Now().UTC().Truncate(time.Microsecond),
@@ -74,7 +74,7 @@ func TestPgReviewRepository_Integration(t *testing.T) {
 			OrgID:         "org-integration",
 			ProjectID:     "proj-integration",
 			UserID:        "user-integration",
-			OriginalQuery: "status test",
+			Title: "status test",
 			Status:        domain.ReviewStatusPending,
 			Configuration: domain.DefaultReviewConfiguration(),
 			CreatedAt:     time.Now().UTC().Truncate(time.Microsecond),
@@ -106,7 +106,7 @@ func TestPgReviewRepository_Integration(t *testing.T) {
 			OrgID:         "org-integration",
 			ProjectID:     "proj-integration",
 			UserID:        "user-integration",
-			OriginalQuery: "invalid transition test",
+			Title: "invalid transition test",
 			Status:        domain.ReviewStatusPending,
 			Configuration: domain.DefaultReviewConfiguration(),
 			CreatedAt:     time.Now().UTC().Truncate(time.Microsecond),
@@ -152,7 +152,7 @@ func TestPgReviewRepository_Integration(t *testing.T) {
 			OrgID:         "org-a",
 			ProjectID:     "proj-a",
 			UserID:        "user-a",
-			OriginalQuery: "tenant isolation test",
+			Title: "tenant isolation test",
 			Status:        domain.ReviewStatusPending,
 			Configuration: domain.DefaultReviewConfiguration(),
 			CreatedAt:     time.Now().UTC().Truncate(time.Microsecond),
@@ -172,7 +172,7 @@ func TestPgReviewRepository_Integration(t *testing.T) {
 			OrgID:         "org-tenant-test",
 			ProjectID:     "proj-tenant-test",
 			UserID:        "user-tenant-test",
-			OriginalQuery: "project isolation test",
+			Title: "project isolation test",
 			Status:        domain.ReviewStatusPending,
 			Configuration: domain.DefaultReviewConfiguration(),
 			CreatedAt:     time.Now().UTC().Truncate(time.Microsecond),
@@ -192,7 +192,7 @@ func TestPgReviewRepository_Integration(t *testing.T) {
 			OrgID:         "org-integration",
 			ProjectID:     "proj-integration",
 			UserID:        "user-integration",
-			OriginalQuery: "counter test",
+			Title: "counter test",
 			Status:        domain.ReviewStatusPending,
 			Configuration: domain.DefaultReviewConfiguration(),
 			CreatedAt:     time.Now().UTC().Truncate(time.Microsecond),

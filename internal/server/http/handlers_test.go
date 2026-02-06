@@ -310,8 +310,8 @@ func TestStartLiteratureReview_Success(t *testing.T) {
 	if createdReview.Status != domain.ReviewStatusPending {
 		t.Errorf("expected pending status, got %s", createdReview.Status)
 	}
-	if createdReview.OriginalQuery != "CRISPR gene editing in cancer treatment" {
-		t.Errorf("expected query to match, got %s", createdReview.OriginalQuery)
+	if createdReview.Title != "CRISPR gene editing in cancer treatment" {
+		t.Errorf("expected query to match, got %s", createdReview.Title)
 	}
 
 	// Verify the workflow request was properly constructed.
@@ -496,7 +496,7 @@ func TestGetLiteratureReviewStatus_Success(t *testing.T) {
 				ID:            reviewID,
 				OrgID:         orgID,
 				ProjectID:     projectID,
-				OriginalQuery: "CRISPR gene editing",
+				Title: "CRISPR gene editing",
 				Status:        domain.ReviewStatusSearching,
 				Configuration: domain.DefaultReviewConfiguration(),
 				CreatedAt:     now,
@@ -720,7 +720,7 @@ func TestListLiteratureReviews_Success(t *testing.T) {
 			ID:                  uuid.New(),
 			OrgID:               "org-1",
 			ProjectID:           "proj-1",
-			OriginalQuery:       "CRISPR",
+			Title:       "CRISPR",
 			Status:              domain.ReviewStatusCompleted,
 			PapersFoundCount:    42,
 			PapersIngestedCount: 38,
@@ -733,7 +733,7 @@ func TestListLiteratureReviews_Success(t *testing.T) {
 			ID:                  uuid.New(),
 			OrgID:               "org-1",
 			ProjectID:           "proj-1",
-			OriginalQuery:       "mRNA vaccines",
+			Title:       "mRNA vaccines",
 			Status:              domain.ReviewStatusSearching,
 			PapersFoundCount:    15,
 			PapersIngestedCount: 0,
@@ -832,7 +832,7 @@ func TestListLiteratureReviews_WithStatusFilter(t *testing.T) {
 			ID:            uuid.New(),
 			OrgID:         "org-1",
 			ProjectID:     "proj-1",
-			OriginalQuery: "CRISPR",
+			Title: "CRISPR",
 			Status:        domain.ReviewStatusFailed,
 			Configuration: domain.DefaultReviewConfiguration(),
 			CreatedAt:     now,
@@ -872,7 +872,7 @@ func TestListLiteratureReviews_Pagination(t *testing.T) {
 			ID:            uuid.New(),
 			OrgID:         "org-1",
 			ProjectID:     "proj-1",
-			OriginalQuery: "query",
+			Title: "query",
 			Status:        domain.ReviewStatusCompleted,
 			Configuration: domain.DefaultReviewConfiguration(),
 			CreatedAt:     now,

@@ -47,7 +47,7 @@ func TestSQLInjection_QueryField(t *testing.T) {
 
 			reviewRepo := &mockReviewRepo{
 				createFn: func(_ context.Context, review *domain.LiteratureReviewRequest) error {
-					capturedQuery = review.OriginalQuery
+					capturedQuery = review.Title
 					return nil
 				},
 				updateFn: func(_ context.Context, _, _ string, _ uuid.UUID, fn func(*domain.LiteratureReviewRequest) error) error {

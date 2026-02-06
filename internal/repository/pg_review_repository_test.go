@@ -25,7 +25,7 @@ func newTestReview() *domain.LiteratureReviewRequest {
 		OrgID:         "org-123",
 		ProjectID:     "proj-456",
 		UserID:        "user-789",
-		OriginalQuery: "CRISPR gene editing",
+		Title: "CRISPR gene editing",
 		Status:        domain.ReviewStatusPending,
 		Configuration: domain.ReviewConfiguration{
 			MaxPapers:           100,
@@ -322,11 +322,13 @@ func TestPgReviewRepository_Create(t *testing.T) {
 
 		mock.ExpectExec("INSERT INTO literature_review_requests").
 			WithArgs(
-				review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+				review.ID, review.OrgID, review.ProjectID, review.UserID, review.Title,
+				review.Description, pgxmock.AnyArg(), // seed_keywords JSON
 				pgxmock.AnyArg(), pgxmock.AnyArg(), review.Status,
 				review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
-				pgxmock.AnyArg(), pgxmock.AnyArg(),
-				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+				pgxmock.AnyArg(), pgxmock.AnyArg(), // config, source_filters
+				pgxmock.AnyArg(), pgxmock.AnyArg(), // coverage_score, coverage_reasoning
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // timestamps
 			).
 			WillReturnResult(pgxmock.NewResult("INSERT", 1))
 
@@ -424,8 +426,10 @@ func TestPgReviewRepository_Create(t *testing.T) {
 		pgErr := &pgconn.PgError{Code: "23505"}
 		mock.ExpectExec("INSERT INTO literature_review_requests").
 			WithArgs(pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+				pgxmock.AnyArg(), pgxmock.AnyArg(),
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),
+				pgxmock.AnyArg(), pgxmock.AnyArg(),
 				pgxmock.AnyArg(), pgxmock.AnyArg(),
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg()).
 			WillReturnError(pgErr)
@@ -452,17 +456,21 @@ func TestPgReviewRepository_Get(t *testing.T) {
 		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
 
 		rows := pgxmock.NewRows([]string{
-			"id", "org_id", "project_id", "user_id", "original_query",
+			"id", "org_id", "project_id", "user_id", "title",
+			"description", "seed_keywords",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"configuration", "source_filters",
+			"config_snapshot", "source_filters",
+			"coverage_score", "coverage_reasoning",
 			"created_at", "updated_at", "started_at", "completed_at",
 			"pause_reason", "paused_at", "paused_at_phase",
 		}).AddRow(
-			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+			review.ID, review.OrgID, review.ProjectID, review.UserID, review.Title,
+			review.Description, []byte("[]"),
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 			configJSON, sourceFiltersJSON,
+			nil, nil,
 			review.CreatedAt, review.UpdatedAt, nil, nil,
 			nil, nil, nil,
 		)
@@ -476,7 +484,7 @@ func TestPgReviewRepository_Get(t *testing.T) {
 		assert.Equal(t, review.ID, result.ID)
 		assert.Equal(t, review.OrgID, result.OrgID)
 		assert.Equal(t, review.ProjectID, result.ProjectID)
-		assert.Equal(t, review.OriginalQuery, result.OriginalQuery)
+		assert.Equal(t, review.Title, result.Title)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})
 
@@ -529,17 +537,21 @@ func TestPgReviewRepository_GetByWorkflowID(t *testing.T) {
 		sourceFiltersJSON, _ := json.Marshal(review.SourceFilters)
 
 		rows := pgxmock.NewRows([]string{
-			"id", "org_id", "project_id", "user_id", "original_query",
+			"id", "org_id", "project_id", "user_id", "title",
+			"description", "seed_keywords",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"configuration", "source_filters",
+			"config_snapshot", "source_filters",
+			"coverage_score", "coverage_reasoning",
 			"created_at", "updated_at", "started_at", "completed_at",
 			"pause_reason", "paused_at", "paused_at_phase",
 		}).AddRow(
-			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+			review.ID, review.OrgID, review.ProjectID, review.UserID, review.Title,
+			review.Description, []byte("[]"),
 			&review.TemporalWorkflowID, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 			configJSON, sourceFiltersJSON,
+			nil, nil,
 			review.CreatedAt, review.UpdatedAt, nil, nil,
 			nil, nil, nil,
 		)
@@ -630,17 +642,21 @@ func TestPgReviewRepository_Update(t *testing.T) {
 		}
 
 		return pgxmock.NewRows([]string{
-			"id", "org_id", "project_id", "user_id", "original_query",
+			"id", "org_id", "project_id", "user_id", "title",
+			"description", "seed_keywords",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"configuration", "source_filters",
+			"config_snapshot", "source_filters",
+			"coverage_score", "coverage_reasoning",
 			"created_at", "updated_at", "started_at", "completed_at",
 			"pause_reason", "paused_at", "paused_at_phase",
 		}).AddRow(
-			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+			review.ID, review.OrgID, review.ProjectID, review.UserID, review.Title,
+			review.Description, []byte("[]"),
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 			configJSON, sourceFiltersJSON,
+			nil, nil,
 			review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
 			pauseReason, review.PausedAt, pausedAtPhase,
 		)
@@ -659,19 +675,21 @@ func TestPgReviewRepository_Update(t *testing.T) {
 			WithArgs(review.ID, review.OrgID, review.ProjectID).
 			WillReturnRows(createSelectRows(review))
 
-		// Expect UPDATE with 16 arguments (13 SET values + 3 WHERE conditions)
+		// Expect UPDATE with 20 arguments (17 SET values + 3 WHERE conditions)
 		mock.ExpectExec("UPDATE literature_review_requests SET").
 			WithArgs(
-				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // original_query, temporal_workflow_id, temporal_run_id, status
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),                   // title, description, seed_keywords
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),                   // temporal_workflow_id, temporal_run_id, status
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count
-				pgxmock.AnyArg(), pgxmock.AnyArg(),                                     // configuration, source_filters
+				pgxmock.AnyArg(), pgxmock.AnyArg(),                                     // config_snapshot, source_filters
+				pgxmock.AnyArg(), pgxmock.AnyArg(),                                     // coverage_score, coverage_reasoning
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),                   // updated_at, started_at, completed_at
 				review.ID, review.OrgID, review.ProjectID, // WHERE conditions
 			).
 			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
 		err = repo.Update(ctx, review.OrgID, review.ProjectID, review.ID, func(r *domain.LiteratureReviewRequest) error {
-			r.OriginalQuery = "updated query"
+			r.Title = "updated query"
 			return nil
 		})
 
@@ -691,10 +709,12 @@ func TestPgReviewRepository_Update(t *testing.T) {
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
 			WithArgs(id, "org-123", "proj-456").
 			WillReturnRows(pgxmock.NewRows([]string{
-				"id", "org_id", "project_id", "user_id", "original_query",
+				"id", "org_id", "project_id", "user_id", "title",
+				"description", "seed_keywords",
 				"temporal_workflow_id", "temporal_run_id", "status",
 				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-				"configuration", "source_filters",
+				"config_snapshot", "source_filters",
+				"coverage_score", "coverage_reasoning",
 				"created_at", "updated_at", "started_at", "completed_at",
 				"pause_reason", "paused_at", "paused_at_phase",
 			})) // Empty rows
@@ -771,17 +791,21 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 		}
 
 		return pgxmock.NewRows([]string{
-			"id", "org_id", "project_id", "user_id", "original_query",
+			"id", "org_id", "project_id", "user_id", "title",
+			"description", "seed_keywords",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"configuration", "source_filters",
+			"config_snapshot", "source_filters",
+			"coverage_score", "coverage_reasoning",
 			"created_at", "updated_at", "started_at", "completed_at",
 			"pause_reason", "paused_at", "paused_at_phase",
 		}).AddRow(
-			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+			review.ID, review.OrgID, review.ProjectID, review.UserID, review.Title,
+			review.Description, []byte("[]"),
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 			configJSON, sourceFiltersJSON,
+			nil, nil,
 			review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
 			pauseReason, review.PausedAt, pausedAtPhase,
 		)
@@ -801,12 +825,14 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 			WithArgs(review.ID, review.OrgID, review.ProjectID).
 			WillReturnRows(createSelectRows(review))
 
-		// Expect UPDATE with 16 arguments (13 SET values + 3 WHERE conditions)
+		// Expect UPDATE with 20 arguments (17 SET values + 3 WHERE conditions)
 		mock.ExpectExec("UPDATE literature_review_requests SET").
 			WithArgs(
-				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // original_query, temporal_workflow_id, temporal_run_id, status
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),                   // title, description, seed_keywords
+				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),                   // temporal_workflow_id, temporal_run_id, status
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(), // keywords_found_count, papers_found_count, papers_ingested_count, papers_failed_count
-				pgxmock.AnyArg(), pgxmock.AnyArg(),                                     // configuration, source_filters
+				pgxmock.AnyArg(), pgxmock.AnyArg(),                                     // config_snapshot, source_filters
+				pgxmock.AnyArg(), pgxmock.AnyArg(),                                     // coverage_score, coverage_reasoning
 				pgxmock.AnyArg(), pgxmock.AnyArg(), pgxmock.AnyArg(),                   // updated_at, started_at, completed_at
 				review.ID, review.OrgID, review.ProjectID, // WHERE conditions
 			).
@@ -878,10 +904,12 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
 			WithArgs(id, "org-123", "proj-456").
 			WillReturnRows(pgxmock.NewRows([]string{
-				"id", "org_id", "project_id", "user_id", "original_query",
+				"id", "org_id", "project_id", "user_id", "title",
+				"description", "seed_keywords",
 				"temporal_workflow_id", "temporal_run_id", "status",
 				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-				"configuration", "source_filters",
+				"config_snapshot", "source_filters",
+				"coverage_score", "coverage_reasoning",
 				"created_at", "updated_at", "started_at", "completed_at",
 				"pause_reason", "paused_at", "paused_at_phase",
 			})) // Empty rows
@@ -932,17 +960,21 @@ func TestPgReviewRepository_List(t *testing.T) {
 
 		// Expect select query
 		rows := pgxmock.NewRows([]string{
-			"id", "org_id", "project_id", "user_id", "original_query",
+			"id", "org_id", "project_id", "user_id", "title",
+			"description", "seed_keywords",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"configuration", "source_filters",
+			"config_snapshot", "source_filters",
+			"coverage_score", "coverage_reasoning",
 			"created_at", "updated_at", "started_at", "completed_at",
 			"pause_reason", "paused_at", "paused_at_phase",
 		}).AddRow(
-			review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+			review.ID, review.OrgID, review.ProjectID, review.UserID, review.Title,
+			review.Description, []byte("[]"),
 			nil, nil, review.Status,
 			review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 			configJSON, sourceFiltersJSON,
+			nil, nil,
 			review.CreatedAt, review.UpdatedAt, nil, nil,
 			nil, nil, nil,
 		)
@@ -981,10 +1013,12 @@ func TestPgReviewRepository_List(t *testing.T) {
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE org_id = \\$1 AND status IN \\(\\$2, \\$3\\) ORDER BY created_at DESC LIMIT \\$4 OFFSET \\$5").
 			WithArgs("org-123", domain.ReviewStatusPending, domain.ReviewStatusSearching, 10, 0).
 			WillReturnRows(pgxmock.NewRows([]string{
-				"id", "org_id", "project_id", "user_id", "original_query",
+				"id", "org_id", "project_id", "user_id", "title",
+				"description", "seed_keywords",
 				"temporal_workflow_id", "temporal_run_id", "status",
 				"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-				"configuration", "source_filters",
+				"config_snapshot", "source_filters",
+				"coverage_score", "coverage_reasoning",
 				"created_at", "updated_at", "started_at", "completed_at",
 				"pause_reason", "paused_at", "paused_at_phase",
 			}))
@@ -1022,10 +1056,12 @@ func TestPgReviewRepository_FindPausedByReason(t *testing.T) {
 	// Helper to create mock rows with pause fields
 	createPausedRows := func(reviews []*domain.LiteratureReviewRequest) *pgxmock.Rows {
 		rows := pgxmock.NewRows([]string{
-			"id", "org_id", "project_id", "user_id", "original_query",
+			"id", "org_id", "project_id", "user_id", "title",
+			"description", "seed_keywords",
 			"temporal_workflow_id", "temporal_run_id", "status",
 			"keywords_found_count", "papers_found_count", "papers_ingested_count", "papers_failed_count",
-			"configuration", "source_filters",
+			"config_snapshot", "source_filters",
+			"coverage_score", "coverage_reasoning",
 			"created_at", "updated_at", "started_at", "completed_at",
 			"pause_reason", "paused_at", "paused_at_phase",
 		})
@@ -1045,10 +1081,12 @@ func TestPgReviewRepository_FindPausedByReason(t *testing.T) {
 			}
 
 			rows.AddRow(
-				review.ID, review.OrgID, review.ProjectID, review.UserID, review.OriginalQuery,
+				review.ID, review.OrgID, review.ProjectID, review.UserID, review.Title,
+				review.Description, []byte("[]"),
 				nil, nil, review.Status,
 				review.KeywordsFoundCount, review.PapersFoundCount, review.PapersIngestedCount, review.PapersFailedCount,
 				configJSON, sourceFiltersJSON,
+				nil, nil,
 				review.CreatedAt, review.UpdatedAt, review.StartedAt, review.CompletedAt,
 				pauseReason, review.PausedAt, pausedAtPhase,
 			)
@@ -1174,9 +1212,9 @@ func TestReviewScanDest(t *testing.T) {
 	t.Run("destinations returns correct number of pointers", func(t *testing.T) {
 		var dest reviewScanDest
 		dests := dest.destinations()
-		// Should have exactly 21 destination pointers matching the SELECT columns
-		// (18 original + 3 pause fields: pause_reason, paused_at, paused_at_phase)
-		assert.Len(t, dests, 21)
+		// Should have exactly 25 destination pointers matching the SELECT columns
+		// (18 original + 3 pause fields + 4 new: description, seed_keywords, coverage_score, coverage_reasoning)
+		assert.Len(t, dests, 25)
 	})
 
 	t.Run("finalize handles nullable fields", func(t *testing.T) {

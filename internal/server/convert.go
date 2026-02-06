@@ -119,7 +119,7 @@ func protoToKeywordSourceType(s pb.KeywordSourceType) string {
 func reviewToSummaryProto(r *domain.LiteratureReviewRequest) *pb.LiteratureReviewSummary {
 	return &pb.LiteratureReviewSummary{
 		ReviewId:       r.ID.String(),
-		OriginalQuery:  r.OriginalQuery,
+		OriginalQuery:  r.Title,
 		Status:         reviewStatusToProto(r.Status),
 		PapersFound:    int32(r.PapersFoundCount),
 		PapersIngested: int32(r.PapersIngestedCount),

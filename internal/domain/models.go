@@ -28,6 +28,10 @@ const (
 	// ReviewStatusIngesting indicates discovered papers are being submitted to the ingestion service.
 	ReviewStatusIngesting ReviewStatus = "ingesting"
 
+	// ReviewStatusReviewing indicates the LLM is assessing corpus coverage
+	// against the original research intent.
+	ReviewStatusReviewing ReviewStatus = "reviewing"
+
 	// ReviewStatusCompleted indicates the review finished successfully with all papers processed.
 	ReviewStatusCompleted ReviewStatus = "completed"
 

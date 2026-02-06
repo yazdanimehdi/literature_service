@@ -75,7 +75,7 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 		ID:            requestID,
 		OrgID:         req.OrgId,
 		ProjectID:     req.ProjectId,
-		OriginalQuery: req.Query,
+		Title: req.Query,
 		Status:        domain.ReviewStatusPending,
 		Configuration: cfg,
 		CreatedAt:     now,

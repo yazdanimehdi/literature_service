@@ -122,7 +122,7 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 		ID:            requestID,
 		OrgID:         orgID,
 		ProjectID:     projectID,
-		OriginalQuery: req.Query,
+		Title: req.Query,
 		Status:        domain.ReviewStatusPending,
 		Configuration: cfg,
 		CreatedAt:     now,

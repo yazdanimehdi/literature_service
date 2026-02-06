@@ -38,6 +38,7 @@ const (
 	ReviewStatus_REVIEW_STATUS_CANCELLED           ReviewStatus = 8
 	ReviewStatus_REVIEW_STATUS_PARTIAL             ReviewStatus = 9
 	ReviewStatus_REVIEW_STATUS_PAUSED              ReviewStatus = 10
+	ReviewStatus_REVIEW_STATUS_REVIEWING           ReviewStatus = 11
 )
 
 // Enum value maps for ReviewStatus.
@@ -54,6 +55,7 @@ var (
 		8:  "REVIEW_STATUS_CANCELLED",
 		9:  "REVIEW_STATUS_PARTIAL",
 		10: "REVIEW_STATUS_PAUSED",
+		11: "REVIEW_STATUS_REVIEWING",
 	}
 	ReviewStatus_value = map[string]int32{
 		"REVIEW_STATUS_UNSPECIFIED":         0,
@@ -67,6 +69,7 @@ var (
 		"REVIEW_STATUS_CANCELLED":           8,
 		"REVIEW_STATUS_PARTIAL":             9,
 		"REVIEW_STATUS_PAUSED":              10,
+		"REVIEW_STATUS_REVIEWING":           11,
 	}
 )
 
@@ -260,13 +263,15 @@ type StartLiteratureReviewRequest struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	OrgId               string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
 	ProjectId           string                 `protobuf:"bytes,2,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
-	Query               string                 `protobuf:"bytes,3,opt,name=query,proto3" json:"query,omitempty"`
+	Title               string                 `protobuf:"bytes,3,opt,name=title,proto3" json:"title,omitempty"`
 	InitialKeywordCount *wrapperspb.Int32Value `protobuf:"bytes,4,opt,name=initial_keyword_count,json=initialKeywordCount,proto3" json:"initial_keyword_count,omitempty"`
 	PaperKeywordCount   *wrapperspb.Int32Value `protobuf:"bytes,5,opt,name=paper_keyword_count,json=paperKeywordCount,proto3" json:"paper_keyword_count,omitempty"`
 	MaxExpansionDepth   *wrapperspb.Int32Value `protobuf:"bytes,6,opt,name=max_expansion_depth,json=maxExpansionDepth,proto3" json:"max_expansion_depth,omitempty"`
 	SourceFilters       []string               `protobuf:"bytes,7,rep,name=source_filters,json=sourceFilters,proto3" json:"source_filters,omitempty"`
 	DateFrom            *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=date_from,json=dateFrom,proto3" json:"date_from,omitempty"`
 	DateTo              *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=date_to,json=dateTo,proto3" json:"date_to,omitempty"`
+	Description         string                 `protobuf:"bytes,10,opt,name=description,proto3" json:"description,omitempty"`
+	SeedKeywords        []string               `protobuf:"bytes,11,rep,name=seed_keywords,json=seedKeywords,proto3" json:"seed_keywords,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -315,9 +320,9 @@ func (x *StartLiteratureReviewRequest) GetProjectId() string {
 	return ""
 }
 
-func (x *StartLiteratureReviewRequest) GetQuery() string {
+func (x *StartLiteratureReviewRequest) GetTitle() string {
 	if x != nil {
-		return x.Query
+		return x.Title
 	}
 	return ""
 }
@@ -360,6 +365,20 @@ func (x *StartLiteratureReviewRequest) GetDateFrom() *timestamppb.Timestamp {
 func (x *StartLiteratureReviewRequest) GetDateTo() *timestamppb.Timestamp {
 	if x != nil {
 		return x.DateTo
+	}
+	return nil
+}
+
+func (x *StartLiteratureReviewRequest) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *StartLiteratureReviewRequest) GetSeedKeywords() []string {
+	if x != nil {
+		return x.SeedKeywords
 	}
 	return nil
 }
@@ -2163,15 +2182,19 @@ func (x *SourceProgress) GetRateLimited() bool {
 }
 
 type ReviewConfiguration struct {
-	state               protoimpl.MessageState `protogen:"open.v1"`
-	InitialKeywordCount int32                  `protobuf:"varint,1,opt,name=initial_keyword_count,json=initialKeywordCount,proto3" json:"initial_keyword_count,omitempty"`
-	PaperKeywordCount   int32                  `protobuf:"varint,2,opt,name=paper_keyword_count,json=paperKeywordCount,proto3" json:"paper_keyword_count,omitempty"`
-	MaxExpansionDepth   int32                  `protobuf:"varint,3,opt,name=max_expansion_depth,json=maxExpansionDepth,proto3" json:"max_expansion_depth,omitempty"`
-	EnabledSources      []string               `protobuf:"bytes,4,rep,name=enabled_sources,json=enabledSources,proto3" json:"enabled_sources,omitempty"`
-	DateFrom            *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=date_from,json=dateFrom,proto3" json:"date_from,omitempty"`
-	DateTo              *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=date_to,json=dateTo,proto3" json:"date_to,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	InitialKeywordCount  int32                  `protobuf:"varint,1,opt,name=initial_keyword_count,json=initialKeywordCount,proto3" json:"initial_keyword_count,omitempty"`
+	PaperKeywordCount    int32                  `protobuf:"varint,2,opt,name=paper_keyword_count,json=paperKeywordCount,proto3" json:"paper_keyword_count,omitempty"`
+	MaxExpansionDepth    int32                  `protobuf:"varint,3,opt,name=max_expansion_depth,json=maxExpansionDepth,proto3" json:"max_expansion_depth,omitempty"`
+	EnabledSources       []string               `protobuf:"bytes,4,rep,name=enabled_sources,json=enabledSources,proto3" json:"enabled_sources,omitempty"`
+	DateFrom             *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=date_from,json=dateFrom,proto3" json:"date_from,omitempty"`
+	DateTo               *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=date_to,json=dateTo,proto3" json:"date_to,omitempty"`
+	EnableRelevanceGate  bool                   `protobuf:"varint,7,opt,name=enable_relevance_gate,json=enableRelevanceGate,proto3" json:"enable_relevance_gate,omitempty"`
+	RelevanceThreshold   float64                `protobuf:"fixed64,8,opt,name=relevance_threshold,json=relevanceThreshold,proto3" json:"relevance_threshold,omitempty"`
+	EnableCoverageReview bool                   `protobuf:"varint,9,opt,name=enable_coverage_review,json=enableCoverageReview,proto3" json:"enable_coverage_review,omitempty"`
+	CoverageThreshold    float64                `protobuf:"fixed64,10,opt,name=coverage_threshold,json=coverageThreshold,proto3" json:"coverage_threshold,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ReviewConfiguration) Reset() {
@@ -2246,20 +2269,52 @@ func (x *ReviewConfiguration) GetDateTo() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *ReviewConfiguration) GetEnableRelevanceGate() bool {
+	if x != nil {
+		return x.EnableRelevanceGate
+	}
+	return false
+}
+
+func (x *ReviewConfiguration) GetRelevanceThreshold() float64 {
+	if x != nil {
+		return x.RelevanceThreshold
+	}
+	return 0
+}
+
+func (x *ReviewConfiguration) GetEnableCoverageReview() bool {
+	if x != nil {
+		return x.EnableCoverageReview
+	}
+	return false
+}
+
+func (x *ReviewConfiguration) GetCoverageThreshold() float64 {
+	if x != nil {
+		return x.CoverageThreshold
+	}
+	return 0
+}
+
 type LiteratureReviewSummary struct {
-	state          protoimpl.MessageState `protogen:"open.v1"`
-	ReviewId       string                 `protobuf:"bytes,1,opt,name=review_id,json=reviewId,proto3" json:"review_id,omitempty"`
-	OriginalQuery  string                 `protobuf:"bytes,2,opt,name=original_query,json=originalQuery,proto3" json:"original_query,omitempty"`
-	Status         ReviewStatus           `protobuf:"varint,3,opt,name=status,proto3,enum=literaturereview.v1.ReviewStatus" json:"status,omitempty"`
-	PapersFound    int32                  `protobuf:"varint,4,opt,name=papers_found,json=papersFound,proto3" json:"papers_found,omitempty"`
-	PapersIngested int32                  `protobuf:"varint,5,opt,name=papers_ingested,json=papersIngested,proto3" json:"papers_ingested,omitempty"`
-	KeywordsUsed   int32                  `protobuf:"varint,6,opt,name=keywords_used,json=keywordsUsed,proto3" json:"keywords_used,omitempty"`
-	CreatedAt      *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	CompletedAt    *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
-	Duration       *durationpb.Duration   `protobuf:"bytes,9,opt,name=duration,proto3" json:"duration,omitempty"`
-	UserId         string                 `protobuf:"bytes,10,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	ReviewId          string                 `protobuf:"bytes,1,opt,name=review_id,json=reviewId,proto3" json:"review_id,omitempty"`
+	Title             string                 `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
+	Status            ReviewStatus           `protobuf:"varint,3,opt,name=status,proto3,enum=literaturereview.v1.ReviewStatus" json:"status,omitempty"`
+	PapersFound       int32                  `protobuf:"varint,4,opt,name=papers_found,json=papersFound,proto3" json:"papers_found,omitempty"`
+	PapersIngested    int32                  `protobuf:"varint,5,opt,name=papers_ingested,json=papersIngested,proto3" json:"papers_ingested,omitempty"`
+	KeywordsUsed      int32                  `protobuf:"varint,6,opt,name=keywords_used,json=keywordsUsed,proto3" json:"keywords_used,omitempty"`
+	CreatedAt         *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	CompletedAt       *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=completed_at,json=completedAt,proto3" json:"completed_at,omitempty"`
+	Duration          *durationpb.Duration   `protobuf:"bytes,9,opt,name=duration,proto3" json:"duration,omitempty"`
+	UserId            string                 `protobuf:"bytes,10,opt,name=user_id,json=userId,proto3" json:"user_id,omitempty"`
+	Description       string                 `protobuf:"bytes,11,opt,name=description,proto3" json:"description,omitempty"`
+	SeedKeywords      []string               `protobuf:"bytes,12,rep,name=seed_keywords,json=seedKeywords,proto3" json:"seed_keywords,omitempty"`
+	CoverageScore     float64                `protobuf:"fixed64,13,opt,name=coverage_score,json=coverageScore,proto3" json:"coverage_score,omitempty"`
+	CoverageReasoning string                 `protobuf:"bytes,14,opt,name=coverage_reasoning,json=coverageReasoning,proto3" json:"coverage_reasoning,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *LiteratureReviewSummary) Reset() {
@@ -2299,9 +2354,9 @@ func (x *LiteratureReviewSummary) GetReviewId() string {
 	return ""
 }
 
-func (x *LiteratureReviewSummary) GetOriginalQuery() string {
+func (x *LiteratureReviewSummary) GetTitle() string {
 	if x != nil {
-		return x.OriginalQuery
+		return x.Title
 	}
 	return ""
 }
@@ -2358,6 +2413,34 @@ func (x *LiteratureReviewSummary) GetDuration() *durationpb.Duration {
 func (x *LiteratureReviewSummary) GetUserId() string {
 	if x != nil {
 		return x.UserId
+	}
+	return ""
+}
+
+func (x *LiteratureReviewSummary) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *LiteratureReviewSummary) GetSeedKeywords() []string {
+	if x != nil {
+		return x.SeedKeywords
+	}
+	return nil
+}
+
+func (x *LiteratureReviewSummary) GetCoverageScore() float64 {
+	if x != nil {
+		return x.CoverageScore
+	}
+	return 0
+}
+
+func (x *LiteratureReviewSummary) GetCoverageReasoning() string {
+	if x != nil {
+		return x.CoverageReasoning
 	}
 	return ""
 }
@@ -3062,18 +3145,21 @@ var File_literaturereview_v1_literature_review_proto protoreflect.FileDescriptor
 
 const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"\n" +
-	"+literaturereview/v1/literature_review.proto\x12\x13literaturereview.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xea\x03\n" +
+	"+literaturereview/v1/literature_review.proto\x12\x13literaturereview.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\x1a\x1egoogle/protobuf/wrappers.proto\"\xb1\x04\n" +
 	"\x1cStartLiteratureReviewRequest\x12\x15\n" +
 	"\x06org_id\x18\x01 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x02 \x01(\tR\tprojectId\x12\x14\n" +
-	"\x05query\x18\x03 \x01(\tR\x05query\x12O\n" +
+	"\x05title\x18\x03 \x01(\tR\x05title\x12O\n" +
 	"\x15initial_keyword_count\x18\x04 \x01(\v2\x1b.google.protobuf.Int32ValueR\x13initialKeywordCount\x12K\n" +
 	"\x13paper_keyword_count\x18\x05 \x01(\v2\x1b.google.protobuf.Int32ValueR\x11paperKeywordCount\x12K\n" +
 	"\x13max_expansion_depth\x18\x06 \x01(\v2\x1b.google.protobuf.Int32ValueR\x11maxExpansionDepth\x12%\n" +
 	"\x0esource_filters\x18\a \x03(\tR\rsourceFilters\x127\n" +
 	"\tdate_from\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\bdateFrom\x123\n" +
-	"\adate_to\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\x06dateTo\"\x98\x02\n" +
+	"\adate_to\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\x06dateTo\x12 \n" +
+	"\vdescription\x18\n" +
+	" \x01(\tR\vdescription\x12#\n" +
+	"\rseed_keywords\x18\v \x03(\tR\fseedKeywords\"\x98\x02\n" +
 	"\x1dStartLiteratureReviewResponse\x12\x1b\n" +
 	"\treview_id\x18\x01 \x01(\tR\breviewId\x12\x1f\n" +
 	"\vworkflow_id\x18\x02 \x01(\tR\n" +
@@ -3238,17 +3324,22 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"\rqueries_total\x18\x03 \x01(\x05R\fqueriesTotal\x12!\n" +
 	"\fpapers_found\x18\x04 \x01(\x05R\vpapersFound\x12\x16\n" +
 	"\x06errors\x18\x05 \x01(\x05R\x06errors\x12!\n" +
-	"\frate_limited\x18\x06 \x01(\bR\vrateLimited\"\xc0\x02\n" +
+	"\frate_limited\x18\x06 \x01(\bR\vrateLimited\"\x8a\x04\n" +
 	"\x13ReviewConfiguration\x122\n" +
 	"\x15initial_keyword_count\x18\x01 \x01(\x05R\x13initialKeywordCount\x12.\n" +
 	"\x13paper_keyword_count\x18\x02 \x01(\x05R\x11paperKeywordCount\x12.\n" +
 	"\x13max_expansion_depth\x18\x03 \x01(\x05R\x11maxExpansionDepth\x12'\n" +
 	"\x0fenabled_sources\x18\x04 \x03(\tR\x0eenabledSources\x127\n" +
 	"\tdate_from\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\bdateFrom\x123\n" +
-	"\adate_to\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x06dateTo\"\xd3\x03\n" +
+	"\adate_to\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x06dateTo\x122\n" +
+	"\x15enable_relevance_gate\x18\a \x01(\bR\x13enableRelevanceGate\x12/\n" +
+	"\x13relevance_threshold\x18\b \x01(\x01R\x12relevanceThreshold\x124\n" +
+	"\x16enable_coverage_review\x18\t \x01(\bR\x14enableCoverageReview\x12-\n" +
+	"\x12coverage_threshold\x18\n" +
+	" \x01(\x01R\x11coverageThreshold\"\xdf\x04\n" +
 	"\x17LiteratureReviewSummary\x12\x1b\n" +
-	"\treview_id\x18\x01 \x01(\tR\breviewId\x12%\n" +
-	"\x0eoriginal_query\x18\x02 \x01(\tR\roriginalQuery\x129\n" +
+	"\treview_id\x18\x01 \x01(\tR\breviewId\x12\x14\n" +
+	"\x05title\x18\x02 \x01(\tR\x05title\x129\n" +
 	"\x06status\x18\x03 \x01(\x0e2!.literaturereview.v1.ReviewStatusR\x06status\x12!\n" +
 	"\fpapers_found\x18\x04 \x01(\x05R\vpapersFound\x12'\n" +
 	"\x0fpapers_ingested\x18\x05 \x01(\x05R\x0epapersIngested\x12#\n" +
@@ -3258,7 +3349,11 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"\fcompleted_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\vcompletedAt\x125\n" +
 	"\bduration\x18\t \x01(\v2\x19.google.protobuf.DurationR\bduration\x12\x17\n" +
 	"\auser_id\x18\n" +
-	" \x01(\tR\x06userId\"\xdb\x06\n" +
+	" \x01(\tR\x06userId\x12 \n" +
+	"\vdescription\x18\v \x01(\tR\vdescription\x12#\n" +
+	"\rseed_keywords\x18\f \x03(\tR\fseedKeywords\x12%\n" +
+	"\x0ecoverage_score\x18\r \x01(\x01R\rcoverageScore\x12-\n" +
+	"\x12coverage_reasoning\x18\x0e \x01(\tR\x11coverageReasoning\"\xdb\x06\n" +
 	"\x05Paper\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
 	"\x03doi\x18\x02 \x01(\tR\x03doi\x12\x19\n" +
@@ -3323,7 +3418,7 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"error_code\x18\x01 \x01(\tR\terrorCode\x12#\n" +
 	"\rerror_message\x18\x02 \x01(\tR\ferrorMessage\x12\x14\n" +
 	"\x05phase\x18\x03 \x01(\tR\x05phase\x12 \n" +
-	"\vrecoverable\x18\x04 \x01(\bR\vrecoverable*\xcf\x02\n" +
+	"\vrecoverable\x18\x04 \x01(\bR\vrecoverable*\xec\x02\n" +
 	"\fReviewStatus\x12\x1d\n" +
 	"\x19REVIEW_STATUS_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15REVIEW_STATUS_PENDING\x10\x01\x12%\n" +
@@ -3336,7 +3431,8 @@ const file_literaturereview_v1_literature_review_proto_rawDesc = "" +
 	"\x17REVIEW_STATUS_CANCELLED\x10\b\x12\x19\n" +
 	"\x15REVIEW_STATUS_PARTIAL\x10\t\x12\x18\n" +
 	"\x14REVIEW_STATUS_PAUSED\x10\n" +
-	"*\xe9\x01\n" +
+	"\x12\x1b\n" +
+	"\x17REVIEW_STATUS_REVIEWING\x10\v*\xe9\x01\n" +
 	"\x0fIngestionStatus\x12 \n" +
 	"\x1cINGESTION_STATUS_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18INGESTION_STATUS_PENDING\x10\x01\x12\x1b\n" +

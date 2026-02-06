@@ -58,6 +58,7 @@ enum ReviewStatus {
   REVIEW_STATUS_CANCELLED = 8;
   REVIEW_STATUS_PARTIAL = 9;
   REVIEW_STATUS_PAUSED = 10;
+  REVIEW_STATUS_REVIEWING = 11;
 }
 
 enum IngestionStatus {
@@ -87,13 +88,15 @@ enum SortOrder {
 message StartLiteratureReviewRequest {
   string org_id = 1;
   string project_id = 2;
-  string query = 3;
+  string title = 3;
   google.protobuf.Int32Value initial_keyword_count = 4;
   google.protobuf.Int32Value paper_keyword_count = 5;
   google.protobuf.Int32Value max_expansion_depth = 6;
   repeated string source_filters = 7;
   google.protobuf.Timestamp date_from = 8;
   google.protobuf.Timestamp date_to = 9;
+  string description = 10;
+  repeated string seed_keywords = 11;
 }
 
 message StartLiteratureReviewResponse {
@@ -290,11 +293,15 @@ message ReviewConfiguration {
   repeated string enabled_sources = 4;
   google.protobuf.Timestamp date_from = 5;
   google.protobuf.Timestamp date_to = 6;
+  bool enable_relevance_gate = 7;
+  double relevance_threshold = 8;
+  bool enable_coverage_review = 9;
+  double coverage_threshold = 10;
 }
 
 message LiteratureReviewSummary {
   string review_id = 1;
-  string original_query = 2;
+  string title = 2;
   ReviewStatus status = 3;
   int32 papers_found = 4;
   int32 papers_ingested = 5;
@@ -303,6 +310,10 @@ message LiteratureReviewSummary {
   google.protobuf.Timestamp completed_at = 8;
   google.protobuf.Duration duration = 9;
   string user_id = 10;
+  string description = 11;
+  repeated string seed_keywords = 12;
+  double coverage_score = 13;
+  string coverage_reasoning = 14;
 }
 
 message Paper {

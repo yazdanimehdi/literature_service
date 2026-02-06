@@ -782,8 +782,8 @@ func TestListLiteratureReviews_Success(t *testing.T) {
 	if s0.ReviewID != reviews[0].ID.String() {
 		t.Errorf("expected review_id %s, got %s", reviews[0].ID.String(), s0.ReviewID)
 	}
-	if s0.OriginalQuery != "CRISPR" {
-		t.Errorf("expected original_query CRISPR, got %s", s0.OriginalQuery)
+	if s0.Title != "CRISPR" {
+		t.Errorf("expected title CRISPR, got %s", s0.Title)
 	}
 	if s0.PapersFound != 42 {
 		t.Errorf("expected papers_found 42, got %d", s0.PapersFound)

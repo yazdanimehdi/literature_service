@@ -32,6 +32,10 @@ func reviewStatusToProto(s domain.ReviewStatus) pb.ReviewStatus {
 		return pb.ReviewStatus_REVIEW_STATUS_FAILED
 	case domain.ReviewStatusCancelled:
 		return pb.ReviewStatus_REVIEW_STATUS_CANCELLED
+	case domain.ReviewStatusPaused:
+		return pb.ReviewStatus_REVIEW_STATUS_PAUSED
+	case domain.ReviewStatusReviewing:
+		return pb.ReviewStatus_REVIEW_STATUS_REVIEWING
 	default:
 		return pb.ReviewStatus_REVIEW_STATUS_UNSPECIFIED
 	}
@@ -58,6 +62,10 @@ func protoToReviewStatus(s pb.ReviewStatus) domain.ReviewStatus {
 		return domain.ReviewStatusCancelled
 	case pb.ReviewStatus_REVIEW_STATUS_PARTIAL:
 		return domain.ReviewStatusPartial
+	case pb.ReviewStatus_REVIEW_STATUS_PAUSED:
+		return domain.ReviewStatusPaused
+	case pb.ReviewStatus_REVIEW_STATUS_REVIEWING:
+		return domain.ReviewStatusReviewing
 	default:
 		return ""
 	}
@@ -118,16 +126,20 @@ func protoToKeywordSourceType(s pb.KeywordSourceType) string {
 // reviewToSummaryProto converts a domain LiteratureReviewRequest to a proto LiteratureReviewSummary.
 func reviewToSummaryProto(r *domain.LiteratureReviewRequest) *pb.LiteratureReviewSummary {
 	return &pb.LiteratureReviewSummary{
-		ReviewId:       r.ID.String(),
-		OriginalQuery:  r.Title,
-		Status:         reviewStatusToProto(r.Status),
-		PapersFound:    int32(r.PapersFoundCount),
-		PapersIngested: int32(r.PapersIngestedCount),
-		KeywordsUsed:   int32(r.KeywordsFoundCount),
-		CreatedAt:      timeToProtoTimestamp(r.CreatedAt),
-		CompletedAt:    optionalTimeToProtoTimestamp(r.CompletedAt),
-		Duration:       durationToProtoDuration(r.Duration()),
-		UserId:         r.UserID,
+		ReviewId:          r.ID.String(),
+		Title:             r.Title,
+		Description:       r.Description,
+		SeedKeywords:      r.SeedKeywords,
+		Status:            reviewStatusToProto(r.Status),
+		PapersFound:       int32(r.PapersFoundCount),
+		PapersIngested:    int32(r.PapersIngestedCount),
+		KeywordsUsed:      int32(r.KeywordsFoundCount),
+		CreatedAt:         timeToProtoTimestamp(r.CreatedAt),
+		CompletedAt:       optionalTimeToProtoTimestamp(r.CompletedAt),
+		Duration:          durationToProtoDuration(r.Duration()),
+		UserId:            r.UserID,
+		CoverageScore:     derefFloat64(r.CoverageScore),
+		CoverageReasoning: r.CoverageReasoning,
 	}
 }
 
@@ -168,12 +180,16 @@ func reviewConfigToProto(c domain.ReviewConfiguration) *pb.ReviewConfiguration {
 	}
 
 	return &pb.ReviewConfiguration{
-		InitialKeywordCount: int32(c.MaxKeywordsPerRound),
-		PaperKeywordCount:   int32(paperKeywordCount),
-		MaxExpansionDepth:   int32(c.MaxExpansionDepth),
-		EnabledSources:      enabledSources,
-		DateFrom:            optionalTimeToProtoTimestamp(c.DateFrom),
-		DateTo:              optionalTimeToProtoTimestamp(c.DateTo),
+		InitialKeywordCount:  int32(c.MaxKeywordsPerRound),
+		PaperKeywordCount:    int32(paperKeywordCount),
+		MaxExpansionDepth:    int32(c.MaxExpansionDepth),
+		EnabledSources:       enabledSources,
+		DateFrom:             optionalTimeToProtoTimestamp(c.DateFrom),
+		DateTo:               optionalTimeToProtoTimestamp(c.DateTo),
+		EnableRelevanceGate:  c.EnableRelevanceGate,
+		RelevanceThreshold:   c.RelevanceThreshold,
+		EnableCoverageReview: c.EnableCoverageReview,
+		CoverageThreshold:    c.CoverageThreshold,
 	}
 }
 
@@ -237,6 +253,14 @@ func optionalTimeToProtoTimestamp(t *time.Time) *timestamppb.Timestamp {
 		return nil
 	}
 	return timestamppb.New(*t)
+}
+
+// derefFloat64 safely dereferences a *float64, returning 0 if nil.
+func derefFloat64(f *float64) float64 {
+	if f == nil {
+		return 0
+	}
+	return *f
 }
 
 // durationToProtoDuration converts a time.Duration to a protobuf Duration.

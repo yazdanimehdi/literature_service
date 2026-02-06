@@ -114,7 +114,7 @@ func TestStartLiteratureReview_ValidationError_EmptyQuery(t *testing.T) {
 	_, err := srv.StartLiteratureReview(context.Background(), &pb.StartLiteratureReviewRequest{
 		OrgId:     "org-1",
 		ProjectId: "proj-1",
-		Query:     "",
+		Title:     "",
 	})
 	assertGRPCCode(t, err, codes.InvalidArgument)
 }
@@ -124,7 +124,7 @@ func TestStartLiteratureReview_ValidationError_EmptyOrgID(t *testing.T) {
 	_, err := srv.StartLiteratureReview(context.Background(), &pb.StartLiteratureReviewRequest{
 		OrgId:     "",
 		ProjectId: "proj-1",
-		Query:     "some query",
+		Title:     "some query",
 	})
 	assertGRPCCode(t, err, codes.InvalidArgument)
 }
@@ -138,7 +138,7 @@ func TestStartLiteratureReview_ValidationError_QueryTooLong(t *testing.T) {
 	_, err := srv.StartLiteratureReview(context.Background(), &pb.StartLiteratureReviewRequest{
 		OrgId:     "org-1",
 		ProjectId: "proj-1",
-		Query:     string(longQuery),
+		Title:     string(longQuery),
 	})
 	assertGRPCCode(t, err, codes.InvalidArgument)
 }
@@ -324,8 +324,8 @@ func TestListLiteratureReviews_Success(t *testing.T) {
 	if s0.ReviewId != reviews[0].ID.String() {
 		t.Errorf("expected review_id %s, got %s", reviews[0].ID.String(), s0.ReviewId)
 	}
-	if s0.OriginalQuery != "CRISPR" {
-		t.Errorf("expected original_query CRISPR, got %s", s0.OriginalQuery)
+	if s0.Title != "CRISPR" {
+		t.Errorf("expected title CRISPR, got %s", s0.Title)
 	}
 	if s0.PapersFound != 42 {
 		t.Errorf("expected papers_found 42, got %d", s0.PapersFound)
@@ -491,7 +491,7 @@ func TestStartLiteratureReview_Success(t *testing.T) {
 	resp, err := srv.StartLiteratureReview(context.Background(), &pb.StartLiteratureReviewRequest{
 		OrgId:     "org-1",
 		ProjectId: "proj-1",
-		Query:     "CRISPR gene editing in cancer treatment",
+		Title:     "CRISPR gene editing in cancer treatment",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -537,7 +537,7 @@ func TestStartLiteratureReview_CreateRepoError(t *testing.T) {
 	_, err := srv.StartLiteratureReview(context.Background(), &pb.StartLiteratureReviewRequest{
 		OrgId:     "org-1",
 		ProjectId: "proj-1",
-		Query:     "some query",
+		Title:     "some query",
 	})
 	assertGRPCCode(t, err, codes.Internal)
 }
@@ -559,7 +559,7 @@ func TestStartLiteratureReview_WorkflowError(t *testing.T) {
 	_, err := srv.StartLiteratureReview(context.Background(), &pb.StartLiteratureReviewRequest{
 		OrgId:     "org-1",
 		ProjectId: "proj-1",
-		Query:     "some query",
+		Title:     "some query",
 	})
 	// ErrConnectionFailed is unmapped, falls through to Internal
 	assertGRPCCode(t, err, codes.Internal)
@@ -586,7 +586,7 @@ func TestStartLiteratureReview_WithOptionalFields(t *testing.T) {
 	resp, err := srv.StartLiteratureReview(context.Background(), &pb.StartLiteratureReviewRequest{
 		OrgId:     "org-1",
 		ProjectId: "proj-1",
-		Query:     "mRNA vaccine development",
+		Title:     "mRNA vaccine development",
 		SourceFilters: []string{
 			"semantic_scholar",
 			"pubmed",
@@ -811,7 +811,7 @@ func TestStartLiteratureReview_TenantAccessDenied(t *testing.T) {
 	_, err := srv.StartLiteratureReview(ctx, &pb.StartLiteratureReviewRequest{
 		OrgId:     "org-1",
 		ProjectId: "proj-1",
-		Query:     "test query",
+		Title:     "test query",
 	})
 	assertGRPCCode(t, err, codes.PermissionDenied)
 }

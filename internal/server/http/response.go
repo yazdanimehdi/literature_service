@@ -49,7 +49,7 @@ type configResponse struct {
 
 type reviewSummaryResponse struct {
 	ReviewID       string     `json:"review_id"`
-	OriginalQuery  string     `json:"original_query"`
+	Title          string     `json:"title"`
 	Status         string     `json:"status"`
 	PapersFound    int        `json:"papers_found"`
 	PapersIngested int        `json:"papers_ingested"`
@@ -160,7 +160,7 @@ func domainConfigToResponse(c domain.ReviewConfiguration) *configResponse {
 func domainReviewToSummary(r *domain.LiteratureReviewRequest) reviewSummaryResponse {
 	resp := reviewSummaryResponse{
 		ReviewID:       r.ID.String(),
-		OriginalQuery:  r.Title,
+		Title:          r.Title,
 		Status:         string(r.Status),
 		PapersFound:    r.PapersFoundCount,
 		PapersIngested: r.PapersIngestedCount,

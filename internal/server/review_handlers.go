@@ -29,16 +29,16 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 		return nil, err
 	}
 
-	// Validate query.
-	if req.Query == "" {
-		return nil, status.Error(codes.InvalidArgument, "query is required")
+	// Validate title.
+	if req.Title == "" {
+		return nil, status.Error(codes.InvalidArgument, "title is required")
 	}
 	const minQueryLength = 3
-	if len(req.Query) < minQueryLength {
-		return nil, status.Errorf(codes.InvalidArgument, "query must be at least %d characters", minQueryLength)
+	if len(req.Title) < minQueryLength {
+		return nil, status.Errorf(codes.InvalidArgument, "title must be at least %d characters", minQueryLength)
 	}
-	if len(req.Query) > maxQueryLength {
-		return nil, status.Errorf(codes.InvalidArgument, "query must be at most %d characters", maxQueryLength)
+	if len(req.Title) > maxQueryLength {
+		return nil, status.Errorf(codes.InvalidArgument, "title must be at most %d characters", maxQueryLength)
 	}
 
 	requestID := uuid.New()
@@ -75,7 +75,9 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 		ID:            requestID,
 		OrgID:         req.OrgId,
 		ProjectID:     req.ProjectId,
-		Title: req.Query,
+		Title:         req.Title,
+		Description:   req.Description,
+		SeedKeywords:  req.SeedKeywords,
 		Status:        domain.ReviewStatusPending,
 		Configuration: cfg,
 		CreatedAt:     now,
@@ -88,18 +90,20 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 
 	// Prepare and start the Temporal workflow.
 	wfInput := temporal.ReviewWorkflowInput{
-		RequestID: requestID,
-		OrgID:     req.OrgId,
-		ProjectID: req.ProjectId,
-		Title:     req.Query,
-		Config:    cfg,
+		RequestID:    requestID,
+		OrgID:        req.OrgId,
+		ProjectID:    req.ProjectId,
+		Title:        req.Title,
+		Description:  req.Description,
+		SeedKeywords: req.SeedKeywords,
+		Config:       cfg,
 	}
 
 	workflowID, runID, err := s.workflowClient.StartReviewWorkflow(ctx, temporal.ReviewWorkflowRequest{
 		RequestID: requestID.String(),
 		OrgID:     req.OrgId,
 		ProjectID: req.ProjectId,
-		Title:     req.Query,
+		Title:     req.Title,
 	}, s.workflowFunc, wfInput)
 	if err != nil {
 		return nil, domainErrToGRPC(err)

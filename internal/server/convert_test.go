@@ -1006,7 +1006,7 @@ func TestReviewToSummaryProto(t *testing.T) {
 		summary := reviewToSummaryProto(review)
 
 		assert.Equal(t, review.ID.String(), summary.ReviewId)
-		assert.Equal(t, "CRISPR", summary.OriginalQuery)
+		assert.Equal(t, "CRISPR", summary.Title)
 		assert.Equal(t, pb.ReviewStatus_REVIEW_STATUS_COMPLETED, summary.Status)
 		assert.Equal(t, int32(42), summary.PapersFound)
 		assert.Equal(t, int32(38), summary.PapersIngested)

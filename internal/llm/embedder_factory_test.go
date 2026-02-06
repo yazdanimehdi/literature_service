@@ -66,7 +66,7 @@ func TestNewEmbedder_UnsupportedProvider(t *testing.T) {
 	assert.Nil(t, embedder)
 	assert.Contains(t, err.Error(), "unsupported embedding provider")
 	assert.Contains(t, err.Error(), "cohere")
-	assert.Contains(t, err.Error(), "only openai is currently supported")
+	assert.Contains(t, err.Error(), "supported: openai, azure, bedrock, gemini, vertex")
 }
 
 func TestNewEmbedder_EmptyProvider(t *testing.T) {

@@ -6,14 +6,15 @@ import (
 	"time"
 
 	sharedllm "github.com/helixir/llm"
+	"github.com/helixir/llm/azure"
+	"github.com/helixir/llm/bedrock"
+	"github.com/helixir/llm/gemini"
 	"github.com/helixir/llm/openai"
 )
 
 // EmbedderFactoryConfig holds the parameters needed to create an Embedder.
-// It mirrors the structure of FactoryConfig but is tailored for embedding
-// providers. Currently only OpenAI is supported.
 type EmbedderFactoryConfig struct {
-	// Provider is the embedding provider name (currently only "openai").
+	// Provider is the embedding provider name ("openai", "azure", "bedrock", "gemini", "vertex").
 	Provider string
 	// Timeout is the timeout for embedding API calls.
 	Timeout time.Duration
@@ -21,14 +22,20 @@ type EmbedderFactoryConfig struct {
 	MaxRetries int
 	// RetryDelay is the base delay between retries.
 	RetryDelay time.Duration
-	// OpenAI contains OpenAI-specific settings (reused from FactoryConfig).
+	// OpenAI contains OpenAI-specific settings.
 	OpenAI OpenAIConfig
+	// Azure contains Azure OpenAI-specific settings.
+	Azure AzureConfig
+	// Bedrock contains AWS Bedrock-specific settings.
+	Bedrock BedrockConfig
+	// Gemini contains Google Gemini/Vertex AI-specific settings.
+	Gemini GeminiConfig
 }
 
 // NewEmbedder creates an Embedder based on the factory configuration.
-// The context is reserved for future providers that may require it during
-// initialization (e.g. credential exchange).
-func NewEmbedder(_ context.Context, cfg EmbedderFactoryConfig) (sharedllm.Embedder, error) {
+// The context is used by providers that require it during initialization
+// (e.g. AWS credential loading, Google Cloud client creation).
+func NewEmbedder(ctx context.Context, cfg EmbedderFactoryConfig) (sharedllm.Embedder, error) {
 	cc := embedderClientConfig(cfg)
 
 	switch cfg.Provider {
@@ -38,8 +45,28 @@ func NewEmbedder(_ context.Context, cfg EmbedderFactoryConfig) (sharedllm.Embedd
 			Model:   cfg.OpenAI.Model,
 			BaseURL: cfg.OpenAI.BaseURL,
 		}, cc)
+	case "azure":
+		return azure.NewEmbedder(azure.EmbedderConfig{
+			ResourceName:   cfg.Azure.ResourceName,
+			DeploymentName: cfg.Azure.DeploymentName,
+			APIKey:         cfg.Azure.APIKey,
+			APIVersion:     cfg.Azure.APIVersion,
+			Model:          cfg.Azure.Model,
+		}, cc)
+	case "bedrock":
+		return bedrock.NewEmbedder(ctx, bedrock.EmbedderConfig{
+			Region: cfg.Bedrock.Region,
+			Model:  cfg.Bedrock.Model,
+		}, cc)
+	case "gemini", "vertex":
+		return gemini.NewEmbedder(ctx, gemini.EmbedderConfig{
+			APIKey:   cfg.Gemini.APIKey,
+			Project:  cfg.Gemini.Project,
+			Location: cfg.Gemini.Location,
+			Model:    cfg.Gemini.Model,
+		}, cc)
 	default:
-		return nil, fmt.Errorf("unsupported embedding provider: %q (only openai is currently supported)", cfg.Provider)
+		return nil, fmt.Errorf("unsupported embedding provider: %q (supported: openai, azure, bedrock, gemini, vertex)", cfg.Provider)
 	}
 }
 

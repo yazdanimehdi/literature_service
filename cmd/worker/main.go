@@ -212,6 +212,23 @@ func run() error {
 			Model:   cfg.LLM.EmbeddingModel,
 			BaseURL: cfg.LLM.OpenAI.BaseURL,
 		},
+		Azure: llm.AzureConfig{
+			ResourceName:   cfg.LLM.Azure.ResourceName,
+			DeploymentName: cfg.LLM.Azure.DeploymentName,
+			APIKey:         cfg.LLM.Azure.APIKey,
+			APIVersion:     cfg.LLM.Azure.APIVersion,
+			Model:          cfg.LLM.Azure.Model,
+		},
+		Bedrock: llm.BedrockConfig{
+			Region: cfg.LLM.Bedrock.Region,
+			Model:  cfg.LLM.Bedrock.Model,
+		},
+		Gemini: llm.GeminiConfig{
+			APIKey:   cfg.LLM.Gemini.APIKey,
+			Project:  cfg.LLM.Gemini.Project,
+			Location: cfg.LLM.Gemini.Location,
+			Model:    cfg.LLM.Gemini.Model,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("create embedder: %w", err)

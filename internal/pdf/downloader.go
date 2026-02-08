@@ -61,7 +61,7 @@ func NewDownloader(cfg Config) *Downloader {
 		cfg.MaxSize = 100 * 1024 * 1024 // 100MB
 	}
 	if cfg.UserAgent == "" {
-		cfg.UserAgent = "Helixir-LitReview/1.0"
+		cfg.UserAgent = "Mozilla/5.0 (compatible; Helixir-LitReview/1.0; +https://helixir.io/bot)"
 	}
 
 	return &Downloader{
@@ -84,6 +84,7 @@ func (d *Downloader) Download(ctx context.Context, url string) (*DownloadResult,
 		return nil, fmt.Errorf("%w: invalid URL: %v", ErrDownloadFailed, err)
 	}
 	req.Header.Set("User-Agent", d.userAgent)
+	req.Header.Set("Accept", "application/pdf, */*;q=0.8")
 
 	resp, err := d.client.Do(req)
 	if err != nil {

@@ -60,8 +60,6 @@ type BatchCompleteSignal struct {
 type PaperResult struct {
 	// PaperID is the paper's internal UUID.
 	PaperID uuid.UUID `json:"paper_id"`
-	// CanonicalID is the paper's canonical identifier.
-	CanonicalID string `json:"canonical_id"`
 	// FileID is the file_service UUID (empty if not ingested).
 	FileID string `json:"file_id"`
 	// IngestionRunID is the ingestion run ID (empty if not ingested).
@@ -97,26 +95,13 @@ type PipelineProgress struct {
 	SearchEndTime time.Time `json:"search_end_time"`
 }
 
-// PaperBatch represents a batch of papers to be processed by a child workflow.
-type PaperBatch struct {
+// PaperIDBatch is a lightweight batch containing only paper IDs.
+// Used for child workflow input to avoid exceeding Temporal's ~2MB payload limit.
+// The child workflow fetches full paper details from the DB using these IDs.
+type PaperIDBatch struct {
 	// BatchID is a unique identifier for this batch.
 	BatchID string `json:"batch_id"`
-	// Papers contains the papers in this batch.
-	Papers []PaperForProcessing `json:"papers"`
+	// PaperIDs are the UUIDs of papers in this batch.
+	PaperIDs []uuid.UUID `json:"paper_ids"`
 }
 
-// PaperForProcessing contains paper data needed for the processing pipeline.
-type PaperForProcessing struct {
-	// PaperID is the paper's internal UUID.
-	PaperID uuid.UUID `json:"paper_id"`
-	// CanonicalID is the paper's canonical identifier (DOI, PMID, etc.).
-	CanonicalID string `json:"canonical_id"`
-	// Title is the paper title.
-	Title string `json:"title"`
-	// Abstract is the paper abstract (for embedding).
-	Abstract string `json:"abstract"`
-	// PDFURL is the URL to download the PDF.
-	PDFURL string `json:"pdf_url"`
-	// Authors is the list of author names.
-	Authors []string `json:"authors"`
-}

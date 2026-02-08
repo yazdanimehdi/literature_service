@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	sharedllm "github.com/helixir/llm"
 	"github.com/rs/zerolog"
@@ -34,7 +35,11 @@ import (
 	"github.com/helixir/literature-review-service/internal/temporal"
 	"github.com/helixir/literature-review-service/internal/temporal/activities"
 	"github.com/helixir/literature-review-service/internal/temporal/workflows"
+	sharedoutbox "github.com/helixir/outbox"
+	"github.com/helixir/outbox/cleanup"
+	outboxkafka "github.com/helixir/outbox/kafka"
 	outboxpg "github.com/helixir/outbox/postgres"
+	"github.com/helixir/outbox/recovery"
 )
 
 // Compile-time check that batchEmbedderAdapter implements activities.Embedder.
@@ -139,11 +144,13 @@ func run() error {
 			BaseURL: cfg.LLM.Anthropic.BaseURL,
 		},
 		Azure: llm.AzureConfig{
-			ResourceName:   cfg.LLM.Azure.ResourceName,
-			DeploymentName: cfg.LLM.Azure.DeploymentName,
-			APIKey:         cfg.LLM.Azure.APIKey,
-			APIVersion:     cfg.LLM.Azure.APIVersion,
-			Model:          cfg.LLM.Azure.Model,
+			ResourceName:            cfg.LLM.Azure.ResourceName,
+			DeploymentName:          cfg.LLM.Azure.DeploymentName,
+			APIKey:                  cfg.LLM.Azure.APIKey,
+			APIVersion:              cfg.LLM.Azure.APIVersion,
+			Model:                   cfg.LLM.Azure.Model,
+			EmbeddingDeploymentName: cfg.LLM.Azure.EmbeddingDeploymentName,
+			EmbeddingModel:          cfg.LLM.Azure.EmbeddingModel,
 		},
 		Bedrock: llm.BedrockConfig{
 			Region: cfg.LLM.Bedrock.Region,
@@ -213,11 +220,13 @@ func run() error {
 			BaseURL: cfg.LLM.OpenAI.BaseURL,
 		},
 		Azure: llm.AzureConfig{
-			ResourceName:   cfg.LLM.Azure.ResourceName,
-			DeploymentName: cfg.LLM.Azure.DeploymentName,
-			APIKey:         cfg.LLM.Azure.APIKey,
-			APIVersion:     cfg.LLM.Azure.APIVersion,
-			Model:          cfg.LLM.Azure.Model,
+			ResourceName:            cfg.LLM.Azure.ResourceName,
+			DeploymentName:          cfg.LLM.Azure.DeploymentName,
+			APIKey:                  cfg.LLM.Azure.APIKey,
+			APIVersion:              cfg.LLM.Azure.APIVersion,
+			Model:                   cfg.LLM.Azure.Model,
+			EmbeddingDeploymentName: cfg.LLM.Azure.EmbeddingDeploymentName,
+			EmbeddingModel:          cfg.LLM.Azure.EmbeddingModel,
 		},
 		Bedrock: llm.BedrockConfig{
 			Region: cfg.LLM.Bedrock.Region,
@@ -246,13 +255,69 @@ func run() error {
 	// Create batch embedder adapter for embedding activities.
 	embeddingAdapter := &batchEmbedderAdapter{embedder: embedder}
 
-	// Create outbox publisher for event activities.
-	outboxRepo := outboxpg.NewRepository(db.Pool(), nil)
+	// Create outbox infrastructure.
+	outboxDLRepo := outboxpg.NewDeadLetterRepository(db.Pool())
+	outboxRepo := outboxpg.NewRepository(db.Pool(), outboxDLRepo)
 	emitter := outbox.NewEmitter(outbox.EmitterConfig{
 		ServiceName: "literature-review-service",
 	})
 	adapter := outbox.NewAdapter(outboxRepo)
 	publisher := outbox.NewPublisher(emitter, adapter)
+
+	// Start outbox processor to relay events from DB to Kafka.
+	if cfg.Kafka.Enabled {
+		kafkaPublisher, kafkaErr := outboxkafka.NewPublisher(outboxkafka.Config{
+			Brokers:      cfg.Kafka.Brokers,
+			Topic:        cfg.Kafka.Topic,
+			Service:      "literature-review-service",
+			BatchSize:    cfg.Kafka.BatchSize,
+			BatchTimeout: cfg.Kafka.BatchTimeout,
+			RequireACKs:  -1,
+		})
+		if kafkaErr != nil {
+			return fmt.Errorf("create kafka publisher: %w", kafkaErr)
+		}
+		processor := sharedoutbox.NewProcessor(
+			outboxRepo,
+			kafkaPublisher,
+			sharedoutbox.ProcessorConfig{
+				PollInterval:  cfg.Outbox.PollInterval,
+				BatchSize:     cfg.Outbox.BatchSize,
+				Workers:       cfg.Outbox.Workers,
+				MaxRetries:    cfg.Outbox.MaxRetries,
+				LeaseDuration: cfg.Outbox.LeaseDuration,
+				WorkerID:      fmt.Sprintf("litreview-%s", cfg.Server.Host),
+			},
+		)
+		processor.Start(ctx)
+
+		// Defers run LIFO: processor stops first (drains in-flight events),
+		// then Kafka publisher closes.
+		defer kafkaPublisher.Close()
+		defer func() {
+			stopCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if stopErr := processor.Stop(stopCtx); stopErr != nil {
+				logger.Error().Err(stopErr).Msg("failed to stop outbox processor")
+			}
+		}()
+
+		recoveryWorker := recovery.NewWorker(outboxRepo, recovery.Config{
+			Interval:    30 * time.Second,
+			GracePeriod: 5 * time.Second,
+		})
+		recoveryWorker.Start(ctx)
+
+		cleanupWorker := cleanup.NewWorker(outboxRepo, cleanup.Config{
+			Interval: 1 * time.Hour,
+			MaxAge:   24 * time.Hour,
+		})
+		cleanupWorker.Start(ctx)
+
+		logger.Info().Msg("outbox processor, recovery, and cleanup workers started")
+	} else {
+		logger.Info().Msg("kafka disabled, outbox events will accumulate until enabled")
+	}
 
 	// Create metrics (optional).
 	metrics := observability.NewMetrics("literature_review")

@@ -1,0 +1,37 @@
+# github.com/helixir/literature-review-service/internal/observability.test
+ld: warning: '/private/var/folders/r2/vpf7kq9d1txcwhhjx7cc5lzc0000gn/T/go-link-3530154715/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+	github.com/helixir/literature-review-service/cmd/migrate		coverage: 0.0% of statements
+	github.com/helixir/literature-review-service/cmd/server		coverage: 0.0% of statements
+	github.com/helixir/literature-review-service/cmd/worker		coverage: 0.0% of statements
+	github.com/helixir/literature-review-service/gen/proto/literaturereview/v1		coverage: 0.0% of statements
+ok  	github.com/helixir/literature-review-service/internal/config	1.353s	coverage: 97.8% of statements
+ok  	github.com/helixir/literature-review-service/internal/database	1.260s	coverage: 14.5% of statements
+ok  	github.com/helixir/literature-review-service/internal/dedup	1.479s	coverage: 87.9% of statements
+ok  	github.com/helixir/literature-review-service/internal/domain	1.876s	coverage: 100.0% of statements
+ok  	github.com/helixir/literature-review-service/internal/ingestion	1.701s	coverage: 24.0% of statements
+# github.com/helixir/literature-review-service/internal/temporal/activities.test
+ld: warning: '/private/var/folders/r2/vpf7kq9d1txcwhhjx7cc5lzc0000gn/T/go-link-282298334/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+# github.com/helixir/literature-review-service/internal/temporal/workflows.test
+ld: warning: '/private/var/folders/r2/vpf7kq9d1txcwhhjx7cc5lzc0000gn/T/go-link-918524979/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+# github.com/helixir/literature-review-service/tests/chaos.test
+ld: warning: '/private/var/folders/r2/vpf7kq9d1txcwhhjx7cc5lzc0000gn/T/go-link-1728499515/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+# github.com/helixir/literature-review-service/tests/pipeline.test
+ld: warning: '/private/var/folders/r2/vpf7kq9d1txcwhhjx7cc5lzc0000gn/T/go-link-199912080/000013.o' has malformed LC_DYSYMTAB, expected 98 undefined symbols to start at index 1626, found 95 undefined symbols starting at index 1626
+ok  	github.com/helixir/literature-review-service/internal/llm	2.799s	coverage: 90.3% of statements
+ok  	github.com/helixir/literature-review-service/internal/observability	(cached)	coverage: 88.2% of statements
+ok  	github.com/helixir/literature-review-service/internal/outbox	(cached)	coverage: 100.0% of statements
+ok  	github.com/helixir/literature-review-service/internal/papersources	6.792s	coverage: 88.5% of statements
+ok  	github.com/helixir/literature-review-service/internal/papersources/openalex	8.154s	coverage: 91.5% of statements
+ok  	github.com/helixir/literature-review-service/internal/papersources/pubmed	10.956s	coverage: 89.7% of statements
+ok  	github.com/helixir/literature-review-service/internal/papersources/semanticscholar	3.025s	coverage: 91.8% of statements
+ok  	github.com/helixir/literature-review-service/internal/pdf	4.007s	coverage: 93.1% of statements
+ok  	github.com/helixir/literature-review-service/internal/qdrant	3.111s	coverage: 13.0% of statements
+ok  	github.com/helixir/literature-review-service/internal/repository	3.050s	coverage: 82.6% of statements
+ok  	github.com/helixir/literature-review-service/internal/server	7.097s	coverage: 91.5% of statements
+ok  	github.com/helixir/literature-review-service/internal/server/http	3.330s	coverage: 73.2% of statements
+ok  	github.com/helixir/literature-review-service/internal/temporal	(cached)	coverage: 57.1% of statements
+ok  	github.com/helixir/literature-review-service/internal/temporal/activities	2.580s	coverage: 85.1% of statements
+ok  	github.com/helixir/literature-review-service/internal/temporal/workflows	2.895s	coverage: 88.1% of statements
+ok  	github.com/helixir/literature-review-service/tests/chaos	3.037s	coverage: [no statements]
+ok  	github.com/helixir/literature-review-service/tests/pipeline	3.142s	coverage: [no statements]
+ok  	github.com/helixir/literature-review-service/tests/security	(cached)	coverage: [no statements]

@@ -315,6 +315,18 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		},
 	})
 
+	// Build search executor for shared search helpers.
+	executor := &searchExecutor{
+		cancelCtx: cancelCtx,
+		statusCtx: statusCtx,
+		searchAct: searchAct,
+		statusAct: statusAct,
+		logger:    logger,
+		progress:  progress,
+		input:     input,
+		wfInfo:    workflowInfo,
+	}
+
 	// Helper to update status and track in progress.
 	updateStatus := func(status domain.ReviewStatus, phase string, errMsg string) error {
 		progress.Status = string(status)
@@ -552,156 +564,18 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		resultsPerSource = 10
 	}
 
-	// Collect papers from searches.
-	var allPapers []*domain.Paper
-
-	// Use a deterministic approach with futures to avoid non-determinism from goroutine
-	// completion order. Collect all search futures first, then process results in order.
-	type searchFuture struct {
-		source    domain.SourceType
-		keyword   string
-		keywordID uuid.UUID
-		dateFrom  *string
-		future    workflow.Future
-	}
-	var searchFutures []searchFuture
+	// Bounded candidate papers for expansion/coverage selection.
+	var candidatePapers []*domain.Paper
 
 	progress.Phase = "searching"
-	for _, keyword := range extractOutput.Keywords {
-		keyword := keyword // capture
-		kwID := keywordIDMap[keyword]
-
-		for idx, source := range sources {
-			source := source // capture
-
-			// Search deduplication: check if this keyword+source was already searched.
-			// When cached, use cached papers AND search forward from the cache date
-			// to discover newly published papers (prevents database freezing in time).
-			var forwardDateFrom *string
-			if kwID != uuid.Nil {
-				var checkOutput activities.CheckSearchCompletedOutput
-				checkErr := workflow.ExecuteActivity(statusCtx, statusAct.CheckSearchCompleted, activities.CheckSearchCompletedInput{
-					KeywordID: kwID,
-					Keyword:   keyword,
-					Source:    source,
-				}).Get(cancelCtx, &checkOutput)
-
-				if checkErr == nil && checkOutput.AlreadyCompleted {
-					logger.Info("search cached — using cached results + searching forward",
-						"keyword", keyword,
-						"source", source,
-						"searchedAt", checkOutput.SearchedAt,
-						"cachedPapers", checkOutput.PapersFoundCount,
-					)
-					if len(checkOutput.PreviouslyFoundPapers) > 0 {
-						allPapers = append(allPapers, checkOutput.PreviouslyFoundPapers...)
-						totalPapersFound += checkOutput.PapersFoundCount
-						progress.PapersFound = totalPapersFound
-					}
-					// Search forward from the cached search date.
-					if checkOutput.SearchedAt != "" {
-						forwardDateFrom = &checkOutput.SearchedAt
-					}
-				}
-			}
-
-			actCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
-				StartToCloseTimeout: searchActivityTimeout,
-				RetryPolicy: &temporal.RetryPolicy{
-					InitialInterval:    2 * time.Second,
-					BackoffCoefficient: 2.0,
-					MaximumInterval:    1 * time.Minute,
-					MaximumAttempts:    3,
-				},
-			})
-
-			// Rate limiting: stagger requests to avoid overwhelming sources.
-			if idx > 0 {
-				_ = workflow.Sleep(cancelCtx, time.Duration(idx)*searchRateLimitDelay)
-			}
-
-			future := workflow.ExecuteActivity(actCtx, searchAct.SearchSingleSource, activities.SearchSingleSourceInput{
-				Source:           source,
-				Query:            keyword,
-				MaxResults:       resultsPerSource,
-				IncludePreprints: input.Config.IncludePreprints,
-				OpenAccessOnly:   input.Config.RequireOpenAccess,
-				MinCitations:     input.Config.MinCitations,
-				DateFrom:         forwardDateFrom,
-			})
-
-			searchFutures = append(searchFutures, searchFuture{source: source, keyword: keyword, keywordID: kwID, dateFrom: forwardDateFrom, future: future})
-		}
-	}
-
-	// Process results in deterministic order.
-	for _, sf := range searchFutures {
-		var output activities.SearchSingleSourceOutput
-		err := sf.future.Get(cancelCtx, &output)
-		if err != nil {
-			logger.Warn("search failed for source",
-				"source", sf.source,
-				"keyword", sf.keyword,
-				"error", err,
-			)
-			// Record failed search for dedup tracking.
-			if sf.keywordID != uuid.Nil {
-				_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
-					KeywordID:    sf.keywordID,
-					Source:       sf.source,
-					DateFrom:     sf.dateFrom,
-					PapersFound:  0,
-					Status:       domain.SearchStatusFailed,
-					ErrorMessage: err.Error(),
-				}).Get(cancelCtx, nil)
-			}
-			continue
-		}
-
-		if output.Error != "" {
-			logger.Warn("search returned error",
-				"source", sf.source,
-				"keyword", sf.keyword,
-				"error", output.Error,
-			)
-			// Record failed search for dedup tracking.
-			if sf.keywordID != uuid.Nil {
-				_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
-					KeywordID:    sf.keywordID,
-					Source:       sf.source,
-					DateFrom:     sf.dateFrom,
-					PapersFound:  0,
-					Status:       domain.SearchStatusFailed,
-					ErrorMessage: output.Error,
-				}).Get(cancelCtx, nil)
-			}
-			continue
-		}
-
-		if len(output.Papers) > 0 {
-			allPapers = append(allPapers, output.Papers...)
-			totalPapersFound += output.TotalFound
-			progress.PapersFound = totalPapersFound
-			logger.Info("search completed",
-				"source", sf.source,
-				"keyword", sf.keyword,
-				"papers", len(output.Papers),
-			)
-		}
-
-		// Record completed search for dedup tracking.
-		if sf.keywordID != uuid.Nil {
-			_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
-				KeywordID:   sf.keywordID,
-				Source:      sf.source,
-				DateFrom:    sf.dateFrom,
-				PapersFound: output.TotalFound,
-				PaperIDs:    extractPaperIDs(output.Papers),
-				Status:      domain.SearchStatusCompleted,
-			}).Get(cancelCtx, nil)
-		}
-	}
-	logger.Info("all searches completed", "totalPapers", len(allPapers))
+	searchResult := executor.executeSearch(searchPhaseParams{
+		keywords:         extractOutput.Keywords,
+		keywordIDMap:     keywordIDMap,
+		sources:          sources,
+		resultsPerSource: resultsPerSource,
+		logPrefix:        "initial",
+	})
+	totalPapersFound += searchResult.totalFound
 
 	// Check for pause/stop after searches complete.
 	if err := checkPausePoint(ctx, progress, resumeCh, statusAct, input, logger); err != nil {
@@ -711,113 +585,42 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		return result, nil
 	}
 
-	// Save discovered papers.
-	if len(allPapers) > 0 {
-		discoveredVia := sources[0]
-		if len(sources) > 1 {
-			discoveredVia = "multiple"
-		}
-		var savePapersOutput activities.SavePapersOutput
-		err = workflow.ExecuteActivity(statusCtx, statusAct.SavePapers, activities.SavePapersInput{
-			RequestID:           input.RequestID,
-			OrgID:               input.OrgID,
-			ProjectID:           input.ProjectID,
-			Papers:              allPapers,
-			DiscoveredViaSource: discoveredVia,
-			ExpansionDepth:      0,
-		}).Get(cancelCtx, &savePapersOutput)
-		if err != nil {
-			return handleFailure(fmt.Errorf("save_papers: %w", err))
-		}
-		logger.Info("papers saved", "saved", savePapersOutput.SavedCount, "duplicates", savePapersOutput.DuplicateCount)
-	}
-
 	// =========================================================================
-	// Phase 3: Batch processing via child workflows
+	// Phase 3: Save papers and batch processing via child workflows
 	// =========================================================================
 
-	logger.Info("starting batch processing", "paperCount", len(allPapers))
+	logger.Info("starting batch processing", "paperCount", len(searchResult.papers))
 	if err := updateStatus(domain.ReviewStatusIngesting, "processing", ""); err != nil {
 		return handleFailure(fmt.Errorf("update status to processing: %w", err))
 	}
 
-	// Convert papers to processing format.
-	papersForProcessing := make([]PaperForProcessing, 0, len(allPapers))
-	for _, p := range allPapers {
-		if p == nil {
-			continue
-		}
-		papersForProcessing = append(papersForProcessing, PaperForProcessing{
-			PaperID:     p.ID,
-			CanonicalID: p.CanonicalID,
-			Title:       p.Title,
-			Abstract:    p.Abstract,
-			PDFURL:      p.PDFURL,
-			Authors:     extractAuthors(p),
-		})
-	}
-
-	// Spawn child workflows for batches.
 	// Capture all child workflow futures to avoid memory leaks.
 	var childFutures []workflow.ChildWorkflowFuture
 	progress.Phase = "batching"
-	if len(papersForProcessing) > 0 {
-		batches := createBatches(papersForProcessing, batchSize)
-		for i, batch := range batches {
-			batchID := fmt.Sprintf("%s-batch-%d", workflowInfo.WorkflowExecution.ID, i)
 
-			childCtx := workflow.WithChildOptions(cancelCtx, workflow.ChildWorkflowOptions{
-				WorkflowID: batchID,
-				TaskQueue:  workflowInfo.TaskQueueName,
-				RetryPolicy: &temporal.RetryPolicy{
-					InitialInterval:    2 * time.Second,
-					BackoffCoefficient: 2.0,
-					MaximumInterval:    1 * time.Minute,
-					MaximumAttempts:    3,
-				},
-			})
-
-			future := workflow.ExecuteChildWorkflow(childCtx, PaperProcessingWorkflow, PaperProcessingInput{
-				OrgID:            input.OrgID,
-				ProjectID:        input.ProjectID,
-				RequestID:        input.RequestID.String(),
-				Batch:            PaperBatch{BatchID: batchID, Papers: batch},
-				ParentWorkflowID: workflowInfo.WorkflowExecution.ID,
-			})
-			childFutures = append(childFutures, future)
-
-			progress.BatchesSpawned++
-			logger.Info("spawned batch workflow",
-				"batchID", batchID,
-				"paperCount", len(batch),
-			)
-		}
+	discoveredVia := sources[0]
+	if len(sources) > 1 {
+		discoveredVia = "multiple"
 	}
+	if err := executor.saveAndSpawnBatches(saveAndSpawnParams{
+		papers:              searchResult.papers,
+		keywordPaperEntries: searchResult.keywordPaperEntries,
+		discoveredVia:       discoveredVia,
+		expansionDepth:      0,
+		batchIDPrefix:       workflowInfo.WorkflowExecution.ID,
+		fatalOnSaveError:    true,
+		childFutures:        &childFutures,
+	}); err != nil {
+		return handleFailure(fmt.Errorf("save_papers: %w", err))
+	}
+	appendCandidates(&candidatePapers, searchResult.papers, maxCandidatePapers)
 
-	// Check for pause/stop after batch spawn.
+	// Check for pause/stop after batch processing.
 	if err := checkPausePoint(ctx, progress, resumeCh, statusAct, input, logger); err != nil {
 		return handleFailure(err)
 	}
 	if shouldReturn, result, _ := checkStopPoint(ctx, stopRequested, progress, input, startTime, totalKeywords, totalPapersFound, 0, statusAct, eventAct, logger); shouldReturn {
 		return result, nil
-	}
-
-	// Wait for all batches to complete.
-	if progress.BatchesSpawned > 0 {
-		logger.Info("waiting for batch completion",
-			"batchesSpawned", progress.BatchesSpawned,
-		)
-		err = workflow.Await(cancelCtx, func() bool {
-			return progress.BatchesCompleted >= progress.BatchesSpawned
-		})
-		if err != nil {
-			return handleFailure(fmt.Errorf("await batch completion: %w", err))
-		}
-		logger.Info("all batches completed",
-			"ingested", progress.PapersIngested,
-			"duplicates", progress.DuplicatesFound,
-			"failed", progress.PapersFailed,
-		)
 	}
 
 	// =========================================================================
@@ -852,7 +655,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		progress.Phase = "expanding"
 
 		// Select top papers with abstracts for keyword expansion.
-		expansionPapers := selectPapersForExpansion(allPapers, maxPapersForExpansion)
+		expansionPapers := selectPapersForExpansion(candidatePapers, maxPapersForExpansion)
 		if len(expansionPapers) == 0 {
 			logger.Info("no papers with abstracts available for expansion, stopping")
 			break
@@ -935,223 +738,32 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 			keywordIDMap[k] = v
 		}
 
-		// Use deterministic approach with futures to avoid non-determinism from goroutine
-		// completion order. Collect all expansion search futures first, then process results in order.
-		type expSearchFuture struct {
-			source    domain.SourceType
-			keyword   string
-			keywordID uuid.UUID
-			dateFrom  *string
-			future    workflow.Future
+		expSearchResult := executor.executeSearch(searchPhaseParams{
+			keywords:         newKeywords,
+			keywordIDMap:     keywordIDMap,
+			sources:          sources,
+			resultsPerSource: resultsPerSource,
+			logPrefix:        fmt.Sprintf("expansion round %d", round),
+		})
+		totalPapersFound += expSearchResult.totalFound
+
+		expDiscoveredVia := sources[0]
+		if len(sources) > 1 {
+			expDiscoveredVia = "multiple"
 		}
-		var expSearchFutures []expSearchFuture
-		var expansionPapersFound []*domain.Paper
-
-		for _, keyword := range newKeywords {
-			keyword := keyword
-			kwID := keywordIDMap[keyword]
-
-			for idx, source := range sources {
-				source := source
-
-				// Search deduplication for expansion searches.
-				// When cached, use cached papers AND search forward from cache date.
-				var expForwardDateFrom *string
-				if kwID != uuid.Nil {
-					var checkOutput activities.CheckSearchCompletedOutput
-					checkErr := workflow.ExecuteActivity(statusCtx, statusAct.CheckSearchCompleted, activities.CheckSearchCompletedInput{
-						KeywordID: kwID,
-						Keyword:   keyword,
-						Source:    source,
-					}).Get(cancelCtx, &checkOutput)
-
-					if checkErr == nil && checkOutput.AlreadyCompleted {
-						logger.Info("expansion search cached — using cached results + searching forward",
-							"keyword", keyword,
-							"source", source,
-							"round", round,
-							"cachedPapers", checkOutput.PapersFoundCount,
-						)
-						if len(checkOutput.PreviouslyFoundPapers) > 0 {
-							expansionPapersFound = append(expansionPapersFound, checkOutput.PreviouslyFoundPapers...)
-							totalPapersFound += checkOutput.PapersFoundCount
-							progress.PapersFound = totalPapersFound
-						}
-						// Search forward from the cached search date.
-						if checkOutput.SearchedAt != "" {
-							expForwardDateFrom = &checkOutput.SearchedAt
-						}
-					}
-				}
-
-				actCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
-					StartToCloseTimeout: searchActivityTimeout,
-					RetryPolicy: &temporal.RetryPolicy{
-						InitialInterval:    2 * time.Second,
-						BackoffCoefficient: 2.0,
-						MaximumInterval:    1 * time.Minute,
-						MaximumAttempts:    3,
-					},
-				})
-
-				// Rate limiting: stagger requests to avoid overwhelming sources.
-				if idx > 0 {
-					_ = workflow.Sleep(cancelCtx, time.Duration(idx)*searchRateLimitDelay)
-				}
-
-				future := workflow.ExecuteActivity(actCtx, searchAct.SearchSingleSource, activities.SearchSingleSourceInput{
-					Source:           source,
-					Query:            keyword,
-					MaxResults:       resultsPerSource,
-					IncludePreprints: input.Config.IncludePreprints,
-					OpenAccessOnly:   input.Config.RequireOpenAccess,
-					MinCitations:     input.Config.MinCitations,
-					DateFrom:         expForwardDateFrom,
-				})
-
-				expSearchFutures = append(expSearchFutures, expSearchFuture{source: source, keyword: keyword, keywordID: kwID, dateFrom: expForwardDateFrom, future: future})
-			}
+		if err := executor.saveAndSpawnBatches(saveAndSpawnParams{
+			papers:              expSearchResult.papers,
+			keywordPaperEntries: expSearchResult.keywordPaperEntries,
+			discoveredVia:       expDiscoveredVia,
+			expansionDepth:      round,
+			batchIDPrefix:       fmt.Sprintf("%s-exp%d", workflowInfo.WorkflowExecution.ID, round),
+			fatalOnSaveError:    true,
+			childFutures:        &childFutures,
+		}); err != nil {
+			return handleFailure(fmt.Errorf("save_expansion_papers round %d: %w", round, err))
 		}
+		appendCandidates(&candidatePapers, expSearchResult.papers, maxCandidatePapers)
 
-		// Process expansion results in deterministic order.
-		for _, sf := range expSearchFutures {
-			var output activities.SearchSingleSourceOutput
-			err := sf.future.Get(cancelCtx, &output)
-			if err != nil {
-				logger.Warn("expansion search failed",
-					"source", sf.source,
-					"keyword", sf.keyword,
-					"round", round,
-					"error", err,
-				)
-				// Record failed search for dedup tracking.
-				if sf.keywordID != uuid.Nil {
-					_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
-						KeywordID:    sf.keywordID,
-						Source:       sf.source,
-						DateFrom:     sf.dateFrom,
-						PapersFound:  0,
-						Status:       domain.SearchStatusFailed,
-						ErrorMessage: err.Error(),
-					}).Get(cancelCtx, nil)
-				}
-				continue
-			}
-			if output.Error != "" {
-				logger.Warn("expansion search returned error",
-					"source", sf.source,
-					"keyword", sf.keyword,
-					"round", round,
-					"error", output.Error,
-				)
-				// Record failed search for dedup tracking.
-				if sf.keywordID != uuid.Nil {
-					_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
-						KeywordID:    sf.keywordID,
-						Source:       sf.source,
-						DateFrom:     sf.dateFrom,
-						PapersFound:  0,
-						Status:       domain.SearchStatusFailed,
-						ErrorMessage: output.Error,
-					}).Get(cancelCtx, nil)
-				}
-				continue
-			}
-
-			if len(output.Papers) > 0 {
-				expansionPapersFound = append(expansionPapersFound, output.Papers...)
-				totalPapersFound += output.TotalFound
-				progress.PapersFound = totalPapersFound
-			}
-
-			// Record completed search for dedup tracking.
-			if sf.keywordID != uuid.Nil {
-				_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
-					KeywordID:   sf.keywordID,
-					Source:      sf.source,
-					DateFrom:    sf.dateFrom,
-					PapersFound: output.TotalFound,
-					PaperIDs:    extractPaperIDs(output.Papers),
-					Status:      domain.SearchStatusCompleted,
-				}).Get(cancelCtx, nil)
-			}
-		}
-
-		// Save expansion papers.
-		if len(expansionPapersFound) > 0 {
-			expDiscoveredVia := sources[0]
-			if len(sources) > 1 {
-				expDiscoveredVia = "multiple"
-			}
-			var expSavePapersOutput activities.SavePapersOutput
-			err = workflow.ExecuteActivity(statusCtx, statusAct.SavePapers, activities.SavePapersInput{
-				RequestID:           input.RequestID,
-				OrgID:               input.OrgID,
-				ProjectID:           input.ProjectID,
-				Papers:              expansionPapersFound,
-				DiscoveredViaSource: expDiscoveredVia,
-				ExpansionDepth:      round,
-			}).Get(cancelCtx, &expSavePapersOutput)
-			if err != nil {
-				return handleFailure(fmt.Errorf("save_expansion_papers round %d: %w", round, err))
-			}
-
-			// Spawn batch processing for expansion papers.
-			expPapersForProcessing := make([]PaperForProcessing, 0, len(expansionPapersFound))
-			for _, p := range expansionPapersFound {
-				if p == nil {
-					continue
-				}
-				expPapersForProcessing = append(expPapersForProcessing, PaperForProcessing{
-					PaperID:     p.ID,
-					CanonicalID: p.CanonicalID,
-					Title:       p.Title,
-					Abstract:    p.Abstract,
-					PDFURL:      p.PDFURL,
-					Authors:     extractAuthors(p),
-				})
-			}
-
-			expBatches := createBatches(expPapersForProcessing, batchSize)
-			for i, batch := range expBatches {
-				batchID := fmt.Sprintf("%s-exp%d-batch-%d", workflowInfo.WorkflowExecution.ID, round, i)
-
-				childCtx := workflow.WithChildOptions(cancelCtx, workflow.ChildWorkflowOptions{
-					WorkflowID: batchID,
-					TaskQueue:  workflowInfo.TaskQueueName,
-					RetryPolicy: &temporal.RetryPolicy{
-						InitialInterval:    2 * time.Second,
-						BackoffCoefficient: 2.0,
-						MaximumInterval:    1 * time.Minute,
-						MaximumAttempts:    3,
-					},
-				})
-
-				future := workflow.ExecuteChildWorkflow(childCtx, PaperProcessingWorkflow, PaperProcessingInput{
-					OrgID:            input.OrgID,
-					ProjectID:        input.ProjectID,
-					RequestID:        input.RequestID.String(),
-					Batch:            PaperBatch{BatchID: batchID, Papers: batch},
-					ParentWorkflowID: workflowInfo.WorkflowExecution.ID,
-				})
-				childFutures = append(childFutures, future)
-
-				progress.BatchesSpawned++
-			}
-
-			// Wait for expansion batch completion.
-			if len(expBatches) > 0 {
-				err = workflow.Await(cancelCtx, func() bool {
-					return progress.BatchesCompleted >= progress.BatchesSpawned
-				})
-				if err != nil {
-					return handleFailure(fmt.Errorf("await expansion batch completion: %w", err))
-				}
-			}
-		}
-
-		// Append expansion papers for subsequent rounds.
-		allPapers = append(allPapers, expansionPapersFound...)
 		expansionRounds = round
 	}
 
@@ -1179,7 +791,7 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 		progress.Phase = "reviewing"
 
 		// Select up to 20 papers for assessment.
-		assessmentPapers := selectPapersForExpansion(allPapers, 20)
+		assessmentPapers := selectPapersForExpansion(candidatePapers, 20)
 		summaries := make([]activities.PaperSummary, 0, len(assessmentPapers))
 		for _, p := range assessmentPapers {
 			abstract := p.Abstract
@@ -1260,208 +872,34 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 					keywordIDMap[k] = v
 				}
 
-				// Search with gap topics (with search dedup).
-				var gapPapers []*domain.Paper
-				var gapSearchFutures []struct {
-					source    domain.SourceType
-					keyword   string
-					keywordID uuid.UUID
-					dateFrom  *string
-					future    workflow.Future
+				// Search with gap topics.
+				gapSearchResult := executor.executeSearch(searchPhaseParams{
+					keywords:         gapTopics,
+					keywordIDMap:     keywordIDMap,
+					sources:          sources,
+					resultsPerSource: resultsPerSource,
+					logPrefix:        "gap",
+				})
+				totalPapersFound += gapSearchResult.totalFound
+
+				gapDiscoveredVia := sources[0]
+				if len(sources) > 1 {
+					gapDiscoveredVia = "multiple"
 				}
-
-				for _, keyword := range gapTopics {
-					kwID := keywordIDMap[keyword]
-					for idx, source := range sources {
-						// Check search dedup before launching search.
-						// When cached, use cached papers AND search forward from cache date.
-						var gapForwardDateFrom *string
-						if kwID != uuid.Nil {
-							var gapCheckOutput activities.CheckSearchCompletedOutput
-							checkErr := workflow.ExecuteActivity(statusCtx, statusAct.CheckSearchCompleted, activities.CheckSearchCompletedInput{
-								KeywordID: kwID,
-								Keyword:   keyword,
-								Source:    source,
-							}).Get(cancelCtx, &gapCheckOutput)
-							if checkErr == nil && gapCheckOutput.AlreadyCompleted {
-								logger.Info("gap search cached — using cached results + searching forward",
-									"keyword", keyword,
-									"source", source,
-									"cachedPapers", gapCheckOutput.PapersFoundCount,
-								)
-								if len(gapCheckOutput.PreviouslyFoundPapers) > 0 {
-									gapPapers = append(gapPapers, gapCheckOutput.PreviouslyFoundPapers...)
-									totalPapersFound += gapCheckOutput.PapersFoundCount
-									progress.PapersFound = totalPapersFound
-								}
-								// Search forward from the cached search date.
-								if gapCheckOutput.SearchedAt != "" {
-									gapForwardDateFrom = &gapCheckOutput.SearchedAt
-								}
-							}
-						}
-
-						actCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
-							StartToCloseTimeout: searchActivityTimeout,
-							RetryPolicy: &temporal.RetryPolicy{
-								InitialInterval:    2 * time.Second,
-								BackoffCoefficient: 2.0,
-								MaximumInterval:    1 * time.Minute,
-								MaximumAttempts:    3,
-							},
-						})
-						if idx > 0 {
-							_ = workflow.Sleep(cancelCtx, time.Duration(idx)*searchRateLimitDelay)
-						}
-						future := workflow.ExecuteActivity(actCtx, searchAct.SearchSingleSource, activities.SearchSingleSourceInput{
-							Source:           source,
-							Query:            keyword,
-							MaxResults:       resultsPerSource,
-							IncludePreprints: input.Config.IncludePreprints,
-							OpenAccessOnly:   input.Config.RequireOpenAccess,
-							MinCitations:     input.Config.MinCitations,
-							DateFrom:         gapForwardDateFrom,
-						})
-						gapSearchFutures = append(gapSearchFutures, struct {
-							source    domain.SourceType
-							keyword   string
-							keywordID uuid.UUID
-							dateFrom  *string
-							future    workflow.Future
-						}{source: source, keyword: keyword, keywordID: kwID, dateFrom: gapForwardDateFrom, future: future})
-					}
+				if err := executor.saveAndSpawnBatches(saveAndSpawnParams{
+					papers:              gapSearchResult.papers,
+					keywordPaperEntries: gapSearchResult.keywordPaperEntries,
+					discoveredVia:       gapDiscoveredVia,
+					expansionDepth:      expansionRounds + 1,
+					batchIDPrefix:       fmt.Sprintf("%s-gap", workflowInfo.WorkflowExecution.ID),
+					fatalOnSaveError:    false, // non-fatal for gap phase
+					childFutures:        &childFutures,
+				}); err != nil {
+					// unreachable when fatalOnSaveError=false, but handle defensively
+					logger.Warn("gap save and spawn failed", "error", err)
 				}
+				appendCandidates(&candidatePapers, gapSearchResult.papers, maxCandidatePapers)
 
-				for _, sf := range gapSearchFutures {
-					var output activities.SearchSingleSourceOutput
-					if err := sf.future.Get(cancelCtx, &output); err != nil {
-						logger.Warn("gap search failed",
-							"source", sf.source,
-							"keyword", sf.keyword,
-							"error", err,
-						)
-						// Record failed search for dedup tracking.
-						if sf.keywordID != uuid.Nil {
-							_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
-								KeywordID:    sf.keywordID,
-								Source:       sf.source,
-								DateFrom:     sf.dateFrom,
-								PapersFound:  0,
-								Status:       domain.SearchStatusFailed,
-								ErrorMessage: err.Error(),
-							}).Get(cancelCtx, nil)
-						}
-						continue
-					}
-
-					if output.Error != "" {
-						logger.Warn("gap search returned error",
-							"source", sf.source,
-							"keyword", sf.keyword,
-							"error", output.Error,
-						)
-						// Record failed search for dedup tracking.
-						if sf.keywordID != uuid.Nil {
-							_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
-								KeywordID:    sf.keywordID,
-								Source:       sf.source,
-								DateFrom:     sf.dateFrom,
-								PapersFound:  0,
-								Status:       domain.SearchStatusFailed,
-								ErrorMessage: output.Error,
-							}).Get(cancelCtx, nil)
-						}
-						continue
-					}
-
-					if len(output.Papers) > 0 {
-						gapPapers = append(gapPapers, output.Papers...)
-						totalPapersFound += output.TotalFound
-						progress.PapersFound = totalPapersFound
-					}
-
-					// Record completed search for dedup tracking.
-					if sf.keywordID != uuid.Nil {
-						_ = workflow.ExecuteActivity(statusCtx, statusAct.RecordSearchResult, activities.RecordSearchResultInput{
-							KeywordID:   sf.keywordID,
-							Source:      sf.source,
-							DateFrom:    sf.dateFrom,
-							PapersFound: output.TotalFound,
-							PaperIDs:    extractPaperIDs(output.Papers),
-							Status:      domain.SearchStatusCompleted,
-						}).Get(cancelCtx, nil)
-					}
-				}
-
-				// Save and process gap papers.
-				if len(gapPapers) > 0 {
-					gapDiscoveredVia := sources[0]
-					if len(sources) > 1 {
-						gapDiscoveredVia = "multiple"
-					}
-					var gapSaveOutput activities.SavePapersOutput
-					err = workflow.ExecuteActivity(statusCtx, statusAct.SavePapers, activities.SavePapersInput{
-						RequestID:           input.RequestID,
-						OrgID:               input.OrgID,
-						ProjectID:           input.ProjectID,
-						Papers:              gapPapers,
-						DiscoveredViaSource: gapDiscoveredVia,
-						ExpansionDepth:      expansionRounds + 1,
-					}).Get(cancelCtx, &gapSaveOutput)
-					if err != nil {
-						logger.Warn("failed to save gap papers", "error", err)
-					} else {
-						gapPapersForProcessing := make([]PaperForProcessing, 0, len(gapPapers))
-						for _, p := range gapPapers {
-							if p == nil {
-								continue
-							}
-							gapPapersForProcessing = append(gapPapersForProcessing, PaperForProcessing{
-								PaperID:     p.ID,
-								CanonicalID: p.CanonicalID,
-								Title:       p.Title,
-								Abstract:    p.Abstract,
-								PDFURL:      p.PDFURL,
-								Authors:     extractAuthors(p),
-							})
-						}
-
-						gapBatches := createBatches(gapPapersForProcessing, batchSize)
-						for i, batch := range gapBatches {
-							batchID := fmt.Sprintf("%s-gap-batch-%d", workflowInfo.WorkflowExecution.ID, i)
-							childCtx := workflow.WithChildOptions(cancelCtx, workflow.ChildWorkflowOptions{
-								WorkflowID: batchID,
-								TaskQueue:  workflowInfo.TaskQueueName,
-								RetryPolicy: &temporal.RetryPolicy{
-									InitialInterval:    2 * time.Second,
-									BackoffCoefficient: 2.0,
-									MaximumInterval:    1 * time.Minute,
-									MaximumAttempts:    3,
-								},
-							})
-							future := workflow.ExecuteChildWorkflow(childCtx, PaperProcessingWorkflow, PaperProcessingInput{
-								OrgID:            input.OrgID,
-								ProjectID:        input.ProjectID,
-								RequestID:        input.RequestID.String(),
-								Batch:            PaperBatch{BatchID: batchID, Papers: batch},
-								ParentWorkflowID: workflowInfo.WorkflowExecution.ID,
-							})
-							childFutures = append(childFutures, future)
-							progress.BatchesSpawned++
-						}
-
-						if len(gapBatches) > 0 {
-							err = workflow.Await(cancelCtx, func() bool {
-								return progress.BatchesCompleted >= progress.BatchesSpawned
-							})
-							if err != nil {
-								return handleFailure(fmt.Errorf("await gap batch completion: %w", err))
-							}
-						}
-					}
-				}
-
-				allPapers = append(allPapers, gapPapers...)
 				expansionRounds++
 			}
 		}
@@ -1549,35 +987,22 @@ func selectPapersForExpansion(papers []*domain.Paper, max int) []*domain.Paper {
 	return selected
 }
 
-// createBatches splits papers into batches of the specified size.
-func createBatches(papers []PaperForProcessing, size int) [][]PaperForProcessing {
-	if len(papers) == 0 {
+// createIDBatches splits paper IDs into batches of the specified size.
+// Used for lightweight child workflow input to avoid Temporal payload size limits.
+func createIDBatches(ids []uuid.UUID, size int) [][]uuid.UUID {
+	if len(ids) == 0 || size <= 0 {
 		return nil
 	}
 
-	var batches [][]PaperForProcessing
-	for i := 0; i < len(papers); i += size {
+	var batches [][]uuid.UUID
+	for i := 0; i < len(ids); i += size {
 		end := i + size
-		if end > len(papers) {
-			end = len(papers)
+		if end > len(ids) {
+			end = len(ids)
 		}
-		batches = append(batches, papers[i:end])
+		batches = append(batches, ids[i:end])
 	}
 	return batches
-}
-
-// extractAuthors extracts author names from a paper.
-func extractAuthors(p *domain.Paper) []string {
-	if p == nil || len(p.Authors) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(p.Authors))
-	for _, a := range p.Authors {
-		if a.Name != "" {
-			names = append(names, a.Name)
-		}
-	}
-	return names
 }
 
 // checkPausePoint checks if the workflow is paused and waits for resume if so.

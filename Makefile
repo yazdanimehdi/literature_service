@@ -191,4 +191,55 @@ compose-down:
 compose-logs:
 	docker compose --profile full logs -f
 
+# ---------------------------------------------------------------------------
+# All-in-one local container (single container with all dependencies)
+# ---------------------------------------------------------------------------
+
+LOCAL_CONTAINER := litreview-local
+LOCAL_IMAGE := literature-review-allinone
+
+## local-up: Build and start all-in-one container (PostgreSQL + Temporal + Kafka + Qdrant + server + worker)
+local-up:
+	@echo "Building all-in-one container..."
+	cd .. && docker build \
+		-f literature_service/Dockerfile.local \
+		-t $(LOCAL_IMAGE):latest .
+	@docker rm -f $(LOCAL_CONTAINER) 2>/dev/null || true
+	docker run -d --name $(LOCAL_CONTAINER) \
+		-p 60080:8080 \
+		-p 60090:9090 \
+		-p 60091:9091 \
+		-p 60432:5432 \
+		-p 60233:7233 \
+		-p 60234:8233 \
+		-p 60092:9092 \
+		-p 60333:6333 \
+		-p 60334:6334 \
+		$(LOCAL_IMAGE):latest
+	@echo ""
+	@echo "=== literature_service running ==="
+	@echo "  HTTP:        localhost:60080"
+	@echo "  gRPC:        localhost:60090"
+	@echo "  Metrics:     localhost:60091"
+	@echo "  PostgreSQL:  localhost:60432"
+	@echo "  Temporal:    localhost:60233"
+	@echo "  Temporal UI: localhost:60234"
+	@echo "  Kafka:       localhost:60092"
+	@echo "  Qdrant:      localhost:60333 (REST) / localhost:60334 (gRPC)"
+	@echo "  Logs:        make local-logs"
+	@echo "  Stop:        make local-down"
+
+## local-down: Stop and remove all-in-one container
+local-down:
+	docker stop $(LOCAL_CONTAINER) 2>/dev/null || true
+	docker rm $(LOCAL_CONTAINER) 2>/dev/null || true
+
+## local-logs: Tail logs from all-in-one container
+local-logs:
+	docker logs -f $(LOCAL_CONTAINER)
+
+## local-shell: Open a shell in the running container
+local-shell:
+	docker exec -it $(LOCAL_CONTAINER) bash
+
 .DEFAULT_GOAL := all

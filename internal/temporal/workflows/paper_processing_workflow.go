@@ -19,8 +19,8 @@ type PaperProcessingInput struct {
 	ProjectID string `json:"project_id"`
 	// RequestID is the parent review request ID.
 	RequestID string `json:"request_id"`
-	// Batch contains the papers to process.
-	Batch PaperBatch `json:"batch"`
+	// Batch contains the paper IDs to process. Full paper details are fetched from DB.
+	Batch PaperIDBatch `json:"batch"`
 	// ParentWorkflowID is the parent workflow ID for signaling.
 	ParentWorkflowID string `json:"parent_workflow_id"`
 }
@@ -39,9 +39,10 @@ type PaperProcessingResult struct {
 	Failed int `json:"failed"`
 }
 
-// PaperProcessingWorkflow processes a batch of papers through embed -> dedup -> ingest.
+// PaperProcessingWorkflow processes a batch of papers through fetch -> embed -> dedup -> ingest.
 //
 // The workflow proceeds through the following stages:
+//  0. Fetch: Retrieve full paper details from DB using paper IDs
 //  1. Embed: Generate embeddings for paper abstracts
 //  2. Dedup: Check papers against vector store for semantic duplicates
 //  3. Ingest: Download and ingest non-duplicate papers with PDF URLs
@@ -54,12 +55,22 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 	logger := workflow.GetLogger(ctx)
 	logger.Info("starting paper processing workflow",
 		"batchID", input.Batch.BatchID,
-		"paperCount", len(input.Batch.Papers),
+		"paperCount", len(input.Batch.PaperIDs),
 	)
+
+	// Validate RequestID early to avoid wasting resources on embed/dedup.
+	requestID, parseErr := uuid.Parse(input.RequestID)
+	if parseErr != nil {
+		logger.Error("invalid request ID", "requestID", input.RequestID, "error", parseErr)
+		return &PaperProcessingResult{
+			BatchID: input.Batch.BatchID,
+			Failed:  len(input.Batch.PaperIDs),
+		}, fmt.Errorf("parse request ID %q: %w", input.RequestID, parseErr)
+	}
 
 	result := &PaperProcessingResult{
 		BatchID:   input.Batch.BatchID,
-		Processed: len(input.Batch.Papers),
+		Processed: len(input.Batch.PaperIDs),
 	}
 
 	// Activity pointers for method references
@@ -113,12 +124,36 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 	})
 
 	// =========================================================================
+	// Stage 0: Fetch paper details from DB
+	// =========================================================================
+	logger.Info("stage 0: fetching papers from DB", "count", len(input.Batch.PaperIDs))
+
+	var fetchOutput activities.FetchPaperBatchOutput
+	err := workflow.ExecuteActivity(statusCtx, statusAct.FetchPaperBatch, activities.FetchPaperBatchInput{
+		PaperIDs: input.Batch.PaperIDs,
+	}).Get(ctx, &fetchOutput)
+	if err != nil {
+		logger.Error("failed to fetch papers from DB", "error", err)
+		result.Failed = len(input.Batch.PaperIDs)
+		return result, fmt.Errorf("fetch paper batch: %w", err)
+	}
+
+	papers := fetchOutput.Papers
+	if len(papers) == 0 {
+		logger.Warn("no papers found in DB for batch", "batchID", input.Batch.BatchID)
+		return result, nil
+	}
+
+	result.Processed = len(papers)
+	logger.Info("papers fetched from DB", "requested", len(input.Batch.PaperIDs), "found", len(papers))
+
+	// =========================================================================
 	// Stage 1: Embed paper abstracts
 	// =========================================================================
 	logger.Info("stage 1: embedding papers")
 
-	papersForEmbedding := make([]activities.PaperForEmbedding, 0, len(input.Batch.Papers))
-	for _, p := range input.Batch.Papers {
+	papersForEmbedding := make([]activities.PaperForEmbedding, 0, len(papers))
+	for _, p := range papers {
 		papersForEmbedding = append(papersForEmbedding, activities.PaperForEmbedding{
 			PaperID:     p.PaperID,
 			CanonicalID: p.CanonicalID,
@@ -127,12 +162,12 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 	}
 
 	var embedOutput activities.EmbedPapersOutput
-	err := workflow.ExecuteActivity(embeddingCtx, embeddingAct.EmbedPapers, activities.EmbedPapersInput{
+	err = workflow.ExecuteActivity(embeddingCtx, embeddingAct.EmbedPapers, activities.EmbedPapersInput{
 		Papers: papersForEmbedding,
 	}).Get(ctx, &embedOutput)
 	if err != nil {
 		logger.Error("embedding failed", "error", err)
-		result.Failed = len(input.Batch.Papers)
+		result.Failed = len(papers)
 		return result, fmt.Errorf("embed papers: %w", err)
 	}
 
@@ -145,8 +180,8 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 
 	// Build papers for dedup (only those with embeddings)
 	var papersForDedup []*activities.PaperWithEmbedding
-	paperMap := make(map[string]PaperForProcessing)
-	for _, p := range input.Batch.Papers {
+	paperMap := make(map[string]activities.PaperForProcessing)
+	for _, p := range papers {
 		paperMap[p.CanonicalID] = p
 		if embedding, ok := embedOutput.Embeddings[p.CanonicalID]; ok {
 			papersForDedup = append(papersForDedup, &activities.PaperWithEmbedding{
@@ -166,7 +201,7 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 		if err != nil {
 			// Dedup failure is non-fatal: log and continue with all papers
 			logger.Warn("dedup failed, continuing with all papers", "error", err)
-			for _, p := range input.Batch.Papers {
+			for _, p := range papers {
 				nonDuplicatePaperIDs = append(nonDuplicatePaperIDs, p.PaperID)
 			}
 		} else {
@@ -176,14 +211,14 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 		}
 	} else {
 		// No embeddings, skip dedup
-		for _, p := range input.Batch.Papers {
+		for _, p := range papers {
 			nonDuplicatePaperIDs = append(nonDuplicatePaperIDs, p.PaperID)
 		}
 	}
 
 	// Build a map of paper ID -> canonical ID for lookups
 	paperIDToCanonical := make(map[uuid.UUID]string)
-	for _, p := range input.Batch.Papers {
+	for _, p := range papers {
 		paperIDToCanonical[p.PaperID] = p.CanonicalID
 	}
 
@@ -207,7 +242,6 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 
 	var paperResults []PaperResult
 	if len(papersForIngestion) > 0 {
-		requestID, _ := uuid.Parse(input.RequestID)
 		var ingestionOutput activities.DownloadAndIngestOutput
 		err = workflow.ExecuteActivity(ingestionCtx, ingestionAct.DownloadAndIngestPapers, activities.DownloadAndIngestInput{
 			OrgID:     input.OrgID,

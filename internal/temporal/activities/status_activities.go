@@ -177,6 +177,16 @@ func (a *StatusActivities) SavePapers(ctx context.Context, input SavePapersInput
 	savedCount := len(savedPapers)
 	duplicateCount := len(input.Papers) - savedCount
 
+	// Collect paper IDs from the upserted results so the workflow can
+	// reference them for child workflow batches. Papers arrive from search
+	// sources with uuid.Nil; BulkUpsert assigns/returns the real DB IDs.
+	paperIDs := make([]uuid.UUID, 0, len(savedPapers))
+	for _, p := range savedPapers {
+		if p != nil {
+			paperIDs = append(paperIDs, p.ID)
+		}
+	}
+
 	// Increment review counters.
 	if err := a.reviewRepo.IncrementCounters(ctx, input.OrgID, input.ProjectID, input.RequestID, savedCount, 0); err != nil {
 		logger.Error("failed to increment review counters",
@@ -203,6 +213,7 @@ func (a *StatusActivities) SavePapers(ctx context.Context, input SavePapersInput
 	return &SavePapersOutput{
 		SavedCount:     savedCount,
 		DuplicateCount: duplicateCount,
+		PaperIDs:       paperIDs,
 	}, nil
 }
 
@@ -452,6 +463,97 @@ func (a *StatusActivities) RecordSearchResult(ctx context.Context, input RecordS
 		"source", input.Source,
 		"papersFound", input.PapersFound,
 		"mappings", len(input.PaperIDs),
+	)
+
+	return nil
+}
+
+// FetchPaperBatch fetches full paper details from the database by their IDs.
+// This is used by child workflows to retrieve paper data without passing large payloads
+// through Temporal's serialization boundary.
+func (a *StatusActivities) FetchPaperBatch(ctx context.Context, input FetchPaperBatchInput) (*FetchPaperBatchOutput, error) {
+	logger := activity.GetLogger(ctx)
+	logger.Info("fetching paper batch", "count", len(input.PaperIDs))
+
+	if len(input.PaperIDs) == 0 {
+		return &FetchPaperBatchOutput{Papers: []PaperForProcessing{}}, nil
+	}
+
+	papers, err := a.paperRepo.GetByIDs(ctx, input.PaperIDs)
+	if err != nil {
+		logger.Error("failed to fetch papers by IDs", "error", err)
+		return nil, fmt.Errorf("fetch papers by IDs: %w", err)
+	}
+
+	result := make([]PaperForProcessing, 0, len(papers))
+	for _, p := range papers {
+		if p == nil {
+			continue
+		}
+		authors := make([]string, 0, len(p.Authors))
+		for _, author := range p.Authors {
+			if author.Name != "" {
+				authors = append(authors, author.Name)
+			}
+		}
+		result = append(result, PaperForProcessing{
+			PaperID:     p.ID,
+			CanonicalID: p.CanonicalID,
+			Title:       p.Title,
+			Abstract:    p.Abstract,
+			PDFURL:      p.PDFURL,
+			Authors:     authors,
+		})
+	}
+
+	logger.Info("paper batch fetched", "requested", len(input.PaperIDs), "found", len(result))
+
+	return &FetchPaperBatchOutput{Papers: result}, nil
+}
+
+// BulkCreateKeywordPaperMappings creates keyword-paper mappings in bulk after papers
+// have been persisted to the database. This defers mapping creation until after SavePapers
+// to avoid FK constraint violations on the keyword_paper_mappings table.
+func (a *StatusActivities) BulkCreateKeywordPaperMappings(ctx context.Context, input BulkCreateKeywordPaperMappingsInput) error {
+	logger := activity.GetLogger(ctx)
+	logger.Info("bulk creating keyword-paper mappings", "entryCount", len(input.Entries))
+
+	// Flatten all entries into a single slice to minimize DB round trips.
+	totalMappings := 0
+	for _, entry := range input.Entries {
+		totalMappings += len(entry.PaperIDs)
+	}
+
+	if totalMappings == 0 {
+		logger.Info("no keyword-paper mappings to create")
+		return nil
+	}
+
+	allMappings := make([]*domain.KeywordPaperMapping, 0, totalMappings)
+	for _, entry := range input.Entries {
+		for _, paperID := range entry.PaperIDs {
+			allMappings = append(allMappings, &domain.KeywordPaperMapping{
+				KeywordID:   entry.KeywordID,
+				PaperID:     paperID,
+				MappingType: domain.MappingTypeQueryMatch,
+				SourceType:  entry.Source,
+			})
+		}
+	}
+
+	activity.RecordHeartbeat(ctx, fmt.Sprintf("inserting %d mappings", len(allMappings)))
+
+	if err := a.keywordRepo.BulkAddPaperMappings(ctx, allMappings); err != nil {
+		logger.Error("failed to create keyword-paper mappings",
+			"mappingCount", len(allMappings),
+			"error", err,
+		)
+		return fmt.Errorf("bulk add keyword-paper mappings: %w", err)
+	}
+
+	logger.Info("keyword-paper mappings created",
+		"entryCount", len(input.Entries),
+		"mappingCount", len(allMappings),
 	)
 
 	return nil

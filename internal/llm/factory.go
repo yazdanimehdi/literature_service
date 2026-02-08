@@ -94,11 +94,13 @@ type AnthropicConfig struct {
 
 // AzureConfig holds Azure OpenAI-specific settings.
 type AzureConfig struct {
-	ResourceName   string
-	DeploymentName string
-	APIKey         string
-	APIVersion     string
-	Model          string
+	ResourceName            string
+	DeploymentName          string
+	APIKey                  string
+	APIVersion              string
+	Model                   string
+	EmbeddingDeploymentName string
+	EmbeddingModel          string
 }
 
 // BedrockConfig holds AWS Bedrock-specific settings.

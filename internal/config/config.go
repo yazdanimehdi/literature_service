@@ -328,10 +328,13 @@ type AnthropicConfig struct {
 }
 
 // AzureConfig holds Azure OpenAI-specific settings.
+// The endpoint is constructed as https://{resource_name}.openai.azure.com.
+// Chat and embedding use separate deployment names because Azure requires
+// distinct deployments for each model type (e.g. gpt-4o vs text-embedding-3-small).
 type AzureConfig struct {
-	// ResourceName is the Azure resource name.
+	// ResourceName is the Azure resource name (determines the endpoint URL).
 	ResourceName string `mapstructure:"resource_name"`
-	// DeploymentName is the Azure deployment name.
+	// DeploymentName is the Azure deployment name for chat completions.
 	DeploymentName string `mapstructure:"deployment_name"`
 	// APIKey is the Azure OpenAI API key (loaded from LITREVIEW_LLM_AZURE_API_KEY env var).
 	APIKey string `mapstructure:"-"`
@@ -339,6 +342,12 @@ type AzureConfig struct {
 	APIVersion string `mapstructure:"api_version"`
 	// Model is the model name for response metadata.
 	Model string `mapstructure:"model"`
+	// EmbeddingDeploymentName is the Azure deployment name for embedding.
+	// If empty, falls back to DeploymentName.
+	EmbeddingDeploymentName string `mapstructure:"embedding_deployment_name"`
+	// EmbeddingModel is the embedding model name for response metadata.
+	// If empty, falls back to EmbeddingDeploymentName.
+	EmbeddingModel string `mapstructure:"embedding_model"`
 }
 
 // BedrockConfig holds AWS Bedrock-specific settings.
@@ -624,6 +633,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.azure.deployment_name", "")
 	v.SetDefault("llm.azure.api_version", "2024-08-01-preview")
 	v.SetDefault("llm.azure.model", "")
+	v.SetDefault("llm.azure.embedding_deployment_name", "")
+	v.SetDefault("llm.azure.embedding_model", "")
 	v.SetDefault("llm.bedrock.region", "us-east-1")
 	v.SetDefault("llm.bedrock.model", "")
 	v.SetDefault("llm.gemini.project", "")

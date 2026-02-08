@@ -101,6 +101,21 @@ func TestPipelineIntegration(t *testing.T) {
 		env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).
 			Return(&activities.UpdatePaperIngestionResultsOutput{Updated: 1}, nil)
 
+		// Mock FetchPaperBatch - Stage 0 of child workflow
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+			&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID,
+						CanonicalID: "doi:10.1234/test",
+						Title:       "Test Paper",
+						Abstract:    "This is a test abstract for embedding.",
+						PDFURL:      "https://example.com/paper.pdf",
+					},
+				},
+			}, nil,
+		)
+
 		// Mock embedding activities
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
 			Return(&activities.EmbedPapersOutput{
@@ -267,6 +282,21 @@ func TestPipelineIntegration(t *testing.T) {
 		env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).
 			Return(&activities.UpdatePaperIngestionResultsOutput{Updated: 1}, nil)
 
+		// Mock FetchPaperBatch - Stage 0 of child workflow
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+			&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID,
+						CanonicalID: "doi:10.1234/test",
+						Title:       "Test Paper",
+						Abstract:    "Test abstract",
+						PDFURL:      "https://example.com/paper.pdf",
+					},
+				},
+			}, nil,
+		)
+
 		// Mock embedding activities
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
 			Return(&activities.EmbedPapersOutput{
@@ -371,6 +401,21 @@ func TestPipelineIntegration(t *testing.T) {
 			}, nil)
 		// Note: UpdatePaperIngestionResults is not called because there are no results
 
+		// Mock FetchPaperBatch - Stage 0 of child workflow
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+			&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID,
+						CanonicalID: "doi:10.1234/test",
+						Title:       "Test Paper",
+						Abstract:    "Test abstract",
+						PDFURL:      "https://example.com/paper.pdf",
+					},
+				},
+			}, nil,
+		)
+
 		// Mock embedding activities - return empty embeddings (paper skipped)
 		// This simulates when embedding fails for individual papers but doesn't
 		// cause a fatal error.
@@ -470,6 +515,21 @@ func TestPipelineIntegration(t *testing.T) {
 				SavedCount:     1,
 				DuplicateCount: 0,
 			}, nil)
+
+		// Mock FetchPaperBatch - Stage 0 of child workflow
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+			&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID,
+						CanonicalID: "doi:10.1234/test",
+						Title:       "Test Paper",
+						Abstract:    "Test abstract",
+						PDFURL:      "https://example.com/paper.pdf",
+					},
+				},
+			}, nil,
+		)
 
 		// Mock embedding activities
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
@@ -582,6 +642,25 @@ func TestPipelineIntegration(t *testing.T) {
 			}, nil)
 		env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).
 			Return(&activities.UpdatePaperIngestionResultsOutput{Updated: 7}, nil)
+
+		// Mock FetchPaperBatch - Stage 0 of child workflow
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+			&activities.FetchPaperBatchOutput{
+				Papers: func() []activities.PaperForProcessing {
+					result := make([]activities.PaperForProcessing, 7)
+					for i := 0; i < 7; i++ {
+						result[i] = activities.PaperForProcessing{
+							PaperID:     paperIDs[i],
+							CanonicalID: fmt.Sprintf("doi:10.1234/test%d", i),
+							Title:       fmt.Sprintf("Test Paper %d", i),
+							Abstract:    fmt.Sprintf("Test abstract %d", i),
+							PDFURL:      fmt.Sprintf("https://example.com/paper%d.pdf", i),
+						}
+					}
+					return result
+				}(),
+			}, nil,
+		)
 
 		// Mock embedding activities - return embeddings for batch
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
@@ -715,6 +794,35 @@ func TestPipelineIntegration(t *testing.T) {
 			}, nil)
 		env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).
 			Return(&activities.UpdatePaperIngestionResultsOutput{Updated: 2}, nil)
+
+		// Mock FetchPaperBatch - Stage 0 of child workflow
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+			&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     nonDupID1,
+						CanonicalID: "doi:10.1234/original1",
+						Title:       "Original Paper 1",
+						Abstract:    "Unique research about topic",
+						PDFURL:      "https://example.com/original1.pdf",
+					},
+					{
+						PaperID:     nonDupID2,
+						CanonicalID: "doi:10.1234/original2",
+						Title:       "Original Paper 2",
+						Abstract:    "Different unique research",
+						PDFURL:      "https://example.com/original2.pdf",
+					},
+					{
+						PaperID:     dupID,
+						CanonicalID: "doi:10.1234/duplicate",
+						Title:       "Duplicate Paper",
+						Abstract:    "Near-duplicate research",
+						PDFURL:      "https://example.com/duplicate.pdf",
+					},
+				},
+			}, nil,
+		)
 
 		// Mock embedding activities
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).

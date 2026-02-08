@@ -26,6 +26,20 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 		var ingestionAct *activities.IngestionActivities
 		var statusAct *activities.StatusActivities
 
+		// Mock FetchPaperBatch to return full paper data
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).
+			Return(&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID,
+						CanonicalID: "doi:123",
+						Title:       "Test Paper",
+						Abstract:    "Test abstract",
+						PDFURL:      "https://example.com/paper.pdf",
+					},
+				},
+			}, nil)
+
 		// Mock activities
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
 			Return(&activities.EmbedPapersOutput{
@@ -56,17 +70,9 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 			OrgID:     "org-1",
 			ProjectID: "proj-1",
 			RequestID: uuid.New().String(),
-			Batch: PaperBatch{
-				BatchID: "batch-1",
-				Papers: []PaperForProcessing{
-					{
-						PaperID:     paperID,
-						CanonicalID: "doi:123",
-						Title:       "Test Paper",
-						Abstract:    "Test abstract",
-						PDFURL:      "https://example.com/paper.pdf",
-					},
-				},
+			Batch: PaperIDBatch{
+				BatchID:  "batch-1",
+				PaperIDs: []uuid.UUID{paperID},
 			},
 		}
 
@@ -85,11 +91,52 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 		assert.Equal(t, 0, result.Duplicates)
 	})
 
+	t.Run("handles fetch failure", func(t *testing.T) {
+		testSuite := &testsuite.WorkflowTestSuite{}
+		env := testSuite.NewTestWorkflowEnvironment()
+
+		var statusAct *activities.StatusActivities
+
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).
+			Return(nil, fmt.Errorf("database unavailable"))
+
+		input := PaperProcessingInput{
+			OrgID:     "org-1",
+			ProjectID: "proj-1",
+			RequestID: uuid.New().String(),
+			Batch: PaperIDBatch{
+				BatchID:  "batch-1",
+				PaperIDs: []uuid.UUID{uuid.New()},
+			},
+		}
+
+		env.ExecuteWorkflow(PaperProcessingWorkflow, input)
+
+		require.True(t, env.IsWorkflowCompleted())
+		require.Error(t, env.GetWorkflowError())
+	})
+
 	t.Run("handles embedding failure", func(t *testing.T) {
 		testSuite := &testsuite.WorkflowTestSuite{}
 		env := testSuite.NewTestWorkflowEnvironment()
 
+		paperID := uuid.New()
+
 		var embeddingAct *activities.EmbeddingActivities
+		var statusAct *activities.StatusActivities
+
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).
+			Return(&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID,
+						CanonicalID: "doi:123",
+						Title:       "Test Paper",
+						Abstract:    "Test abstract",
+						PDFURL:      "https://example.com/paper.pdf",
+					},
+				},
+			}, nil)
 
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
 			Return(nil, fmt.Errorf("embedding service unavailable"))
@@ -98,17 +145,9 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 			OrgID:     "org-1",
 			ProjectID: "proj-1",
 			RequestID: uuid.New().String(),
-			Batch: PaperBatch{
-				BatchID: "batch-1",
-				Papers: []PaperForProcessing{
-					{
-						PaperID:     uuid.New(),
-						CanonicalID: "doi:123",
-						Title:       "Test Paper",
-						Abstract:    "Test abstract",
-						PDFURL:      "https://example.com/paper.pdf",
-					},
-				},
+			Batch: PaperIDBatch{
+				BatchID:  "batch-1",
+				PaperIDs: []uuid.UUID{paperID},
 			},
 		}
 
@@ -128,6 +167,19 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 		var dedupAct *activities.DedupActivities
 		var ingestionAct *activities.IngestionActivities
 		var statusAct *activities.StatusActivities
+
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).
+			Return(&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID,
+						CanonicalID: "doi:123",
+						Title:       "Test Paper",
+						Abstract:    "Test abstract",
+						PDFURL:      "https://example.com/paper.pdf",
+					},
+				},
+			}, nil)
 
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
 			Return(&activities.EmbedPapersOutput{
@@ -155,17 +207,9 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 			OrgID:     "org-1",
 			ProjectID: "proj-1",
 			RequestID: uuid.New().String(),
-			Batch: PaperBatch{
-				BatchID: "batch-1",
-				Papers: []PaperForProcessing{
-					{
-						PaperID:     paperID,
-						CanonicalID: "doi:123",
-						Title:       "Test Paper",
-						Abstract:    "Test abstract",
-						PDFURL:      "https://example.com/paper.pdf",
-					},
-				},
+			Batch: PaperIDBatch{
+				BatchID:  "batch-1",
+				PaperIDs: []uuid.UUID{paperID},
 			},
 		}
 
@@ -191,6 +235,26 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 		var dedupAct *activities.DedupActivities
 		var ingestionAct *activities.IngestionActivities
 		var statusAct *activities.StatusActivities
+
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).
+			Return(&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID1,
+						CanonicalID: "doi:123",
+						Title:       "Test Paper 1",
+						Abstract:    "Test abstract 1",
+						PDFURL:      "https://example.com/paper1.pdf",
+					},
+					{
+						PaperID:     paperID2,
+						CanonicalID: "doi:456",
+						Title:       "Test Paper 2",
+						Abstract:    "Test abstract 2",
+						PDFURL:      "https://example.com/paper2.pdf",
+					},
+				},
+			}, nil)
 
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
 			Return(&activities.EmbedPapersOutput{
@@ -227,24 +291,9 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 			OrgID:     "org-1",
 			ProjectID: "proj-1",
 			RequestID: uuid.New().String(),
-			Batch: PaperBatch{
-				BatchID: "batch-1",
-				Papers: []PaperForProcessing{
-					{
-						PaperID:     paperID1,
-						CanonicalID: "doi:123",
-						Title:       "Test Paper 1",
-						Abstract:    "Test abstract 1",
-						PDFURL:      "https://example.com/paper1.pdf",
-					},
-					{
-						PaperID:     paperID2,
-						CanonicalID: "doi:456",
-						Title:       "Test Paper 2",
-						Abstract:    "Test abstract 2",
-						PDFURL:      "https://example.com/paper2.pdf",
-					},
-				},
+			Batch: PaperIDBatch{
+				BatchID:  "batch-1",
+				PaperIDs: []uuid.UUID{paperID1, paperID2},
 			},
 		}
 
@@ -270,6 +319,20 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 
 		var embeddingAct *activities.EmbeddingActivities
 		var dedupAct *activities.DedupActivities
+		var statusAct *activities.StatusActivities
+
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).
+			Return(&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID,
+						CanonicalID: "doi:123",
+						Title:       "Test Paper",
+						Abstract:    "Test abstract",
+						PDFURL:      "", // No PDF URL
+					},
+				},
+			}, nil)
 
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
 			Return(&activities.EmbedPapersOutput{
@@ -290,17 +353,9 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 			OrgID:     "org-1",
 			ProjectID: "proj-1",
 			RequestID: uuid.New().String(),
-			Batch: PaperBatch{
-				BatchID: "batch-1",
-				Papers: []PaperForProcessing{
-					{
-						PaperID:     paperID,
-						CanonicalID: "doi:123",
-						Title:       "Test Paper",
-						Abstract:    "Test abstract",
-						PDFURL:      "", // No PDF URL
-					},
-				},
+			Batch: PaperIDBatch{
+				BatchID:  "batch-1",
+				PaperIDs: []uuid.UUID{paperID},
 			},
 		}
 
@@ -329,6 +384,19 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 		var dedupAct *activities.DedupActivities
 		var ingestionAct *activities.IngestionActivities
 		var statusAct *activities.StatusActivities
+
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).
+			Return(&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID,
+						CanonicalID: "doi:123",
+						Title:       "Test Paper",
+						Abstract:    "Test abstract",
+						PDFURL:      "https://example.com/paper.pdf",
+					},
+				},
+			}, nil)
 
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
 			Return(&activities.EmbedPapersOutput{
@@ -363,17 +431,9 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 			ProjectID:        "proj-1",
 			RequestID:        uuid.New().String(),
 			ParentWorkflowID: parentWorkflowID,
-			Batch: PaperBatch{
-				BatchID: "batch-1",
-				Papers: []PaperForProcessing{
-					{
-						PaperID:     paperID,
-						CanonicalID: "doi:123",
-						Title:       "Test Paper",
-						Abstract:    "Test abstract",
-						PDFURL:      "https://example.com/paper.pdf",
-					},
-				},
+			Batch: PaperIDBatch{
+				BatchID:  "batch-1",
+				PaperIDs: []uuid.UUID{paperID},
 			},
 		}
 
@@ -398,6 +458,20 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 		var embeddingAct *activities.EmbeddingActivities
 		var dedupAct *activities.DedupActivities
 		var ingestionAct *activities.IngestionActivities
+		var statusAct *activities.StatusActivities
+
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).
+			Return(&activities.FetchPaperBatchOutput{
+				Papers: []activities.PaperForProcessing{
+					{
+						PaperID:     paperID,
+						CanonicalID: "doi:123",
+						Title:       "Test Paper",
+						Abstract:    "Test abstract",
+						PDFURL:      "https://example.com/paper.pdf",
+					},
+				},
+			}, nil)
 
 		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
 			Return(&activities.EmbedPapersOutput{
@@ -419,17 +493,9 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 			OrgID:     "org-1",
 			ProjectID: "proj-1",
 			RequestID: uuid.New().String(),
-			Batch: PaperBatch{
-				BatchID: "batch-1",
-				Papers: []PaperForProcessing{
-					{
-						PaperID:     paperID,
-						CanonicalID: "doi:123",
-						Title:       "Test Paper",
-						Abstract:    "Test abstract",
-						PDFURL:      "https://example.com/paper.pdf",
-					},
-				},
+			Batch: PaperIDBatch{
+				BatchID:  "batch-1",
+				PaperIDs: []uuid.UUID{paperID},
 			},
 		}
 
@@ -451,22 +517,20 @@ func TestPaperProcessingWorkflow(t *testing.T) {
 		testSuite := &testsuite.WorkflowTestSuite{}
 		env := testSuite.NewTestWorkflowEnvironment()
 
-		var embeddingAct *activities.EmbeddingActivities
+		var statusAct *activities.StatusActivities
 
-		env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).
-			Return(&activities.EmbedPapersOutput{
-				Embeddings: map[string][]float32{},
+		env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).
+			Return(&activities.FetchPaperBatchOutput{
+				Papers: nil,
 			}, nil)
-
-		// BatchDedup should not be called when no embeddings
 
 		input := PaperProcessingInput{
 			OrgID:     "org-1",
 			ProjectID: "proj-1",
 			RequestID: uuid.New().String(),
-			Batch: PaperBatch{
-				BatchID: "batch-empty",
-				Papers:  []PaperForProcessing{},
+			Batch: PaperIDBatch{
+				BatchID:  "batch-empty",
+				PaperIDs: []uuid.UUID{},
 			},
 		}
 

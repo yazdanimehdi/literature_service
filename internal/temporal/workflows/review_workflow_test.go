@@ -95,6 +95,7 @@ func TestLiteratureReviewWorkflow_Success(t *testing.T) {
 		&activities.SavePapersOutput{
 			SavedCount:     1,
 			DuplicateCount: 0,
+			PaperIDs:       []uuid.UUID{paperID},
 		}, nil,
 	)
 
@@ -105,6 +106,14 @@ func TestLiteratureReviewWorkflow_Success(t *testing.T) {
 	var embeddingAct *activities.EmbeddingActivities
 	var dedupAct *activities.DedupActivities
 	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+		&activities.FetchPaperBatchOutput{
+			Papers: []activities.PaperForProcessing{
+				{PaperID: paperID, CanonicalID: "doi:10.1234/test", Title: "Test Paper", Abstract: "Test abstract about CRISPR", PDFURL: "https://example.com/paper.pdf"},
+			},
+		}, nil,
+	)
 
 	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
 		&activities.EmbedPapersOutput{
@@ -248,6 +257,7 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 		&activities.SavePapersOutput{
 			SavedCount:     1,
 			DuplicateCount: 0,
+			PaperIDs:       []uuid.UUID{paperID},
 		}, nil,
 	)
 
@@ -258,6 +268,14 @@ func TestLiteratureReviewWorkflow_WithExpansion(t *testing.T) {
 	var embeddingAct *activities.EmbeddingActivities
 	var dedupAct *activities.DedupActivities
 	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+		&activities.FetchPaperBatchOutput{
+			Papers: []activities.PaperForProcessing{
+				{PaperID: paperID, CanonicalID: "doi:10.1234/test1", Title: "CRISPR Paper 1", Abstract: "This paper discusses CRISPR-Cas9 nuclease systems."},
+			},
+		}, nil,
+	)
 
 	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
 		&activities.EmbedPapersOutput{
@@ -648,6 +666,7 @@ func TestLiteratureReviewWorkflow_BatchProcessing(t *testing.T) {
 		&activities.SavePapersOutput{
 			SavedCount:     2,
 			DuplicateCount: 0,
+			PaperIDs:       []uuid.UUID{nonDupID, dupID},
 		}, nil,
 	)
 
@@ -658,6 +677,15 @@ func TestLiteratureReviewWorkflow_BatchProcessing(t *testing.T) {
 	var embeddingAct *activities.EmbeddingActivities
 	var dedupAct *activities.DedupActivities
 	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+		&activities.FetchPaperBatchOutput{
+			Papers: []activities.PaperForProcessing{
+				{PaperID: nonDupID, CanonicalID: "doi:10.1234/original", Title: "Original Paper", Abstract: "Unique research about CRISPR", PDFURL: "https://example.com/original.pdf"},
+				{PaperID: dupID, CanonicalID: "doi:10.1234/duplicate", Title: "Duplicate Paper", Abstract: "Near-duplicate research about CRISPR", PDFURL: "https://example.com/duplicate.pdf"},
+			},
+		}, nil,
+	)
 
 	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
 		&activities.EmbedPapersOutput{
@@ -765,17 +793,14 @@ func TestSelectPapersForExpansion(t *testing.T) {
 	})
 }
 
-func TestCreateBatches(t *testing.T) {
+func TestCreateIDBatches(t *testing.T) {
 	t.Run("creates batches of specified size", func(t *testing.T) {
-		papers := make([]PaperForProcessing, 12)
-		for i := range papers {
-			papers[i] = PaperForProcessing{
-				PaperID: uuid.New(),
-				Title:   fmt.Sprintf("Paper %d", i),
-			}
+		ids := make([]uuid.UUID, 12)
+		for i := range ids {
+			ids[i] = uuid.New()
 		}
 
-		batches := createBatches(papers, 5)
+		batches := createIDBatches(ids, 5)
 		assert.Len(t, batches, 3)
 		assert.Len(t, batches[0], 5)
 		assert.Len(t, batches[1], 5)
@@ -783,25 +808,40 @@ func TestCreateBatches(t *testing.T) {
 	})
 
 	t.Run("handles empty input", func(t *testing.T) {
-		batches := createBatches(nil, 5)
+		batches := createIDBatches(nil, 5)
 		assert.Nil(t, batches)
 
-		batches = createBatches([]PaperForProcessing{}, 5)
+		batches = createIDBatches([]uuid.UUID{}, 5)
 		assert.Nil(t, batches)
 	})
 
+	t.Run("handles zero or negative size", func(t *testing.T) {
+		ids := []uuid.UUID{uuid.New()}
+		assert.Nil(t, createIDBatches(ids, 0))
+		assert.Nil(t, createIDBatches(ids, -1))
+	})
+
 	t.Run("handles single batch", func(t *testing.T) {
-		papers := make([]PaperForProcessing, 3)
-		for i := range papers {
-			papers[i] = PaperForProcessing{
-				PaperID: uuid.New(),
-				Title:   fmt.Sprintf("Paper %d", i),
-			}
+		ids := make([]uuid.UUID, 3)
+		for i := range ids {
+			ids[i] = uuid.New()
 		}
 
-		batches := createBatches(papers, 5)
+		batches := createIDBatches(ids, 5)
 		assert.Len(t, batches, 1)
 		assert.Len(t, batches[0], 3)
+	})
+
+	t.Run("exact divisibility produces no empty trailing batch", func(t *testing.T) {
+		ids := make([]uuid.UUID, 10)
+		for i := range ids {
+			ids[i] = uuid.New()
+		}
+
+		batches := createIDBatches(ids, 5)
+		assert.Len(t, batches, 2)
+		assert.Len(t, batches[0], 5)
+		assert.Len(t, batches[1], 5)
 	})
 }
 
@@ -873,6 +913,7 @@ func TestLiteratureReviewWorkflow_ConcurrentStarts(t *testing.T) {
 				&activities.SavePapersOutput{
 					SavedCount:     1,
 					DuplicateCount: 0,
+					PaperIDs:       []uuid.UUID{paperID},
 				}, nil,
 			)
 
@@ -883,6 +924,14 @@ func TestLiteratureReviewWorkflow_ConcurrentStarts(t *testing.T) {
 			var embeddingAct *activities.EmbeddingActivities
 			var dedupAct *activities.DedupActivities
 			var ingestionAct *activities.IngestionActivities
+
+			env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+				&activities.FetchPaperBatchOutput{
+					Papers: []activities.PaperForProcessing{
+						{PaperID: paperID, CanonicalID: "doi:10.1234/test", Title: "Test Paper", Abstract: "Test abstract about CRISPR", PDFURL: "https://example.com/paper.pdf"},
+					},
+				}, nil,
+			)
 
 			env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
 				&activities.EmbedPapersOutput{
@@ -980,7 +1029,7 @@ func TestLiteratureReviewWorkflow_RelevanceGate(t *testing.T) {
 
 	// Phase 3: Save papers.
 	env.OnActivity(statusAct.SavePapers, mock.Anything, mock.Anything).Return(
-		&activities.SavePapersOutput{SavedCount: 1}, nil)
+		&activities.SavePapersOutput{SavedCount: 1, PaperIDs: []uuid.UUID{paperID}}, nil)
 
 	// Register PaperProcessingWorkflow for child workflow execution.
 	env.RegisterWorkflow(PaperProcessingWorkflow)
@@ -988,6 +1037,13 @@ func TestLiteratureReviewWorkflow_RelevanceGate(t *testing.T) {
 	// Mock activities for child workflow.
 	var dedupAct *activities.DedupActivities
 	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+		&activities.FetchPaperBatchOutput{
+			Papers: []activities.PaperForProcessing{
+				{PaperID: paperID, CanonicalID: "doi:test", Title: "Test Paper", Abstract: "CRISPR mechanisms"},
+			},
+		}, nil)
 
 	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
 		&activities.EmbedPapersOutput{
@@ -1059,7 +1115,7 @@ func TestLiteratureReviewWorkflow_CoverageReview(t *testing.T) {
 			TotalFound: 1,
 		}, nil)
 	env.OnActivity(statusAct.SavePapers, mock.Anything, mock.Anything).Return(
-		&activities.SavePapersOutput{SavedCount: 1}, nil)
+		&activities.SavePapersOutput{SavedCount: 1, PaperIDs: []uuid.UUID{paperID}}, nil)
 
 	// Register PaperProcessingWorkflow for child workflow execution.
 	env.RegisterWorkflow(PaperProcessingWorkflow)
@@ -1068,6 +1124,13 @@ func TestLiteratureReviewWorkflow_CoverageReview(t *testing.T) {
 	var embeddingAct *activities.EmbeddingActivities
 	var dedupAct *activities.DedupActivities
 	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+		&activities.FetchPaperBatchOutput{
+			Papers: []activities.PaperForProcessing{
+				{PaperID: paperID, CanonicalID: "doi:1", Title: "Paper", Abstract: "Abstract"},
+			},
+		}, nil)
 
 	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
 		&activities.EmbedPapersOutput{
@@ -1150,7 +1213,7 @@ func TestLiteratureReviewWorkflow_CoverageReview_GapExpansion(t *testing.T) {
 			TotalFound: 1,
 		}, nil)
 	env.OnActivity(statusAct.SavePapers, mock.Anything, mock.Anything).Return(
-		&activities.SavePapersOutput{SavedCount: 1}, nil)
+		&activities.SavePapersOutput{SavedCount: 1, PaperIDs: []uuid.UUID{paperID}}, nil)
 
 	// Register PaperProcessingWorkflow for child workflow execution.
 	env.RegisterWorkflow(PaperProcessingWorkflow)
@@ -1159,6 +1222,13 @@ func TestLiteratureReviewWorkflow_CoverageReview_GapExpansion(t *testing.T) {
 	var embeddingAct *activities.EmbeddingActivities
 	var dedupAct *activities.DedupActivities
 	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+		&activities.FetchPaperBatchOutput{
+			Papers: []activities.PaperForProcessing{
+				{PaperID: paperID, CanonicalID: "doi:1", Title: "Paper", Abstract: "Abstract"},
+			},
+		}, nil)
 
 	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
 		&activities.EmbedPapersOutput{
@@ -1322,14 +1392,26 @@ func TestLiteratureReviewWorkflow_SearchDedup(t *testing.T) {
 
 	// SavePapers — 3 papers total: 1 cached + 1 forward + 1 new.
 	env.OnActivity(statusAct.SavePapers, mock.Anything, mock.Anything).Return(
-		&activities.SavePapersOutput{SavedCount: 3, DuplicateCount: 0}, nil,
+		&activities.SavePapersOutput{SavedCount: 3, DuplicateCount: 0, PaperIDs: []uuid.UUID{cachedPaperID, forwardPaperID, newPaperID}}, nil,
 	)
+
+	// BulkCreateKeywordPaperMappings — called after SavePapers when keyword IDs are mapped.
+	env.OnActivity(statusAct.BulkCreateKeywordPaperMappings, mock.Anything, mock.Anything).Return(nil)
 
 	// Child workflow mocks.
 	env.RegisterWorkflow(PaperProcessingWorkflow)
 	var embeddingAct *activities.EmbeddingActivities
 	var dedupAct *activities.DedupActivities
 	var ingestionAct *activities.IngestionActivities
+
+	env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+		&activities.FetchPaperBatchOutput{
+			Papers: []activities.PaperForProcessing{
+				{PaperID: cachedPaperID, CanonicalID: "doi:cached", Title: "Cached Paper", Abstract: "This was already found"},
+				{PaperID: forwardPaperID, CanonicalID: "doi:forward-new", Title: "New Paper Since Cache", Abstract: "Published after the cached search", PDFURL: "https://example.com/forward.pdf"},
+				{PaperID: newPaperID, CanonicalID: "doi:new", Title: "New Paper", Abstract: "Fresh result", PDFURL: "https://example.com/new.pdf"},
+			},
+		}, nil)
 
 	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
 		&activities.EmbedPapersOutput{Embeddings: map[string][]float32{"doi:new": make([]float32, 768)}}, nil)

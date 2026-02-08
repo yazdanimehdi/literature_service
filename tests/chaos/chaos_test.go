@@ -128,7 +128,15 @@ func TestChaos_LLMFailsThenRecovers(t *testing.T) {
 		}, nil,
 	)
 
-	// Mock child workflow activities: EmbedPapers, BatchDedup, DownloadAndIngestPapers.
+	// Mock child workflow activities: FetchPaperBatch, EmbedPapers, BatchDedup, DownloadAndIngestPapers.
+	env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+		&activities.FetchPaperBatchOutput{
+			Papers: []activities.PaperForProcessing{
+				{PaperID: paperID, CanonicalID: "doi:10.9999/chaos", Title: "Chaos Resilience Paper", Abstract: "Testing fault tolerance in distributed systems."},
+			},
+		}, nil,
+	)
+
 	env.OnActivity(embeddingAct.EmbedPapers, mock.Anything, mock.Anything).Return(
 		&activities.EmbedPapersOutput{
 			Embeddings: map[string][]float32{
@@ -322,6 +330,15 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 		&activities.SavePapersOutput{
 			SavedCount:     1,
 			DuplicateCount: 0,
+		}, nil,
+	)
+
+	// Mock FetchPaperBatch -- required by child workflow as Stage 0.
+	env.OnActivity(statusAct.FetchPaperBatch, mock.Anything, mock.Anything).Return(
+		&activities.FetchPaperBatchOutput{
+			Papers: []activities.PaperForProcessing{
+				{PaperID: paperID, CanonicalID: "doi:10.9999/ingestion-chaos", Title: "Paper With PDF", Abstract: "This paper has a PDF URL for ingestion testing.", PDFURL: "https://example.com/paper.pdf"},
+			},
 		}, nil,
 	)
 

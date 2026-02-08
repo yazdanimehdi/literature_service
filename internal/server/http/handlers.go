@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	grpcauth "github.com/helixir/grpcauth"
 	"github.com/helixir/literature-review-service/internal/domain"
 	"github.com/helixir/literature-review-service/internal/repository"
 	"github.com/helixir/literature-review-service/internal/temporal"
@@ -145,11 +146,18 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 		cfg.DateTo = &t
 	}
 
+	// Extract user ID from auth context, or fall back to anonymous for dev mode.
+	userID := "anonymous"
+	if authCtx, ok := grpcauth.AuthFromContext(ctx); ok && authCtx != nil && authCtx.User != nil {
+		userID = authCtx.User.Subject
+	}
+
 	now := time.Now()
 	review := &domain.LiteratureReviewRequest{
 		ID:            requestID,
 		OrgID:         orgID,
 		ProjectID:     projectID,
+		UserID:        userID,
 		Title:         req.Title,
 		Description:   req.Description,
 		SeedKeywords:  req.SeedKeywords,
@@ -169,6 +177,7 @@ func (s *Server) startLiteratureReview(w http.ResponseWriter, r *http.Request) {
 		RequestID:    requestID,
 		OrgID:        orgID,
 		ProjectID:    projectID,
+		UserID:       userID,
 		Title:        req.Title,
 		Description:  req.Description,
 		SeedKeywords: req.SeedKeywords,

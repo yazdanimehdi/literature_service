@@ -1489,3 +1489,415 @@ func TestParseDate_Formats(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Tests: FetchPaperBatch
+// ---------------------------------------------------------------------------
+
+func TestFetchPaperBatch_Success(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	paper1ID := uuid.New()
+	paper2ID := uuid.New()
+
+	paperRepo.On("GetByIDs", mock.Anything, []uuid.UUID{paper1ID, paper2ID}).
+		Return([]*domain.Paper{
+			{
+				ID:          paper1ID,
+				CanonicalID: "doi:10.1234/alpha",
+				Title:       "Alpha Paper",
+				Abstract:    "Abstract of alpha paper.",
+				PDFURL:      "https://example.com/alpha.pdf",
+				Authors: []domain.Author{
+					{Name: "Alice Smith"},
+					{Name: "Bob Jones"},
+				},
+			},
+			{
+				ID:          paper2ID,
+				CanonicalID: "doi:10.1234/beta",
+				Title:       "Beta Paper",
+				Abstract:    "Abstract of beta paper.",
+				PDFURL:      "https://example.com/beta.pdf",
+				Authors: []domain.Author{
+					{Name: "Carol White"},
+				},
+			},
+		}, nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.FetchPaperBatch)
+
+	input := FetchPaperBatchInput{
+		PaperIDs: []uuid.UUID{paper1ID, paper2ID},
+	}
+
+	result, err := env.ExecuteActivity(act.FetchPaperBatch, input)
+	require.NoError(t, err)
+
+	var output FetchPaperBatchOutput
+	require.NoError(t, result.Get(&output))
+
+	require.Len(t, output.Papers, 2)
+
+	assert.Equal(t, paper1ID, output.Papers[0].PaperID)
+	assert.Equal(t, "doi:10.1234/alpha", output.Papers[0].CanonicalID)
+	assert.Equal(t, "Alpha Paper", output.Papers[0].Title)
+	assert.Equal(t, "Abstract of alpha paper.", output.Papers[0].Abstract)
+	assert.Equal(t, "https://example.com/alpha.pdf", output.Papers[0].PDFURL)
+	assert.Equal(t, []string{"Alice Smith", "Bob Jones"}, output.Papers[0].Authors)
+
+	assert.Equal(t, paper2ID, output.Papers[1].PaperID)
+	assert.Equal(t, "doi:10.1234/beta", output.Papers[1].CanonicalID)
+	assert.Equal(t, "Beta Paper", output.Papers[1].Title)
+	assert.Equal(t, []string{"Carol White"}, output.Papers[1].Authors)
+
+	paperRepo.AssertExpectations(t)
+}
+
+func TestFetchPaperBatch_EmptyInput(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.FetchPaperBatch)
+
+	input := FetchPaperBatchInput{
+		PaperIDs: []uuid.UUID{},
+	}
+
+	result, err := env.ExecuteActivity(act.FetchPaperBatch, input)
+	require.NoError(t, err)
+
+	var output FetchPaperBatchOutput
+	require.NoError(t, result.Get(&output))
+
+	assert.NotNil(t, output.Papers)
+	assert.Empty(t, output.Papers)
+
+	// Verify no repository methods were called.
+	paperRepo.AssertNotCalled(t, "GetByIDs", mock.Anything, mock.Anything)
+}
+
+func TestFetchPaperBatch_RepoError(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	paperIDs := []uuid.UUID{uuid.New()}
+
+	paperRepo.On("GetByIDs", mock.Anything, paperIDs).
+		Return(nil, assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.FetchPaperBatch)
+
+	input := FetchPaperBatchInput{
+		PaperIDs: paperIDs,
+	}
+
+	_, err := env.ExecuteActivity(act.FetchPaperBatch, input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fetch papers by IDs")
+
+	paperRepo.AssertExpectations(t)
+}
+
+func TestFetchPaperBatch_NilPapersFiltered(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	paper1ID := uuid.New()
+	paper2ID := uuid.New()
+	paper3ID := uuid.New()
+
+	// Repo returns a nil paper mixed with valid papers.
+	paperRepo.On("GetByIDs", mock.Anything, []uuid.UUID{paper1ID, paper2ID, paper3ID}).
+		Return([]*domain.Paper{
+			{
+				ID:          paper1ID,
+				CanonicalID: "doi:10.1234/first",
+				Title:       "First Paper",
+				Authors:     []domain.Author{{Name: "Author One"}},
+			},
+			nil, // nil entry should be filtered out
+			{
+				ID:          paper3ID,
+				CanonicalID: "doi:10.1234/third",
+				Title:       "Third Paper",
+				Authors:     []domain.Author{{Name: "Author Three"}},
+			},
+		}, nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.FetchPaperBatch)
+
+	input := FetchPaperBatchInput{
+		PaperIDs: []uuid.UUID{paper1ID, paper2ID, paper3ID},
+	}
+
+	result, err := env.ExecuteActivity(act.FetchPaperBatch, input)
+	require.NoError(t, err)
+
+	var output FetchPaperBatchOutput
+	require.NoError(t, result.Get(&output))
+
+	// Only the two non-nil papers should appear.
+	require.Len(t, output.Papers, 2)
+	assert.Equal(t, paper1ID, output.Papers[0].PaperID)
+	assert.Equal(t, paper3ID, output.Papers[1].PaperID)
+
+	paperRepo.AssertExpectations(t)
+}
+
+func TestFetchPaperBatch_EmptyAuthorNames(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	paperID := uuid.New()
+
+	paperRepo.On("GetByIDs", mock.Anything, []uuid.UUID{paperID}).
+		Return([]*domain.Paper{
+			{
+				ID:          paperID,
+				CanonicalID: "doi:10.1234/mixed-authors",
+				Title:       "Mixed Authors Paper",
+				Authors: []domain.Author{
+					{Name: "Valid Author"},
+					{Name: ""},
+					{Name: "Another Valid"},
+					{Name: ""},
+				},
+			},
+		}, nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.FetchPaperBatch)
+
+	input := FetchPaperBatchInput{
+		PaperIDs: []uuid.UUID{paperID},
+	}
+
+	result, err := env.ExecuteActivity(act.FetchPaperBatch, input)
+	require.NoError(t, err)
+
+	var output FetchPaperBatchOutput
+	require.NoError(t, result.Get(&output))
+
+	require.Len(t, output.Papers, 1)
+	// Only non-empty author names should be included.
+	assert.Equal(t, []string{"Valid Author", "Another Valid"}, output.Papers[0].Authors)
+
+	paperRepo.AssertExpectations(t)
+}
+
+// ---------------------------------------------------------------------------
+// Tests: BulkCreateKeywordPaperMappings
+// ---------------------------------------------------------------------------
+
+func TestBulkCreateKeywordPaperMappings_Success(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	kw1ID := uuid.New()
+	kw2ID := uuid.New()
+	paper1ID := uuid.New()
+	paper2ID := uuid.New()
+	paper3ID := uuid.New()
+
+	// All entries are flattened into a single BulkAddPaperMappings call.
+	keywordRepo.On("BulkAddPaperMappings", mock.Anything, mock.MatchedBy(func(mappings []*domain.KeywordPaperMapping) bool {
+		if len(mappings) != 3 {
+			return false
+		}
+		// First two from kw1 + semantic_scholar
+		if mappings[0].KeywordID != kw1ID || mappings[0].PaperID != paper1ID || mappings[0].SourceType != domain.SourceTypeSemanticScholar {
+			return false
+		}
+		if mappings[1].KeywordID != kw1ID || mappings[1].PaperID != paper2ID || mappings[1].SourceType != domain.SourceTypeSemanticScholar {
+			return false
+		}
+		// Third from kw2 + openalex
+		if mappings[2].KeywordID != kw2ID || mappings[2].PaperID != paper3ID || mappings[2].SourceType != domain.SourceTypeOpenAlex {
+			return false
+		}
+		// All should have MappingTypeQueryMatch
+		for _, m := range mappings {
+			if m.MappingType != domain.MappingTypeQueryMatch {
+				return false
+			}
+		}
+		return true
+	})).Return(nil)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.BulkCreateKeywordPaperMappings)
+
+	input := BulkCreateKeywordPaperMappingsInput{
+		Entries: []KeywordPaperMappingEntry{
+			{
+				KeywordID: kw1ID,
+				Source:    domain.SourceTypeSemanticScholar,
+				PaperIDs:  []uuid.UUID{paper1ID, paper2ID},
+			},
+			{
+				KeywordID: kw2ID,
+				Source:    domain.SourceTypeOpenAlex,
+				PaperIDs:  []uuid.UUID{paper3ID},
+			},
+		},
+	}
+
+	_, err := env.ExecuteActivity(act.BulkCreateKeywordPaperMappings, input)
+	require.NoError(t, err)
+
+	keywordRepo.AssertExpectations(t)
+}
+
+func TestBulkCreateKeywordPaperMappings_EmptyEntries(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.BulkCreateKeywordPaperMappings)
+
+	input := BulkCreateKeywordPaperMappingsInput{
+		Entries: []KeywordPaperMappingEntry{},
+	}
+
+	_, err := env.ExecuteActivity(act.BulkCreateKeywordPaperMappings, input)
+	require.NoError(t, err)
+
+	// Verify no repository methods were called.
+	keywordRepo.AssertNotCalled(t, "BulkAddPaperMappings", mock.Anything, mock.Anything)
+}
+
+func TestBulkCreateKeywordPaperMappings_SkipsEmptyPaperIDs(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.BulkCreateKeywordPaperMappings)
+
+	input := BulkCreateKeywordPaperMappingsInput{
+		Entries: []KeywordPaperMappingEntry{
+			{
+				KeywordID: uuid.New(),
+				Source:    domain.SourceTypePubMed,
+				PaperIDs:  []uuid.UUID{}, // empty PaperIDs
+			},
+		},
+	}
+
+	_, err := env.ExecuteActivity(act.BulkCreateKeywordPaperMappings, input)
+	require.NoError(t, err)
+
+	// BulkAddPaperMappings should NOT be called for entries with empty PaperIDs.
+	keywordRepo.AssertNotCalled(t, "BulkAddPaperMappings", mock.Anything, mock.Anything)
+}
+
+func TestBulkCreateKeywordPaperMappings_AllEntriesEmptyPaperIDs(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.BulkCreateKeywordPaperMappings)
+
+	input := BulkCreateKeywordPaperMappingsInput{
+		Entries: []KeywordPaperMappingEntry{
+			{
+				KeywordID: uuid.New(),
+				Source:    domain.SourceTypeSemanticScholar,
+				PaperIDs:  []uuid.UUID{},
+			},
+			{
+				KeywordID: uuid.New(),
+				Source:    domain.SourceTypeOpenAlex,
+				PaperIDs:  nil,
+			},
+		},
+	}
+
+	// All entries have empty PaperIDs; totalMappings == 0, returns nil.
+	_, err := env.ExecuteActivity(act.BulkCreateKeywordPaperMappings, input)
+	require.NoError(t, err)
+
+	keywordRepo.AssertNotCalled(t, "BulkAddPaperMappings", mock.Anything, mock.Anything)
+}
+
+func TestBulkCreateKeywordPaperMappings_DBError(t *testing.T) {
+	suite := &testsuite.WorkflowTestSuite{}
+	env := suite.NewTestActivityEnvironment()
+
+	reviewRepo := &mockReviewRepository{}
+	keywordRepo := &mockKeywordRepository{}
+	paperRepo := &mockPaperRepository{}
+
+	paper1ID := uuid.New()
+	paper2ID := uuid.New()
+
+	// Single flattened call fails.
+	keywordRepo.On("BulkAddPaperMappings", mock.Anything, mock.MatchedBy(func(mappings []*domain.KeywordPaperMapping) bool {
+		return len(mappings) == 2
+	})).Return(assert.AnError)
+
+	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
+	env.RegisterActivity(act.BulkCreateKeywordPaperMappings)
+
+	input := BulkCreateKeywordPaperMappingsInput{
+		Entries: []KeywordPaperMappingEntry{
+			{
+				KeywordID: uuid.New(),
+				Source:    domain.SourceTypePubMed,
+				PaperIDs:  []uuid.UUID{paper1ID},
+			},
+			{
+				KeywordID: uuid.New(),
+				Source:    domain.SourceTypePubMed,
+				PaperIDs:  []uuid.UUID{paper2ID},
+			},
+		},
+	}
+
+	_, err := env.ExecuteActivity(act.BulkCreateKeywordPaperMappings, input)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bulk add keyword-paper mappings")
+
+	keywordRepo.AssertExpectations(t)
+}

@@ -46,12 +46,20 @@ func NewEmbedder(ctx context.Context, cfg EmbedderFactoryConfig) (sharedllm.Embe
 			BaseURL: cfg.OpenAI.BaseURL,
 		}, cc)
 	case "azure":
+		deploymentName := cfg.Azure.EmbeddingDeploymentName
+		if deploymentName == "" {
+			deploymentName = cfg.Azure.DeploymentName
+		}
+		model := cfg.Azure.EmbeddingModel
+		if model == "" {
+			model = deploymentName
+		}
 		return azure.NewEmbedder(azure.EmbedderConfig{
 			ResourceName:   cfg.Azure.ResourceName,
-			DeploymentName: cfg.Azure.DeploymentName,
+			DeploymentName: deploymentName,
 			APIKey:         cfg.Azure.APIKey,
 			APIVersion:     cfg.Azure.APIVersion,
-			Model:          cfg.Azure.Model,
+			Model:          model,
 		}, cc)
 	case "bedrock":
 		return bedrock.NewEmbedder(ctx, bedrock.EmbedderConfig{

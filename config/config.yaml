@@ -105,7 +105,7 @@ tracing:
 # API keys are loaded exclusively from environment variables (see .env.example).
 llm:
   # LLM provider: openai, anthropic, azure, bedrock, gemini, vertex
-  provider: openai
+  provider: azure
   # Maximum number of keywords to extract
   max_keywords: 10
   # Minimum number of keywords to extract
@@ -131,12 +131,29 @@ llm:
     model: claude-3-sonnet-20240229
     base_url: https://api.anthropic.com
 
+  # Embedding provider (defaults to same as chat provider above).
+  # Set to use a different provider for vector embeddings.
+  # Supported: openai, azure, bedrock, gemini, vertex
+  embedding_provider: azure
+  # Embedding model name
+  embedding_model: text-embedding-3-small
+
   # Azure OpenAI settings (API key via LITREVIEW_LLM_AZURE_API_KEY env var)
+  # Endpoint: https://{resource_name}.openai.azure.com
   azure:
-    resource_name: ""
-    deployment_name: ""
+    # Azure resource name (determines the endpoint URL)
+    resource_name: "helixir1-resource"
+    # Deployment name for chat completions (e.g. "gpt-4o")
+    deployment_name: "gpt-5-mini"
     api_version: "2024-08-01-preview"
-    model: ""
+    # Model name for response metadata
+    model: "gpt-5-mini"
+    # Deployment name for embeddings (e.g. "text-embedding-3-small")
+    # Falls back to deployment_name if empty.
+    embedding_deployment_name: "text-embedding-3-small"
+    # Embedding model name for response metadata
+    # Falls back to embedding_deployment_name if empty.
+    embedding_model: "text-embedding-3-small"
 
   # AWS Bedrock settings (uses AWS credentials from environment/instance profile)
   bedrock:
@@ -209,7 +226,7 @@ paper_sources:
     enabled: true
     base_url: https://api.semanticscholar.org/graph/v1
     timeout: 30s
-    rate_limit: 10.0  # requests per second
+    rate_limit: 1.0  # requests per second
     max_results: 100
 
   # OpenAlex API
@@ -222,7 +239,7 @@ paper_sources:
 
   # Scopus API (disabled by default - requires API key)
   scopus:
-    enabled: false
+    enabled: true
     base_url: https://api.elsevier.com/content
     timeout: 30s
     rate_limit: 5.0

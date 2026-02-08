@@ -186,6 +186,12 @@ type SavePapersOutput struct {
 
 	// DuplicateCount is the number of papers that were already present.
 	DuplicateCount int
+
+	// PaperIDs contains the database UUIDs of all upserted papers (both new and existing).
+	// These IDs are needed by the workflow to create child workflow batches, since
+	// papers from search sources arrive with uuid.Nil and get their IDs assigned
+	// during BulkUpsert inside this activity.
+	PaperIDs []uuid.UUID `json:"paper_ids"`
 }
 
 // IncrementCountersInput contains the parameters for the counter increment activity.
@@ -644,4 +650,49 @@ type RecordSearchResultInput struct {
 
 	// ErrorMessage is set when the search failed.
 	ErrorMessage string `json:"error_message,omitempty"`
+}
+
+// FetchPaperBatchInput contains the parameters for fetching a batch of papers by ID.
+type FetchPaperBatchInput struct {
+	// PaperIDs are the UUIDs of papers to fetch from the database.
+	PaperIDs []uuid.UUID `json:"paper_ids"`
+}
+
+// FetchPaperBatchOutput contains the fetched papers.
+type FetchPaperBatchOutput struct {
+	// Papers are the fetched paper details for processing.
+	Papers []PaperForProcessing `json:"papers"`
+}
+
+// PaperForProcessing contains paper data needed for the processing pipeline.
+// This is the canonical type for paper data in the processing pipeline.
+type PaperForProcessing struct {
+	// PaperID is the paper's internal UUID.
+	PaperID uuid.UUID `json:"paper_id"`
+	// CanonicalID is the paper's canonical identifier (DOI, PMID, etc.).
+	CanonicalID string `json:"canonical_id"`
+	// Title is the paper title.
+	Title string `json:"title"`
+	// Abstract is the paper abstract (for embedding).
+	Abstract string `json:"abstract"`
+	// PDFURL is the URL to download the PDF.
+	PDFURL string `json:"pdf_url"`
+	// Authors is the list of author names.
+	Authors []string `json:"authors"`
+}
+
+// KeywordPaperMappingEntry represents a batch of papers found for a keyword from a specific source.
+type KeywordPaperMappingEntry struct {
+	// KeywordID is the keyword's database UUID.
+	KeywordID uuid.UUID `json:"keyword_id"`
+	// Source is the paper source that discovered these papers.
+	Source domain.SourceType `json:"source"`
+	// PaperIDs are the UUIDs of papers found for this keyword+source combination.
+	PaperIDs []uuid.UUID `json:"paper_ids"`
+}
+
+// BulkCreateKeywordPaperMappingsInput contains the parameters for bulk-creating keyword-paper mappings.
+type BulkCreateKeywordPaperMappingsInput struct {
+	// Entries are the keyword-source-papers mapping entries to create.
+	Entries []KeywordPaperMappingEntry `json:"entries"`
 }

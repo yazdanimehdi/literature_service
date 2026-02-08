@@ -97,6 +97,7 @@ func TestPipelineIntegration(t *testing.T) {
 			Return(&activities.SavePapersOutput{
 				SavedCount:     1,
 				DuplicateCount: 0,
+				PaperIDs:       []uuid.UUID{paperID},
 			}, nil)
 		env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).
 			Return(&activities.UpdatePaperIngestionResultsOutput{Updated: 1}, nil)
@@ -278,6 +279,7 @@ func TestPipelineIntegration(t *testing.T) {
 			Return(&activities.SavePapersOutput{
 				SavedCount:     1,
 				DuplicateCount: 0,
+				PaperIDs:       []uuid.UUID{paperID},
 			}, nil)
 		env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).
 			Return(&activities.UpdatePaperIngestionResultsOutput{Updated: 1}, nil)
@@ -398,6 +400,7 @@ func TestPipelineIntegration(t *testing.T) {
 			Return(&activities.SavePapersOutput{
 				SavedCount:     1,
 				DuplicateCount: 0,
+				PaperIDs:       []uuid.UUID{paperID},
 			}, nil)
 		// Note: UpdatePaperIngestionResults is not called because there are no results
 
@@ -514,6 +517,7 @@ func TestPipelineIntegration(t *testing.T) {
 			Return(&activities.SavePapersOutput{
 				SavedCount:     1,
 				DuplicateCount: 0,
+				PaperIDs:       []uuid.UUID{paperID},
 			}, nil)
 
 		// Mock FetchPaperBatch - Stage 0 of child workflow
@@ -639,6 +643,7 @@ func TestPipelineIntegration(t *testing.T) {
 			Return(&activities.SavePapersOutput{
 				SavedCount:     7,
 				DuplicateCount: 0,
+				PaperIDs:       paperIDs,
 			}, nil)
 		env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).
 			Return(&activities.UpdatePaperIngestionResultsOutput{Updated: 7}, nil)
@@ -791,6 +796,7 @@ func TestPipelineIntegration(t *testing.T) {
 			Return(&activities.SavePapersOutput{
 				SavedCount:     3,
 				DuplicateCount: 0,
+				PaperIDs:       []uuid.UUID{nonDupID1, nonDupID2, dupID},
 			}, nil)
 		env.OnActivity(statusAct.UpdatePaperIngestionResults, mock.Anything, mock.Anything).
 			Return(&activities.UpdatePaperIngestionResultsOutput{Updated: 2}, nil)

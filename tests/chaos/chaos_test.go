@@ -125,6 +125,7 @@ func TestChaos_LLMFailsThenRecovers(t *testing.T) {
 		&activities.SavePapersOutput{
 			SavedCount:     1,
 			DuplicateCount: 0,
+			PaperIDs:       []uuid.UUID{paperID},
 		}, nil,
 	)
 
@@ -330,6 +331,7 @@ func TestChaos_IngestionNonFatal(t *testing.T) {
 		&activities.SavePapersOutput{
 			SavedCount:     1,
 			DuplicateCount: 0,
+			PaperIDs:       []uuid.UUID{paperID},
 		}, nil,
 	)
 

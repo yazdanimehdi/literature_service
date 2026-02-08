@@ -27,7 +27,7 @@ func TestNewDownloader_Defaults(t *testing.T) {
 
 		require.NotNil(t, d)
 		assert.Equal(t, int64(100*1024*1024), d.maxSize)
-		assert.Equal(t, "Helixir-LitReview/1.0", d.userAgent)
+		assert.Equal(t, "Mozilla/5.0 (compatible; Helixir-LitReview/1.0; +https://helixir.io/bot)", d.userAgent)
 		assert.Equal(t, 60*time.Second, d.client.Timeout)
 	})
 
@@ -435,7 +435,7 @@ func TestDownload_UserAgent(t *testing.T) {
 		_, err := d.Download(context.Background(), server.URL)
 		require.NoError(t, err)
 
-		assert.Equal(t, "Helixir-LitReview/1.0", receivedUserAgent)
+		assert.Equal(t, "Mozilla/5.0 (compatible; Helixir-LitReview/1.0; +https://helixir.io/bot)", receivedUserAgent)
 	})
 
 	t.Run("custom user agent", func(t *testing.T) {

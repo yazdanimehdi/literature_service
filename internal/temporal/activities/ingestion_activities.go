@@ -105,6 +105,7 @@ func (a *IngestionActivities) SubmitPaperForIngestion(ctx context.Context, input
 		IdempotencyKey: idempotencyKey,
 		PDFURL:         input.PDFURL,
 		MimeType:       mimeTypePDF,
+		AccessTag:      input.AccessTag,
 	})
 	if err != nil {
 		logger.Error("failed to submit paper for ingestion",
@@ -195,6 +196,7 @@ func (a *IngestionActivities) SubmitPapersForIngestion(ctx context.Context, inpu
 			IdempotencyKey: idempotencyKey,
 			PDFURL:         paper.PDFURL,
 			MimeType:       mimeTypePDF,
+			AccessTag:      paper.AccessTag,
 		})
 		if err != nil {
 			logger.Warn("failed to submit paper for ingestion",
@@ -315,6 +317,7 @@ func (a *IngestionActivities) DownloadAndIngestPapers(ctx context.Context, input
 			SourceKind:     "literature_review",
 			Filename:       filename,
 			Content:        downloadResult.Content,
+			AccessTag:      paper.AccessTag,
 		})
 		if err != nil {
 			logger.Warn("failed to submit to ingestion",

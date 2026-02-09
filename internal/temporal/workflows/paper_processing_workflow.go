@@ -227,15 +227,21 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 	// =========================================================================
 	logger.Info("stage 3: ingesting papers", "count", len(nonDuplicatePaperIDs))
 
-	// Build papers for ingestion
+	// Build papers for ingestion with per-paper access tags.
+	// Open-access papers are tagged "lit_public"; paywalled papers are tagged "lit_paywall".
 	papersForIngestion := make([]activities.PaperForIngestion, 0)
 	for _, paperID := range nonDuplicatePaperIDs {
 		canonicalID := paperIDToCanonical[paperID]
 		if p, ok := paperMap[canonicalID]; ok && p.PDFURL != "" {
+			accessTag := "lit_paywall"
+			if p.OpenAccess {
+				accessTag = "lit_public"
+			}
 			papersForIngestion = append(papersForIngestion, activities.PaperForIngestion{
 				PaperID:     p.PaperID,
 				PDFURL:      p.PDFURL,
 				CanonicalID: p.CanonicalID,
+				AccessTag:   accessTag,
 			})
 		}
 	}

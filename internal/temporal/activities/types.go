@@ -231,6 +231,9 @@ type SubmitPaperForIngestionInput struct {
 
 	// IdempotencyKey is a unique key for deduplication.
 	IdempotencyKey string
+
+	// AccessTag is the access control tag for the ingested document (e.g., "lit_public", "lit_paywall").
+	AccessTag string
 }
 
 // SubmitPaperForIngestionOutput contains the result of submitting a paper for ingestion.
@@ -279,6 +282,9 @@ type SubmitPapersForIngestionInput struct {
 
 	// Papers contains the papers to submit (only those with PDF URLs).
 	Papers []PaperForIngestion
+
+	// AccessTag is the access control tag for all papers in this batch (e.g., "lit_public", "lit_paywall").
+	AccessTag string
 }
 
 // PaperForIngestion contains the minimum paper data needed for ingestion submission.
@@ -291,6 +297,10 @@ type PaperForIngestion struct {
 
 	// CanonicalID is the paper's canonical identifier (used for idempotency).
 	CanonicalID string
+
+	// AccessTag is the per-paper access control tag (e.g., "lit_public", "lit_paywall").
+	// Determined by whether the paper is open access.
+	AccessTag string
 }
 
 // SubmitPapersForIngestionOutput contains the results of batch paper ingestion submission.
@@ -338,6 +348,7 @@ type DownloadAndIngestInput struct {
 	RequestID uuid.UUID
 
 	// Papers contains the papers to download and ingest.
+	// Each paper carries its own AccessTag for per-paper access classification.
 	Papers []PaperForIngestion
 }
 
@@ -679,6 +690,9 @@ type PaperForProcessing struct {
 	PDFURL string `json:"pdf_url"`
 	// Authors is the list of author names.
 	Authors []string `json:"authors"`
+	// OpenAccess indicates whether the paper is freely accessible.
+	// Used to determine the access_tag when submitting for ingestion.
+	OpenAccess bool `json:"open_access"`
 }
 
 // KeywordPaperMappingEntry represents a batch of papers found for a keyword from a specific source.

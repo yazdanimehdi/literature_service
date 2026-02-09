@@ -503,6 +503,7 @@ func (a *StatusActivities) FetchPaperBatch(ctx context.Context, input FetchPaper
 			Abstract:    p.Abstract,
 			PDFURL:      p.PDFURL,
 			Authors:     authors,
+			OpenAccess:  p.OpenAccess,
 		})
 	}
 

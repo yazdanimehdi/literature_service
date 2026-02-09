@@ -92,6 +92,10 @@ type StartIngestionRequest struct {
 
 	// MimeType is the content type of the file (typically "application/pdf").
 	MimeType string
+
+	// AccessTag is the access control tag for the ingested document (e.g., "lit_public", "lit_paywall").
+	// When non-empty, it is forwarded to the ingestion service to classify the document's visibility.
+	AccessTag string
 }
 
 // StartIngestionResult holds the result of starting an ingestion run.
@@ -137,6 +141,10 @@ type StartIngestionWithContentRequest struct {
 
 	// Content is the PDF bytes to stream.
 	Content []byte
+
+	// AccessTag is the access control tag for the ingested document (e.g., "lit_public", "lit_paywall").
+	// When non-empty, it is forwarded to the ingestion service to classify the document's visibility.
+	AccessTag string
 }
 
 // StartIngestionWithContentResult holds the result of streaming ingestion.
@@ -167,14 +175,19 @@ func (c *Client) StartIngestion(ctx context.Context, req StartIngestionRequest) 
 	)
 	ctx = metadata.NewOutgoingContext(ctx, md)
 
-	resp, err := c.client.StartIngestion(ctx, &ingestionv1.StartIngestionRequest{
+	protoReq := &ingestionv1.StartIngestionRequest{
 		OrgId:           req.OrgID,
 		ProjectId:       req.ProjectID,
 		IdempotencyKey:  req.IdempotencyKey,
 		MimeType:        req.MimeType,
 		FileContentHash: hashURL(req.PDFURL),
 		SourceKind:      "literature_review",
-	})
+	}
+	if req.AccessTag != "" {
+		protoReq.AccessTag = &req.AccessTag
+	}
+
+	resp, err := c.client.StartIngestion(ctx, protoReq)
 	if err != nil {
 		return nil, fmt.Errorf("start ingestion: %w", err)
 	}
@@ -289,18 +302,22 @@ func (c *Client) StartIngestionWithContent(ctx context.Context, req StartIngesti
 	}
 
 	// Send metadata message first
+	contentMeta := &ingestionv1.StartIngestionContentMetadata{
+		OrgId:           req.OrgID,
+		ProjectId:       req.ProjectID,
+		IdempotencyKey:  req.IdempotencyKey,
+		MimeType:        req.MimeType,
+		FileContentHash: req.ContentHash,
+		FileSize:        req.FileSize,
+		SourceKind:      req.SourceKind,
+		Filename:        req.Filename,
+	}
+	if req.AccessTag != "" {
+		contentMeta.AccessTag = &req.AccessTag
+	}
 	metaMsg := &ingestionv1.StartIngestionWithContentRequest{
 		Payload: &ingestionv1.StartIngestionWithContentRequest_Metadata{
-			Metadata: &ingestionv1.StartIngestionContentMetadata{
-				OrgId:           req.OrgID,
-				ProjectId:       req.ProjectID,
-				IdempotencyKey:  req.IdempotencyKey,
-				MimeType:        req.MimeType,
-				FileContentHash: req.ContentHash,
-				FileSize:        req.FileSize,
-				SourceKind:      req.SourceKind,
-				Filename:        req.Filename,
-			},
+			Metadata: contentMeta,
 		},
 	}
 	if err := stream.Send(metaMsg); err != nil {

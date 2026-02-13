@@ -11,6 +11,8 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	grpcauth "github.com/helixir/grpcauth"
+
 	"github.com/helixir/literature-review-service/internal/domain"
 	"github.com/helixir/literature-review-service/internal/repository"
 	"github.com/helixir/literature-review-service/internal/temporal"
@@ -95,11 +97,18 @@ func (s *LiteratureReviewServer) StartLiteratureReview(ctx context.Context, req 
 		cfg.DateTo = &t
 	}
 
+	// Extract user_id from auth context (matches HTTP handler behaviour).
+	var userID string
+	if authCtx, ok := grpcauth.AuthFromContext(ctx); ok && authCtx != nil && authCtx.User != nil {
+		userID = authCtx.User.Subject
+	}
+
 	now := time.Now()
 	review := &domain.LiteratureReviewRequest{
 		ID:            requestID,
 		OrgID:         req.OrgId,
 		ProjectID:     req.ProjectId,
+		UserID:        userID,
 		Title:         req.Title,
 		Description:   req.Description,
 		SeedKeywords:  req.SeedKeywords,

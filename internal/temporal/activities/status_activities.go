@@ -7,12 +7,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"go.temporal.io/sdk/activity"
 
 	"github.com/helixir/literature-review-service/internal/domain"
 	"github.com/helixir/literature-review-service/internal/observability"
 	"github.com/helixir/literature-review-service/internal/repository"
 )
+
+// txBeginner is an interface for types that can begin a transaction (e.g., *pgxpool.Pool, *database.DB).
+type txBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
 
 // StatusActivities provides Temporal activities for review status updates
 // and persistence operations (keywords, papers, counters).
@@ -22,21 +28,39 @@ type StatusActivities struct {
 	keywordRepo repository.KeywordRepository
 	paperRepo   repository.PaperRepository
 	metrics     *observability.Metrics
+	db          txBeginner // Optional: enables transactional SavePapers. Nil-safe.
 }
 
 // NewStatusActivities creates a new StatusActivities instance with the given dependencies.
 // The metrics parameter may be nil (metrics recording will be skipped).
+// The db parameter accepts a txBeginner (e.g., *database.DB, *pgxpool.Pool) to enable
+// transactional SavePapers. If nil, SavePapers executes non-transactionally (legacy behavior).
 func NewStatusActivities(
 	reviewRepo repository.ReviewRepository,
 	keywordRepo repository.KeywordRepository,
 	paperRepo repository.PaperRepository,
 	metrics *observability.Metrics,
+	opts ...StatusActivitiesOption,
 ) *StatusActivities {
-	return &StatusActivities{
+	sa := &StatusActivities{
 		reviewRepo:  reviewRepo,
 		keywordRepo: keywordRepo,
 		paperRepo:   paperRepo,
 		metrics:     metrics,
+	}
+	for _, opt := range opts {
+		opt(sa)
+	}
+	return sa
+}
+
+// StatusActivitiesOption configures optional StatusActivities fields.
+type StatusActivitiesOption func(*StatusActivities)
+
+// WithDB sets the database pool for transactional operations in StatusActivities.
+func WithDB(db txBeginner) StatusActivitiesOption {
+	return func(sa *StatusActivities) {
+		sa.db = db
 	}
 }
 
@@ -165,35 +189,81 @@ func (a *StatusActivities) SavePapers(ctx context.Context, input SavePapersInput
 		}, nil
 	}
 
-	savedPapers, err := a.paperRepo.BulkUpsert(ctx, input.Papers)
-	if err != nil {
-		logger.Error("failed to save papers",
-			"requestID", input.RequestID,
-			"error", err,
-		)
-		return nil, fmt.Errorf("bulk upsert papers: %w", err)
-	}
+	var savedPapers []*domain.Paper
+	var savedCount, duplicateCount int
+	var paperIDs []uuid.UUID
 
-	savedCount := len(savedPapers)
-	duplicateCount := len(input.Papers) - savedCount
-
-	// Collect paper IDs from the upserted results so the workflow can
-	// reference them for child workflow batches. Papers arrive from search
-	// sources with uuid.Nil; BulkUpsert assigns/returns the real DB IDs.
-	paperIDs := make([]uuid.UUID, 0, len(savedPapers))
-	for _, p := range savedPapers {
-		if p != nil {
-			paperIDs = append(paperIDs, p.ID)
+	// Wrap BulkUpsert + IncrementCounters in a transaction when a DB pool is available,
+	// ensuring the two operations succeed or fail together atomically.
+	if a.db != nil {
+		tx, err := a.db.Begin(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("begin transaction for save papers: %w", err)
 		}
-	}
+		defer func() { _ = tx.Rollback(ctx) }()
 
-	// Increment review counters.
-	if err := a.reviewRepo.IncrementCounters(ctx, input.OrgID, input.ProjectID, input.RequestID, savedCount, 0); err != nil {
-		logger.Error("failed to increment review counters",
-			"requestID", input.RequestID,
-			"error", err,
-		)
-		return nil, fmt.Errorf("increment review counters: %w", err)
+		txPaperRepo := repository.NewPgPaperRepository(tx)
+		txReviewRepo := repository.NewPgReviewRepository(tx)
+
+		savedPapers, err = txPaperRepo.BulkUpsert(ctx, input.Papers)
+		if err != nil {
+			logger.Error("failed to save papers",
+				"requestID", input.RequestID,
+				"error", err,
+			)
+			return nil, fmt.Errorf("bulk upsert papers: %w", err)
+		}
+
+		savedCount = len(savedPapers)
+		duplicateCount = len(input.Papers) - savedCount
+
+		paperIDs = make([]uuid.UUID, 0, len(savedPapers))
+		for _, p := range savedPapers {
+			if p != nil {
+				paperIDs = append(paperIDs, p.ID)
+			}
+		}
+
+		if err := txReviewRepo.IncrementCounters(ctx, input.OrgID, input.ProjectID, input.RequestID, savedCount, 0); err != nil {
+			logger.Error("failed to increment review counters",
+				"requestID", input.RequestID,
+				"error", err,
+			)
+			return nil, fmt.Errorf("increment review counters: %w", err)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return nil, fmt.Errorf("commit save papers transaction: %w", err)
+		}
+	} else {
+		// Fallback: non-transactional path (legacy behavior when DB pool is not provided).
+		var err error
+		savedPapers, err = a.paperRepo.BulkUpsert(ctx, input.Papers)
+		if err != nil {
+			logger.Error("failed to save papers",
+				"requestID", input.RequestID,
+				"error", err,
+			)
+			return nil, fmt.Errorf("bulk upsert papers: %w", err)
+		}
+
+		savedCount = len(savedPapers)
+		duplicateCount = len(input.Papers) - savedCount
+
+		paperIDs = make([]uuid.UUID, 0, len(savedPapers))
+		for _, p := range savedPapers {
+			if p != nil {
+				paperIDs = append(paperIDs, p.ID)
+			}
+		}
+
+		if err := a.reviewRepo.IncrementCounters(ctx, input.OrgID, input.ProjectID, input.RequestID, savedCount, 0); err != nil {
+			logger.Error("failed to increment review counters",
+				"requestID", input.RequestID,
+				"error", err,
+			)
+			return nil, fmt.Errorf("increment review counters: %w", err)
+		}
 	}
 
 	// Record metrics.
@@ -354,7 +424,7 @@ func (a *StatusActivities) CheckSearchCompleted(ctx context.Context, input Check
 	// Limit to 200 papers to prevent workflow history bloat — each paper is ~7KB,
 	// so 200 papers ≈ 1.4MB per cached search in Temporal serialization.
 	const maxCachedPapers = 200
-	papers, _, err := a.keywordRepo.GetPapersForKeywordAndSource(ctx, input.KeywordID, input.Source, maxCachedPapers, 0)
+	papers, _, err := a.keywordRepo.GetPapersForKeywordAndSource(ctx, input.ReviewID, input.KeywordID, input.Source, maxCachedPapers, 0)
 	if err != nil {
 		logger.Warn("failed to fetch cached papers, will re-search",
 			"keyword", input.Keyword,

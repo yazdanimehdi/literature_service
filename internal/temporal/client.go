@@ -347,6 +347,31 @@ type ReviewWorkflowInput struct {
 
 	// Config holds the review configuration parameters.
 	Config domain.ReviewConfiguration
+
+	// Timeouts holds configurable activity timeout durations. When zero-valued,
+	// the workflow falls back to hardcoded defaults. These are populated from
+	// the service's WorkflowTimeouts config at workflow start time.
+	Timeouts WorkflowTimeoutParams `json:"timeouts,omitempty"`
+}
+
+// WorkflowTimeoutParams holds configurable timeout durations for workflow activities.
+// These are passed as workflow input so that Temporal workflows (which must be
+// deterministic and cannot access external config) can use operator-configured values.
+type WorkflowTimeoutParams struct {
+	// LLMActivity is the timeout for LLM activities (keyword extraction, coverage).
+	LLMActivity time.Duration `json:"llm_activity,omitempty"`
+	// SearchActivity is the timeout for search activities.
+	SearchActivity time.Duration `json:"search_activity,omitempty"`
+	// StatusActivity is the timeout for status update activities.
+	StatusActivity time.Duration `json:"status_activity,omitempty"`
+	// IngestionSubmitActivity is the timeout for ingestion submit activities.
+	IngestionSubmitActivity time.Duration `json:"ingestion_submit_activity,omitempty"`
+	// EmbeddingActivity is the timeout for embedding activities.
+	EmbeddingActivity time.Duration `json:"embedding_activity,omitempty"`
+	// DedupActivity is the timeout for dedup activities.
+	DedupActivity time.Duration `json:"dedup_activity,omitempty"`
+	// IngestionActivity is the timeout for ingestion activities.
+	IngestionActivity time.Duration `json:"ingestion_activity,omitempty"`
 }
 
 // =============================================================================

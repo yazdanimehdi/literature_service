@@ -605,6 +605,9 @@ type AssessCoverageOutput struct {
 
 // CheckSearchCompletedInput contains the parameters for checking if a search was already done.
 type CheckSearchCompletedInput struct {
+	// ReviewID is the literature review request UUID for tenant isolation.
+	ReviewID uuid.UUID `json:"review_id"`
+
 	// KeywordID is the keyword's database UUID.
 	KeywordID uuid.UUID `json:"keyword_id"`
 

@@ -66,7 +66,7 @@ func TestNewEmbedder_UnsupportedProvider(t *testing.T) {
 	assert.Nil(t, embedder)
 	assert.Contains(t, err.Error(), "unsupported embedding provider")
 	assert.Contains(t, err.Error(), "cohere")
-	assert.Contains(t, err.Error(), "supported: openai, azure, bedrock, gemini, vertex")
+	assert.Contains(t, err.Error(), "supported: openai, azure, bedrock, gemini, vertex, ollama")
 }
 
 func TestNewEmbedder_EmptyProvider(t *testing.T) {
@@ -105,6 +105,43 @@ func TestNewEmbedder_DefaultTimeouts(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, embedder)
 	assert.Equal(t, "openai", embedder.Provider())
+}
+
+func TestNewEmbedder_Ollama(t *testing.T) {
+	t.Parallel()
+
+	// Stand up a minimal httptest server that returns a valid embedding response.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := map[string]any{
+			"object": "list",
+			"model":  "nomic-embed-text",
+			"data": []map[string]any{
+				{"object": "embedding", "index": 0, "embedding": []float64{0.1, 0.2, 0.3}},
+			},
+			"usage": map[string]int{"prompt_tokens": 2, "total_tokens": 2},
+		}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	cfg := EmbedderFactoryConfig{
+		Provider:   "ollama",
+		Timeout:    10 * time.Second,
+		MaxRetries: 1,
+		RetryDelay: 1 * time.Second,
+		Ollama: OllamaConfig{
+			Model:   "nomic-embed-text",
+			BaseURL: server.URL,
+		},
+	}
+
+	embedder, err := NewEmbedder(context.Background(), cfg)
+
+	require.NoError(t, err)
+	require.NotNil(t, embedder)
+	assert.Equal(t, "ollama", embedder.Provider())
+	assert.Equal(t, "nomic-embed-text", embedder.EmbeddingModel())
 }
 
 func TestNewEmbedder_OpenAI_MissingAPIKey(t *testing.T) {

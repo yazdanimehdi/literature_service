@@ -670,6 +670,9 @@ func TestPgReviewRepository_Update(t *testing.T) {
 		repo := NewPgReviewRepository(mock)
 		review := newTestReview()
 
+		// Expect transaction wrapping
+		mock.ExpectBegin()
+
 		// Expect SELECT FOR UPDATE
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
 			WithArgs(review.ID, review.OrgID, review.ProjectID).
@@ -688,6 +691,8 @@ func TestPgReviewRepository_Update(t *testing.T) {
 			).
 			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
+		mock.ExpectCommit()
+
 		err = repo.Update(ctx, review.OrgID, review.ProjectID, review.ID, func(r *domain.LiteratureReviewRequest) error {
 			r.Title = "updated query"
 			return nil
@@ -705,6 +710,9 @@ func TestPgReviewRepository_Update(t *testing.T) {
 		repo := NewPgReviewRepository(mock)
 		id := uuid.New()
 
+		// Expect transaction wrapping
+		mock.ExpectBegin()
+
 		// Expect SELECT FOR UPDATE returns no rows
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
 			WithArgs(id, "org-123", "proj-456").
@@ -718,6 +726,8 @@ func TestPgReviewRepository_Update(t *testing.T) {
 				"created_at", "updated_at", "started_at", "completed_at",
 				"pause_reason", "paused_at", "paused_at_phase",
 			})) // Empty rows
+
+		mock.ExpectRollback()
 
 		err = repo.Update(ctx, "org-123", "proj-456", id, func(r *domain.LiteratureReviewRequest) error {
 			return nil
@@ -735,10 +745,15 @@ func TestPgReviewRepository_Update(t *testing.T) {
 		repo := NewPgReviewRepository(mock)
 		review := newTestReview()
 
+		// Expect transaction wrapping
+		mock.ExpectBegin()
+
 		// Expect SELECT FOR UPDATE
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
 			WithArgs(review.ID, review.OrgID, review.ProjectID).
 			WillReturnRows(createSelectRows(review))
+
+		mock.ExpectRollback()
 
 		updateErr := errors.New("update function error")
 		err = repo.Update(ctx, review.OrgID, review.ProjectID, review.ID, func(r *domain.LiteratureReviewRequest) error {
@@ -757,10 +772,15 @@ func TestPgReviewRepository_Update(t *testing.T) {
 		repo := NewPgReviewRepository(mock)
 		id := uuid.New()
 
+		// Expect transaction wrapping
+		mock.ExpectBegin()
+
 		// Expect SELECT FOR UPDATE to fail
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
 			WithArgs(id, "org-123", "proj-456").
 			WillReturnError(errors.New("database error"))
+
+		mock.ExpectRollback()
 
 		err = repo.Update(ctx, "org-123", "proj-456", id, func(r *domain.LiteratureReviewRequest) error {
 			return nil
@@ -820,6 +840,9 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 		review := newTestReview()
 		review.Status = domain.ReviewStatusPending
 
+		// Expect transaction wrapping
+		mock.ExpectBegin()
+
 		// Expect SELECT FOR UPDATE
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
 			WithArgs(review.ID, review.OrgID, review.ProjectID).
@@ -838,6 +861,8 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 			).
 			WillReturnResult(pgxmock.NewResult("UPDATE", 1))
 
+		mock.ExpectCommit()
+
 		err = repo.UpdateStatus(ctx, review.OrgID, review.ProjectID, review.ID,
 			domain.ReviewStatusExtractingKeywords, "")
 
@@ -854,10 +879,15 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 		review := newTestReview()
 		review.Status = domain.ReviewStatusPending
 
+		// Expect transaction wrapping
+		mock.ExpectBegin()
+
 		// Expect SELECT FOR UPDATE
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
 			WithArgs(review.ID, review.OrgID, review.ProjectID).
 			WillReturnRows(createSelectRows(review))
+
+		mock.ExpectRollback()
 
 		// Try invalid transition: pending -> completed
 		err = repo.UpdateStatus(ctx, review.OrgID, review.ProjectID, review.ID,
@@ -878,10 +908,15 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 		review := newTestReview()
 		review.Status = domain.ReviewStatusCompleted // Terminal state
 
+		// Expect transaction wrapping
+		mock.ExpectBegin()
+
 		// Expect SELECT FOR UPDATE
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
 			WithArgs(review.ID, review.OrgID, review.ProjectID).
 			WillReturnRows(createSelectRows(review))
+
+		mock.ExpectRollback()
 
 		// Try transition from terminal state
 		err = repo.UpdateStatus(ctx, review.OrgID, review.ProjectID, review.ID,
@@ -900,6 +935,9 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 		repo := NewPgReviewRepository(mock)
 		id := uuid.New()
 
+		// Expect transaction wrapping
+		mock.ExpectBegin()
+
 		// Expect SELECT FOR UPDATE returns no rows
 		mock.ExpectQuery("SELECT .* FROM literature_review_requests WHERE id = \\$1 AND org_id = \\$2 AND project_id = \\$3 FOR UPDATE").
 			WithArgs(id, "org-123", "proj-456").
@@ -913,6 +951,8 @@ func TestPgReviewRepository_UpdateStatus(t *testing.T) {
 				"created_at", "updated_at", "started_at", "completed_at",
 				"pause_reason", "paused_at", "paused_at_phase",
 			})) // Empty rows
+
+		mock.ExpectRollback()
 
 		err = repo.UpdateStatus(ctx, "org-123", "proj-456", id,
 			domain.ReviewStatusExtractingKeywords, "")

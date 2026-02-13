@@ -67,6 +67,16 @@ func New(ctx context.Context, cfg *config.DatabaseConfig, logger zerolog.Logger)
 	// Configure connection settings
 	poolConfig.ConnConfig.ConnectTimeout = cfg.ConnectTimeout
 
+	// Set statement_timeout on every new connection.
+	stmtTimeout := cfg.StatementTimeout
+	if stmtTimeout == 0 {
+		stmtTimeout = 30 * time.Second
+	}
+	poolConfig.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
+		_, err := conn.Exec(ctx, fmt.Sprintf("SET statement_timeout = '%dms'", stmtTimeout.Milliseconds()))
+		return err
+	}
+
 	// Add logging hooks
 	poolConfig.BeforeAcquire = func(ctx context.Context, conn *pgx.Conn) bool {
 		logger.Trace().Msg("acquiring connection from pool")

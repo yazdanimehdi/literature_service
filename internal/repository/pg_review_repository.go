@@ -15,6 +15,13 @@ import (
 	"github.com/helixir/literature-review-service/internal/domain"
 )
 
+// txBeginner is an interface for types that can begin a transaction (e.g., *pgxpool.Pool, *database.DB).
+// Used by Update to automatically wrap SELECT FOR UPDATE + UPDATE in a transaction
+// when the underlying DBTX is a pool rather than an existing transaction.
+type txBeginner interface {
+	Begin(ctx context.Context) (pgx.Tx, error)
+}
+
 // PostgreSQL error codes used for constraint violation detection.
 const (
 	pgUniqueViolation     = "23505" // unique_violation
@@ -176,15 +183,14 @@ func (r *PgReviewRepository) Get(ctx context.Context, orgID, projectID string, i
 
 // Update performs an optimistic update on a literature review request using SELECT FOR UPDATE.
 //
-// IMPORTANT: Transaction Requirements
-// This method uses SELECT FOR UPDATE which REQUIRES being called within an explicit transaction
-// to provide the intended row-level locking and isolation guarantees.
+// Transaction Management:
+// This method uses SELECT FOR UPDATE which requires a transaction for correct locking.
+// If the underlying DBTX is a connection pool (supports Begin), the method automatically
+// wraps the SELECT FOR UPDATE + UPDATE in an explicit transaction. If the underlying
+// DBTX is already a transaction, it executes within that existing transaction.
 //
-// When DBTX is a pool (not a transaction), SELECT FOR UPDATE will execute in autocommit mode,
-// meaning the lock is released immediately after the SELECT, before the UPDATE runs.
-// This can lead to lost updates under concurrent access.
-//
-// Correct usage:
+// Callers may still provide their own transaction if they need to include additional
+// operations in the same atomic unit:
 //
 //	tx, err := pool.Begin(ctx)
 //	if err != nil { return err }
@@ -198,12 +204,30 @@ func (r *PgReviewRepository) Get(ctx context.Context, orgID, projectID string, i
 //	if err != nil { return err }
 //
 //	return tx.Commit(ctx)
-//
-// The caller is responsible for transaction management (Begin/Commit/Rollback).
 func (r *PgReviewRepository) Update(ctx context.Context, orgID, projectID string, id uuid.UUID, fn func(*domain.LiteratureReviewRequest) error) error {
-	// Use SELECT FOR UPDATE to acquire a row lock.
-	// This method requires the caller to wrap calls in an explicit transaction.
+	// If the underlying DBTX supports Begin (i.e., it's a pool, not already a transaction),
+	// wrap the SELECT FOR UPDATE + UPDATE in an explicit transaction to prevent lost updates.
+	if beginner, ok := r.db.(txBeginner); ok {
+		tx, err := beginner.Begin(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to begin transaction for update: %w", err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
 
+		txRepo := &PgReviewRepository{db: tx}
+		if err := txRepo.updateInTx(ctx, orgID, projectID, id, fn); err != nil {
+			return err
+		}
+		return tx.Commit(ctx)
+	}
+
+	// Already running within a transaction — execute directly.
+	return r.updateInTx(ctx, orgID, projectID, id, fn)
+}
+
+// updateInTx performs the actual SELECT FOR UPDATE + UPDATE within the current DBTX.
+// This must be called within a transaction for correct row-level locking.
+func (r *PgReviewRepository) updateInTx(ctx context.Context, orgID, projectID string, id uuid.UUID, fn func(*domain.LiteratureReviewRequest) error) error {
 	selectQuery := `
 		SELECT id, org_id, project_id, user_id, title,
 			description, seed_keywords,

@@ -9,6 +9,7 @@ import (
 	"github.com/helixir/llm/azure"
 	"github.com/helixir/llm/bedrock"
 	"github.com/helixir/llm/gemini"
+	"github.com/helixir/llm/ollama"
 	"github.com/helixir/llm/openai"
 )
 
@@ -30,6 +31,8 @@ type EmbedderFactoryConfig struct {
 	Bedrock BedrockConfig
 	// Gemini contains Google Gemini/Vertex AI-specific settings.
 	Gemini GeminiConfig
+	// Ollama contains Ollama-specific settings.
+	Ollama OllamaConfig
 }
 
 // NewEmbedder creates an Embedder based on the factory configuration.
@@ -73,8 +76,14 @@ func NewEmbedder(ctx context.Context, cfg EmbedderFactoryConfig) (sharedllm.Embe
 			Location: cfg.Gemini.Location,
 			Model:    cfg.Gemini.Model,
 		}, cc)
+	case "ollama":
+		return ollama.NewEmbedder(ollama.EmbedderConfig{
+			APIKey:  cfg.Ollama.APIKey,
+			Model:   cfg.Ollama.Model,
+			BaseURL: cfg.Ollama.BaseURL,
+		}, cc)
 	default:
-		return nil, fmt.Errorf("unsupported embedding provider: %q (supported: openai, azure, bedrock, gemini, vertex)", cfg.Provider)
+		return nil, fmt.Errorf("unsupported embedding provider: %q (supported: openai, azure, bedrock, gemini, vertex, ollama)", cfg.Provider)
 	}
 }
 

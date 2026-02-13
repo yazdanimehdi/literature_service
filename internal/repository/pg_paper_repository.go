@@ -315,6 +315,15 @@ func (r *PgPaperRepository) List(ctx context.Context, filter PaperFilter) ([]*do
 	var conditions []string
 	var args []interface{}
 	argIndex := 1
+	needsRPMJoin := false
+
+	// ReviewID filter: scope papers to a specific review via request_paper_mappings.
+	if filter.ReviewID != nil {
+		needsRPMJoin = true
+		conditions = append(conditions, fmt.Sprintf("rpm.request_id = $%d", argIndex))
+		args = append(args, *filter.ReviewID)
+		argIndex++
+	}
 
 	if filter.Source != nil {
 		conditions = append(conditions, fmt.Sprintf(
@@ -349,8 +358,14 @@ func (r *PgPaperRepository) List(ctx context.Context, filter PaperFilter) ([]*do
 		whereClause = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
+	// Build optional JOIN clause for review-scoped queries.
+	joinClause := ""
+	if needsRPMJoin {
+		joinClause = "INNER JOIN request_paper_mappings rpm ON rpm.paper_id = p.id"
+	}
+
 	// Count total matching records
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM papers p %s", whereClause)
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM papers p %s %s", joinClause, whereClause)
 	var totalCount int64
 	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
 		return nil, 0, fmt.Errorf("failed to count papers: %w", err)
@@ -366,9 +381,10 @@ func (r *PgPaperRepository) List(ctx context.Context, filter PaperFilter) ([]*do
 			p.raw_metadata, p.created_at, p.updated_at
 		FROM papers p
 		%s
+		%s
 		ORDER BY p.created_at DESC
 		LIMIT $%d OFFSET $%d`,
-		whereClause, argIndex, argIndex+1)
+		joinClause, whereClause, argIndex, argIndex+1)
 
 	args = append(args, filter.Limit, filter.Offset)
 

@@ -156,16 +156,16 @@ func (m *mockKeywordRepository) BulkAddPaperMappings(ctx context.Context, mappin
 	return args.Error(0)
 }
 
-func (m *mockKeywordRepository) GetPapersForKeyword(ctx context.Context, keywordID uuid.UUID, limit, offset int) ([]*domain.Paper, int64, error) {
-	args := m.Called(ctx, keywordID, limit, offset)
+func (m *mockKeywordRepository) GetPapersForKeyword(ctx context.Context, reviewID uuid.UUID, keywordID uuid.UUID, limit, offset int) ([]*domain.Paper, int64, error) {
+	args := m.Called(ctx, reviewID, keywordID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Get(1).(int64), args.Error(2)
 	}
 	return args.Get(0).([]*domain.Paper), args.Get(1).(int64), args.Error(2)
 }
 
-func (m *mockKeywordRepository) GetPapersForKeywordAndSource(ctx context.Context, keywordID uuid.UUID, source domain.SourceType, limit, offset int) ([]*domain.Paper, int64, error) {
-	args := m.Called(ctx, keywordID, source, limit, offset)
+func (m *mockKeywordRepository) GetPapersForKeywordAndSource(ctx context.Context, reviewID uuid.UUID, keywordID uuid.UUID, source domain.SourceType, limit, offset int) ([]*domain.Paper, int64, error) {
+	args := m.Called(ctx, reviewID, keywordID, source, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Get(1).(int64), args.Error(2)
 	}
@@ -1037,6 +1037,7 @@ func TestCheckSearchCompleted_CacheHit(t *testing.T) {
 	keywordRepo := &mockKeywordRepository{}
 	paperRepo := &mockPaperRepository{}
 
+	reviewID := uuid.New()
 	keywordID := uuid.New()
 	searchedAt := time.Date(2026, 2, 1, 12, 0, 0, 0, time.UTC)
 
@@ -1059,13 +1060,14 @@ func TestCheckSearchCompleted_CacheHit(t *testing.T) {
 		{ID: paper3ID, CanonicalID: "doi:10.1234/p3", Title: "Paper 3"},
 	}
 
-	keywordRepo.On("GetPapersForKeywordAndSource", mock.Anything, keywordID, domain.SourceTypeSemanticScholar, 200, 0).
+	keywordRepo.On("GetPapersForKeywordAndSource", mock.Anything, reviewID, keywordID, domain.SourceTypeSemanticScholar, 200, 0).
 		Return(cachedPapers, int64(3), nil)
 
 	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
 	env.RegisterActivity(act.CheckSearchCompleted)
 
 	input := CheckSearchCompletedInput{
+		ReviewID:  reviewID,
 		KeywordID: keywordID,
 		Keyword:   "CRISPR",
 		Source:    domain.SourceTypeSemanticScholar,
@@ -1093,6 +1095,7 @@ func TestCheckSearchCompleted_NeverSearched(t *testing.T) {
 	keywordRepo := &mockKeywordRepository{}
 	paperRepo := &mockPaperRepository{}
 
+	reviewID := uuid.New()
 	keywordID := uuid.New()
 
 	keywordRepo.On("GetLastSearch", mock.Anything, keywordID, domain.SourceTypeOpenAlex).
@@ -1102,6 +1105,7 @@ func TestCheckSearchCompleted_NeverSearched(t *testing.T) {
 	env.RegisterActivity(act.CheckSearchCompleted)
 
 	input := CheckSearchCompletedInput{
+		ReviewID:  reviewID,
 		KeywordID: keywordID,
 		Keyword:   "gene therapy",
 		Source:    domain.SourceTypeOpenAlex,
@@ -1127,6 +1131,7 @@ func TestCheckSearchCompleted_PreviousSearchFailed(t *testing.T) {
 	keywordRepo := &mockKeywordRepository{}
 	paperRepo := &mockPaperRepository{}
 
+	reviewID := uuid.New()
 	keywordID := uuid.New()
 
 	keywordRepo.On("GetLastSearch", mock.Anything, keywordID, domain.SourceTypePubMed).
@@ -1141,6 +1146,7 @@ func TestCheckSearchCompleted_PreviousSearchFailed(t *testing.T) {
 	env.RegisterActivity(act.CheckSearchCompleted)
 
 	input := CheckSearchCompletedInput{
+		ReviewID:  reviewID,
 		KeywordID: keywordID,
 		Keyword:   "protein folding",
 		Source:    domain.SourceTypePubMed,
@@ -1156,7 +1162,7 @@ func TestCheckSearchCompleted_PreviousSearchFailed(t *testing.T) {
 
 	keywordRepo.AssertExpectations(t)
 	// GetPapersForKeywordAndSource should NOT be called since the search was not completed.
-	keywordRepo.AssertNotCalled(t, "GetPapersForKeywordAndSource", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	keywordRepo.AssertNotCalled(t, "GetPapersForKeywordAndSource", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestCheckSearchCompleted_PaperFetchError(t *testing.T) {
@@ -1167,6 +1173,7 @@ func TestCheckSearchCompleted_PaperFetchError(t *testing.T) {
 	keywordRepo := &mockKeywordRepository{}
 	paperRepo := &mockPaperRepository{}
 
+	reviewID := uuid.New()
 	keywordID := uuid.New()
 
 	keywordRepo.On("GetLastSearch", mock.Anything, keywordID, domain.SourceTypeSemanticScholar).
@@ -1179,13 +1186,14 @@ func TestCheckSearchCompleted_PaperFetchError(t *testing.T) {
 			Status:      domain.SearchStatusCompleted,
 		}, nil)
 
-	keywordRepo.On("GetPapersForKeywordAndSource", mock.Anything, keywordID, domain.SourceTypeSemanticScholar, 200, 0).
+	keywordRepo.On("GetPapersForKeywordAndSource", mock.Anything, reviewID, keywordID, domain.SourceTypeSemanticScholar, 200, 0).
 		Return(nil, int64(0), assert.AnError)
 
 	act := NewStatusActivities(reviewRepo, keywordRepo, paperRepo, nil)
 	env.RegisterActivity(act.CheckSearchCompleted)
 
 	input := CheckSearchCompletedInput{
+		ReviewID:  reviewID,
 		KeywordID: keywordID,
 		Keyword:   "RNA interference",
 		Source:    domain.SourceTypeSemanticScholar,
@@ -1211,6 +1219,7 @@ func TestCheckSearchCompleted_UsesSourceFilter(t *testing.T) {
 	keywordRepo := &mockKeywordRepository{}
 	paperRepo := &mockPaperRepository{}
 
+	reviewID := uuid.New()
 	keywordID := uuid.New()
 
 	keywordRepo.On("GetLastSearch", mock.Anything, keywordID, domain.SourceTypeSemanticScholar).
@@ -1226,6 +1235,7 @@ func TestCheckSearchCompleted_UsesSourceFilter(t *testing.T) {
 	// Verify the source filter is passed correctly using mock.MatchedBy.
 	keywordRepo.On("GetPapersForKeywordAndSource",
 		mock.Anything,
+		reviewID,
 		keywordID,
 		mock.MatchedBy(func(src domain.SourceType) bool {
 			return src == domain.SourceTypeSemanticScholar
@@ -1240,6 +1250,7 @@ func TestCheckSearchCompleted_UsesSourceFilter(t *testing.T) {
 	env.RegisterActivity(act.CheckSearchCompleted)
 
 	input := CheckSearchCompletedInput{
+		ReviewID:  reviewID,
 		KeywordID: keywordID,
 		Keyword:   "CRISPR-Cas9",
 		Source:    domain.SourceTypeSemanticScholar,
@@ -1256,7 +1267,7 @@ func TestCheckSearchCompleted_UsesSourceFilter(t *testing.T) {
 
 	keywordRepo.AssertExpectations(t)
 	// Verify GetPapersForKeyword (without source filter) was NOT called.
-	keywordRepo.AssertNotCalled(t, "GetPapersForKeyword", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	keywordRepo.AssertNotCalled(t, "GetPapersForKeyword", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 // ---------------------------------------------------------------------------

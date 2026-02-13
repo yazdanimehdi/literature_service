@@ -32,9 +32,15 @@ func tenantContextMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Validate tenant access if auth context is present.
+		// Validate tenant access: if auth context is present, user must be authenticated
+		// and have access to the requested org/project. An auth context with a nil user
+		// means authentication is enabled but the request is unauthenticated — deny it.
 		authCtx, ok := grpcauth.AuthFromContext(r.Context())
-		if ok && authCtx != nil && authCtx.User != nil {
+		if ok && authCtx != nil {
+			if authCtx.User == nil {
+				writeError(w, http.StatusUnauthorized, "authentication required")
+				return
+			}
 			user := authCtx.User
 			if !user.HasOrgAccess(orgID) {
 				writeError(w, http.StatusForbidden, "access denied to organization")

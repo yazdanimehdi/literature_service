@@ -708,7 +708,7 @@ func TestPgKeywordRepository_BulkAddPaperMappings(t *testing.T) {
 }
 
 func TestPgKeywordRepository_GetPapersForKeyword(t *testing.T) {
-	t.Run("returns papers for keyword", func(t *testing.T) {
+	t.Run("returns papers for keyword scoped to review", func(t *testing.T) {
 		mock, err := pgxmock.NewPool()
 		require.NoError(t, err)
 		defer mock.Close()
@@ -716,16 +716,17 @@ func TestPgKeywordRepository_GetPapersForKeyword(t *testing.T) {
 		repo := NewPgKeywordRepository(mock)
 		ctx := context.Background()
 
+		reviewID := uuid.New()
 		keywordID := uuid.New()
 		paperID := uuid.New()
 		now := time.Now().UTC()
 
-		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM keyword_paper_mappings WHERE keyword_id = \$1`).
-			WithArgs(keywordID).
+		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
+			WithArgs(keywordID, reviewID).
 			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(1)))
 
 		mock.ExpectQuery(`SELECT p.id, p.canonical_id, p.title, p.abstract, p.authors`).
-			WithArgs(keywordID, 10, 0).
+			WithArgs(keywordID, reviewID, 10, 0).
 			WillReturnRows(pgxmock.NewRows([]string{
 				"id", "canonical_id", "title", "abstract", "authors",
 				"publication_date", "publication_year", "venue", "journal",
@@ -742,7 +743,7 @@ func TestPgKeywordRepository_GetPapersForKeyword(t *testing.T) {
 				nil, now, now,
 			))
 
-		papers, total, err := repo.GetPapersForKeyword(ctx, keywordID, 10, 0)
+		papers, total, err := repo.GetPapersForKeyword(ctx, reviewID, keywordID, 10, 0)
 		require.NoError(t, err)
 		assert.Len(t, papers, 1)
 		assert.Equal(t, int64(1), total)
@@ -758,14 +759,15 @@ func TestPgKeywordRepository_GetPapersForKeyword(t *testing.T) {
 		repo := NewPgKeywordRepository(mock)
 		ctx := context.Background()
 
+		reviewID := uuid.New()
 		keywordID := uuid.New()
 
-		mock.ExpectQuery(`SELECT COUNT\(\*\) FROM keyword_paper_mappings WHERE keyword_id = \$1`).
-			WithArgs(keywordID).
+		mock.ExpectQuery(`SELECT COUNT\(\*\)`).
+			WithArgs(keywordID, reviewID).
 			WillReturnRows(pgxmock.NewRows([]string{"count"}).AddRow(int64(0)))
 
 		mock.ExpectQuery(`SELECT p.id, p.canonical_id, p.title, p.abstract, p.authors`).
-			WithArgs(keywordID, 100, 0). // Default limit
+			WithArgs(keywordID, reviewID, 100, 0). // Default limit
 			WillReturnRows(pgxmock.NewRows([]string{
 				"id", "canonical_id", "title", "abstract", "authors",
 				"publication_date", "publication_year", "venue", "journal",
@@ -775,7 +777,7 @@ func TestPgKeywordRepository_GetPapersForKeyword(t *testing.T) {
 				"raw_metadata", "created_at", "updated_at",
 			}))
 
-		_, _, err = repo.GetPapersForKeyword(ctx, keywordID, 0, -1)
+		_, _, err = repo.GetPapersForKeyword(ctx, reviewID, keywordID, 0, -1)
 		require.NoError(t, err)
 		assert.NoError(t, mock.ExpectationsWereMet())
 	})

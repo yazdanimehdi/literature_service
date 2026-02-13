@@ -243,6 +243,11 @@ func run() error {
 			Location: cfg.LLM.Gemini.Location,
 			Model:    cfg.LLM.Gemini.Model,
 		},
+		Ollama: llm.OllamaConfig{
+			BaseURL: cfg.LLM.Ollama.BaseURL,
+			Model:   cfg.LLM.EmbeddingModel,
+			APIKey:  cfg.LLM.Ollama.APIKey,
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("create embedder: %w", err)
@@ -366,7 +371,7 @@ func run() error {
 	}
 	llmActivities := activities.NewLLMActivities(extractor, metrics, llmOpts...)
 	searchActivities := activities.NewSearchActivities(registry, metrics)
-	statusActivities := activities.NewStatusActivities(reviewRepo, keywordRepo, paperRepo, metrics)
+	statusActivities := activities.NewStatusActivities(reviewRepo, keywordRepo, paperRepo, metrics, activities.WithDB(db.Pool()))
 	ingestionActivities := activities.NewIngestionActivities(ingestionClient, pdfDownloader, ingestionClient, metrics)
 	eventActivities := activities.NewEventActivities(publisher)
 	dedupActivities := activities.NewDedupActivities(dedupChecker)

@@ -23,6 +23,21 @@ type PaperProcessingInput struct {
 	Batch PaperIDBatch `json:"batch"`
 	// ParentWorkflowID is the parent workflow ID for signaling.
 	ParentWorkflowID string `json:"parent_workflow_id"`
+	// Timeouts holds configurable activity timeout durations. When zero-valued,
+	// the child workflow falls back to hardcoded defaults.
+	Timeouts ChildWorkflowTimeouts `json:"timeouts,omitempty"`
+}
+
+// ChildWorkflowTimeouts holds configurable timeouts for child workflow activities.
+type ChildWorkflowTimeouts struct {
+	// EmbeddingActivity is the timeout for embedding activities.
+	EmbeddingActivity time.Duration `json:"embedding_activity,omitempty"`
+	// DedupActivity is the timeout for dedup activities.
+	DedupActivity time.Duration `json:"dedup_activity,omitempty"`
+	// IngestionActivity is the timeout for ingestion activities.
+	IngestionActivity time.Duration `json:"ingestion_activity,omitempty"`
+	// StatusActivity is the timeout for status update activities.
+	StatusActivity time.Duration `json:"status_activity,omitempty"`
 }
 
 // PaperProcessingResult is the result of the paper processing child workflow.
@@ -79,10 +94,28 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 	var ingestionAct *activities.IngestionActivities
 	var statusAct *activities.StatusActivities
 
+	// Resolve configurable timeouts with fallback defaults.
+	embeddingTimeout := 2 * time.Minute
+	if input.Timeouts.EmbeddingActivity > 0 {
+		embeddingTimeout = input.Timeouts.EmbeddingActivity
+	}
+	dedupTimeout := 1 * time.Minute
+	if input.Timeouts.DedupActivity > 0 {
+		dedupTimeout = input.Timeouts.DedupActivity
+	}
+	ingestionTimeout := 5 * time.Minute
+	if input.Timeouts.IngestionActivity > 0 {
+		ingestionTimeout = input.Timeouts.IngestionActivity
+	}
+	childStatusTimeout := 30 * time.Second
+	if input.Timeouts.StatusActivity > 0 {
+		childStatusTimeout = input.Timeouts.StatusActivity
+	}
+
 	// Activity options
 	embeddingCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 2 * time.Minute,
-		HeartbeatTimeout:    1 * time.Minute,
+		StartToCloseTimeout: embeddingTimeout,
+		HeartbeatTimeout:    embeddingTimeout / 2,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    1 * time.Second,
 			BackoffCoefficient: 2.0,
@@ -92,8 +125,8 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 	})
 
 	dedupCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 1 * time.Minute,
-		HeartbeatTimeout:    30 * time.Second,
+		StartToCloseTimeout: dedupTimeout,
+		HeartbeatTimeout:    dedupTimeout / 2,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    500 * time.Millisecond,
 			BackoffCoefficient: 2.0,
@@ -103,8 +136,8 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 	})
 
 	ingestionCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 5 * time.Minute,
-		HeartbeatTimeout:    2 * time.Minute,
+		StartToCloseTimeout: ingestionTimeout,
+		HeartbeatTimeout:    ingestionTimeout / 2,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    2 * time.Second,
 			BackoffCoefficient: 2.0,
@@ -114,7 +147,7 @@ func PaperProcessingWorkflow(ctx workflow.Context, input PaperProcessingInput) (
 	})
 
 	statusCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: 30 * time.Second,
+		StartToCloseTimeout: childStatusTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    500 * time.Millisecond,
 			BackoffCoefficient: 2.0,

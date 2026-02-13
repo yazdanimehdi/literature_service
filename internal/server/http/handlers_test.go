@@ -155,10 +155,10 @@ func (m *mockKeywordRepo) AddPaperMapping(_ context.Context, _ *domain.KeywordPa
 func (m *mockKeywordRepo) BulkAddPaperMappings(_ context.Context, _ []*domain.KeywordPaperMapping) error {
 	return nil
 }
-func (m *mockKeywordRepo) GetPapersForKeyword(_ context.Context, _ uuid.UUID, _, _ int) ([]*domain.Paper, int64, error) {
+func (m *mockKeywordRepo) GetPapersForKeyword(_ context.Context, _ uuid.UUID, _ uuid.UUID, _, _ int) ([]*domain.Paper, int64, error) {
 	return nil, 0, nil
 }
-func (m *mockKeywordRepo) GetPapersForKeywordAndSource(_ context.Context, _ uuid.UUID, _ domain.SourceType, _, _ int) ([]*domain.Paper, int64, error) {
+func (m *mockKeywordRepo) GetPapersForKeywordAndSource(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ domain.SourceType, _, _ int) ([]*domain.Paper, int64, error) {
 	return nil, 0, nil
 }
 func (m *mockKeywordRepo) List(ctx context.Context, filter repository.KeywordFilter) ([]*domain.Keyword, int64, error) {

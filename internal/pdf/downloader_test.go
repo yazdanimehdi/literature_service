@@ -55,7 +55,7 @@ func TestDownload_Success(t *testing.T) {
 	}))
 	defer server.Close()
 
-	d := NewDownloader(Config{})
+	d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 	result, err := d.Download(context.Background(), server.URL)
 	require.NoError(t, err)
@@ -80,7 +80,7 @@ func TestDownload_HashCorrectness(t *testing.T) {
 	}))
 	defer server.Close()
 
-	d := NewDownloader(Config{})
+	d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 	result, err := d.Download(context.Background(), server.URL)
 	require.NoError(t, err)
@@ -114,7 +114,7 @@ func TestDownload_NonPDFContentType(t *testing.T) {
 			}))
 			defer server.Close()
 
-			d := NewDownloader(Config{})
+			d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 			result, err := d.Download(context.Background(), server.URL)
 			require.Error(t, err)
@@ -146,7 +146,7 @@ func TestDownload_ContentTypeWithCharset(t *testing.T) {
 			}))
 			defer server.Close()
 
-			d := NewDownloader(Config{})
+			d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 			result, err := d.Download(context.Background(), server.URL)
 			require.NoError(t, err)
@@ -174,7 +174,8 @@ func TestDownload_TooLarge(t *testing.T) {
 
 	// Set max size smaller than content
 	d := NewDownloader(Config{
-		MaxSize: 512,
+		MaxSize:              512,
+		AllowPrivateNetworks: true,
 	})
 
 	result, err := d.Download(context.Background(), server.URL)
@@ -200,7 +201,8 @@ func TestDownload_ExactlyMaxSize(t *testing.T) {
 	defer server.Close()
 
 	d := NewDownloader(Config{
-		MaxSize: 512,
+		MaxSize:              512,
+		AllowPrivateNetworks: true,
 	})
 
 	result, err := d.Download(context.Background(), server.URL)
@@ -216,7 +218,7 @@ func TestDownload_HTTP404(t *testing.T) {
 	}))
 	defer server.Close()
 
-	d := NewDownloader(Config{})
+	d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 	result, err := d.Download(context.Background(), server.URL)
 	require.Error(t, err)
@@ -232,7 +234,7 @@ func TestDownload_HTTP500(t *testing.T) {
 	}))
 	defer server.Close()
 
-	d := NewDownloader(Config{})
+	d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 	result, err := d.Download(context.Background(), server.URL)
 	require.Error(t, err)
@@ -278,8 +280,9 @@ func TestDownload_HTTPStatusCodes(t *testing.T) {
 						return http.ErrUseLastResponse
 					},
 				},
-				maxSize:   100 * 1024 * 1024,
-				userAgent: "Test/1.0",
+				maxSize:              100 * 1024 * 1024,
+				userAgent:            "Test/1.0",
+				allowPrivateNetworks: true,
 			}
 
 			result, err := d.Download(context.Background(), server.URL)
@@ -310,7 +313,7 @@ func TestDownload_Redirect(t *testing.T) {
 	}))
 	defer redirectServer.Close()
 
-	d := NewDownloader(Config{})
+	d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 	result, err := d.Download(context.Background(), redirectServer.URL)
 	require.NoError(t, err)
@@ -341,7 +344,7 @@ func TestDownload_MultipleRedirects(t *testing.T) {
 	}))
 	defer firstServer.Close()
 
-	d := NewDownloader(Config{})
+	d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 	result, err := d.Download(context.Background(), firstServer.URL)
 	require.NoError(t, err)
@@ -360,7 +363,7 @@ func TestDownload_ContextCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	d := NewDownloader(Config{})
+	d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel context after a short delay
@@ -386,7 +389,7 @@ func TestDownload_ContextTimeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	d := NewDownloader(Config{})
+	d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
@@ -401,12 +404,13 @@ func TestDownload_InvalidURL(t *testing.T) {
 	d := NewDownloader(Config{})
 
 	testCases := []struct {
-		name string
-		url  string
+		name    string
+		url     string
+		wantErr error // Expected sentinel error
 	}{
-		{"empty URL", ""},
-		{"invalid scheme", "not-a-url"},
-		{"missing host", "http://"},
+		{"empty URL", "", ErrSSRF},
+		{"invalid scheme", "not-a-url", ErrSSRF},
+		{"missing host", "http://", ErrDownloadFailed},
 	}
 
 	for _, tc := range testCases {
@@ -414,7 +418,7 @@ func TestDownload_InvalidURL(t *testing.T) {
 			result, err := d.Download(context.Background(), tc.url)
 			require.Error(t, err)
 			assert.Nil(t, result)
-			assert.ErrorIs(t, err, ErrDownloadFailed)
+			assert.ErrorIs(t, err, tc.wantErr)
 		})
 	}
 }
@@ -430,7 +434,7 @@ func TestDownload_UserAgent(t *testing.T) {
 	defer server.Close()
 
 	t.Run("default user agent", func(t *testing.T) {
-		d := NewDownloader(Config{})
+		d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 		_, err := d.Download(context.Background(), server.URL)
 		require.NoError(t, err)
@@ -440,7 +444,8 @@ func TestDownload_UserAgent(t *testing.T) {
 
 	t.Run("custom user agent", func(t *testing.T) {
 		d := NewDownloader(Config{
-			UserAgent: "CustomBot/3.0",
+			UserAgent:            "CustomBot/3.0",
+			AllowPrivateNetworks: true,
 		})
 
 		_, err := d.Download(context.Background(), server.URL)
@@ -452,7 +457,8 @@ func TestDownload_UserAgent(t *testing.T) {
 
 func TestDownload_ConnectionRefused(t *testing.T) {
 	d := NewDownloader(Config{
-		Timeout: 1 * time.Second,
+		Timeout:              1 * time.Second,
+		AllowPrivateNetworks: true,
 	})
 
 	// Use a port that is unlikely to be in use
@@ -470,7 +476,7 @@ func TestDownload_EmptyResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	d := NewDownloader(Config{})
+	d := NewDownloader(Config{AllowPrivateNetworks: true})
 
 	result, err := d.Download(context.Background(), server.URL)
 	require.NoError(t, err)

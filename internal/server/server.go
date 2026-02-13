@@ -123,13 +123,20 @@ func validateOrgProject(orgID, projectID string) error {
 }
 
 // validateTenantAccess checks that the authenticated user has access to the
-// requested org_id and project_id. In permissive mode (no auth context), this
-// is a no-op. In strict mode, org/project membership is verified against JWT claims.
+// requested org_id and project_id. When an auth context is present (auth is enabled),
+// the user must be authenticated and have the correct org/project membership.
+// When no auth context exists (auth disabled or service-to-service call), this is a no-op.
 func validateTenantAccess(ctx context.Context, orgID, projectID string) error {
 	authCtx, ok := grpcauth.AuthFromContext(ctx)
-	if !ok || authCtx == nil || authCtx.User == nil {
-		// No auth context — permissive mode or service-to-service call.
+	if !ok || authCtx == nil {
+		// No auth context — auth disabled or service-to-service call.
 		return nil
+	}
+
+	// Auth context present but no user means authentication is enabled but
+	// the request is unauthenticated — deny access.
+	if authCtx.User == nil {
+		return status.Error(codes.Unauthenticated, "authentication required")
 	}
 
 	user := authCtx.User

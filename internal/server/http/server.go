@@ -97,8 +97,10 @@ func (s *Server) buildRouter() chi.Router {
 	r.Use(correlationIDMiddleware)
 	r.Use(jsonContentTypeMiddleware)
 
-	// Health endpoints (no auth)
+	// Health endpoints (no auth) — support both /health and /healthz conventions
+	r.Get("/health", s.healthHandler)
 	r.Get("/healthz", s.healthHandler)
+	r.Get("/ready", s.readinessHandler)
 	r.Get("/readyz", s.readinessHandler)
 
 	// API routes with auth + tenant context
@@ -142,10 +144,11 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "database": health.Status})
 		return
 	}
+	// Log the internal error but don't expose it in the response.
+	s.logger.Warn().Str("db_error", health.Error).Msg("health check failed")
 	writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 		"status":   "unhealthy",
 		"database": health.Status,
-		"error":    health.Error,
 	})
 }
 
@@ -153,10 +156,11 @@ func (s *Server) healthHandler(w http.ResponseWriter, r *http.Request) {
 func (s *Server) readinessHandler(w http.ResponseWriter, r *http.Request) {
 	health := s.db.Health(r.Context())
 	if health.Status != "healthy" {
+		// Log the internal error but don't expose it in the response.
+		s.logger.Warn().Str("db_error", health.Error).Msg("readiness check failed")
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{
 			"status":   "not_ready",
 			"database": health.Status,
-			"error":    health.Error,
 		})
 		return
 	}

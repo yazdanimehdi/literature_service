@@ -160,11 +160,11 @@ func (m *paperTestKeywordRepo) BulkAddPaperMappings(_ context.Context, _ []*doma
 	return nil
 }
 
-func (m *paperTestKeywordRepo) GetPapersForKeyword(_ context.Context, _ uuid.UUID, _, _ int) ([]*domain.Paper, int64, error) {
+func (m *paperTestKeywordRepo) GetPapersForKeyword(_ context.Context, _ uuid.UUID, _ uuid.UUID, _, _ int) ([]*domain.Paper, int64, error) {
 	return nil, 0, nil
 }
 
-func (m *paperTestKeywordRepo) GetPapersForKeywordAndSource(_ context.Context, _ uuid.UUID, _ domain.SourceType, _, _ int) ([]*domain.Paper, int64, error) {
+func (m *paperTestKeywordRepo) GetPapersForKeywordAndSource(_ context.Context, _ uuid.UUID, _ uuid.UUID, _ domain.SourceType, _, _ int) ([]*domain.Paper, int64, error) {
 	return nil, 0, nil
 }
 

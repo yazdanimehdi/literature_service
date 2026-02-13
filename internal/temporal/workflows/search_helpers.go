@@ -41,14 +41,15 @@ type searchFutureEntry struct {
 
 // searchExecutor bundles workflow-level shared state for search helpers.
 type searchExecutor struct {
-	cancelCtx workflow.Context
-	statusCtx workflow.Context
-	searchAct *activities.SearchActivities
-	statusAct *activities.StatusActivities
-	logger    log.Logger
-	progress  *workflowProgress
-	input     ReviewWorkflowInput
-	wfInfo    *workflow.Info
+	cancelCtx            workflow.Context
+	statusCtx            workflow.Context
+	searchAct            *activities.SearchActivities
+	statusAct            *activities.StatusActivities
+	logger               log.Logger
+	progress             *workflowProgress
+	input                ReviewWorkflowInput
+	wfInfo               *workflow.Info
+	searchActivityTimeout time.Duration // Configurable search activity timeout.
 }
 
 // searchPhaseParams contains phase-specific parameters.
@@ -98,6 +99,7 @@ func (e *searchExecutor) executeSearch(params searchPhaseParams) searchPhaseResu
 			if kwID != uuid.Nil {
 				var checkOutput activities.CheckSearchCompletedOutput
 				checkErr := workflow.ExecuteActivity(e.statusCtx, e.statusAct.CheckSearchCompleted, activities.CheckSearchCompletedInput{
+					ReviewID:  e.input.RequestID,
 					KeywordID: kwID,
 					Keyword:   keyword,
 					Source:    source,
@@ -121,7 +123,7 @@ func (e *searchExecutor) executeSearch(params searchPhaseParams) searchPhaseResu
 			}
 
 			actCtx := workflow.WithActivityOptions(e.cancelCtx, workflow.ActivityOptions{
-				StartToCloseTimeout: searchActivityTimeout,
+				StartToCloseTimeout: e.searchActivityTimeout,
 				RetryPolicy: &temporal.RetryPolicy{
 					InitialInterval:    2 * time.Second,
 					BackoffCoefficient: 2.0,
@@ -324,6 +326,12 @@ func (e *searchExecutor) spawnBatchesWithWindow(batches [][]uuid.UUID, batchIDPr
 			RequestID:        e.input.RequestID.String(),
 			Batch:            PaperIDBatch{BatchID: batchID, PaperIDs: batch},
 			ParentWorkflowID: e.wfInfo.WorkflowExecution.ID,
+			Timeouts: ChildWorkflowTimeouts{
+				EmbeddingActivity: e.input.Timeouts.EmbeddingActivity,
+				DedupActivity:     e.input.Timeouts.DedupActivity,
+				IngestionActivity: e.input.Timeouts.IngestionActivity,
+				StatusActivity:    e.input.Timeouts.StatusActivity,
+			},
 		})
 		*childFutures = append(*childFutures, future)
 

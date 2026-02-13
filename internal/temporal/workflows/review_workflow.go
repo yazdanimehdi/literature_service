@@ -28,16 +28,39 @@ const (
 	QueryProgress = litemporal.QueryProgress
 )
 
-// Activity timeout constants.
+// Activity timeout defaults. These are used when the workflow input does not
+// provide explicit timeout values (i.e., the timeout fields are zero-valued).
 const (
-	llmActivityTimeout    = 2 * time.Minute
-	searchActivityTimeout = 5 * time.Minute
-	statusActivityTimeout = 30 * time.Second
+	defaultLLMActivityTimeout    = 2 * time.Minute
+	defaultSearchActivityTimeout = 5 * time.Minute
+	defaultStatusActivityTimeout = 30 * time.Second
 
-	ingestionSubmitTimeout = 5 * time.Minute
-	ingestionPollInterval  = 30 * time.Second
-	ingestionMaxPollTime   = 30 * time.Minute
+	defaultIngestionSubmitTimeout = 5 * time.Minute
+	ingestionPollInterval         = 30 * time.Second
+	ingestionMaxPollTime          = 30 * time.Minute
 )
+
+// resolveTimeouts returns effective timeout values, using the input overrides
+// when non-zero and falling back to defaults otherwise.
+func resolveTimeouts(input ReviewWorkflowInput) (llmTimeout, searchTimeout, statusTimeout, ingestionSubmitTimeout time.Duration) {
+	llmTimeout = defaultLLMActivityTimeout
+	if input.Timeouts.LLMActivity > 0 {
+		llmTimeout = input.Timeouts.LLMActivity
+	}
+	searchTimeout = defaultSearchActivityTimeout
+	if input.Timeouts.SearchActivity > 0 {
+		searchTimeout = input.Timeouts.SearchActivity
+	}
+	statusTimeout = defaultStatusActivityTimeout
+	if input.Timeouts.StatusActivity > 0 {
+		statusTimeout = input.Timeouts.StatusActivity
+	}
+	ingestionSubmitTimeout = defaultIngestionSubmitTimeout
+	if input.Timeouts.IngestionSubmitActivity > 0 {
+		ingestionSubmitTimeout = input.Timeouts.IngestionSubmitActivity
+	}
+	return
+}
 
 // Workflow defaults for keyword extraction and paper search.
 const (
@@ -274,6 +297,9 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 	var eventAct *activities.EventActivities
 	var embeddingAct *activities.EmbeddingActivities
 
+	// Resolve configurable timeouts from input, falling back to defaults.
+	llmActivityTimeout, searchActivityTimeout, statusActivityTimeout, _ := resolveTimeouts(input)
+
 	// Build activity option contexts with retry policies.
 	llmCtx := workflow.WithActivityOptions(cancelCtx, workflow.ActivityOptions{
 		StartToCloseTimeout: llmActivityTimeout,
@@ -317,14 +343,15 @@ func LiteratureReviewWorkflow(ctx workflow.Context, input ReviewWorkflowInput) (
 
 	// Build search executor for shared search helpers.
 	executor := &searchExecutor{
-		cancelCtx: cancelCtx,
-		statusCtx: statusCtx,
-		searchAct: searchAct,
-		statusAct: statusAct,
-		logger:    logger,
-		progress:  progress,
-		input:     input,
-		wfInfo:    workflowInfo,
+		cancelCtx:             cancelCtx,
+		statusCtx:             statusCtx,
+		searchAct:             searchAct,
+		statusAct:             statusAct,
+		logger:                logger,
+		progress:              progress,
+		input:                 input,
+		wfInfo:                workflowInfo,
+		searchActivityTimeout: searchActivityTimeout,
 	}
 
 	// Helper to update status and track in progress.
@@ -1023,7 +1050,7 @@ func checkPausePoint(
 
 	// Update status to paused in database.
 	statusCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: statusActivityTimeout,
+		StartToCloseTimeout: defaultStatusActivityTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    500 * time.Millisecond,
 			BackoffCoefficient: 2.0,
@@ -1110,7 +1137,7 @@ func checkStopPoint(
 
 	// Update status to partial using root context to avoid cancelled context issues.
 	statusCtx := workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
-		StartToCloseTimeout: statusActivityTimeout,
+		StartToCloseTimeout: defaultStatusActivityTimeout,
 		RetryPolicy: &temporal.RetryPolicy{
 			InitialInterval:    500 * time.Millisecond,
 			BackoffCoefficient: 2.0,

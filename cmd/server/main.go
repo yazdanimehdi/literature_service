@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/reflection"
 
+	"github.com/helixir/grpcauth/chiauth"
 	"github.com/helixir/grpcauth/env"
 	"github.com/helixir/grpcauth/interceptor"
 
@@ -182,9 +183,13 @@ func run() error {
 		return fmt.Errorf("listen on gRPC port: %w", err)
 	}
 
-	// Create HTTP REST API server.
-	// TODO: Replace with chiauth.NewMiddleware(authConfig) once grpcauth/chiauth is available.
-	var httpAuthMiddleware func(http.Handler) http.Handler
+	// Create HTTP REST API server with chiauth middleware.
+	chiMiddleware, err := chiauth.NewMiddleware(authConfig)
+	if err != nil {
+		return fmt.Errorf("create HTTP auth middleware: %w", err)
+	}
+	defer chiMiddleware.Close()
+	httpAuthMiddleware := chiMiddleware.Handler()
 
 	httpCfg := httpserver.Config{
 		Address:         cfg.Server.HTTPAddress(),

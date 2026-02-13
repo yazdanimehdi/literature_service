@@ -64,16 +64,20 @@ type KeywordRepository interface {
 	// This is optimized for batch processing when associating papers with keywords.
 	BulkAddPaperMappings(ctx context.Context, mappings []*domain.KeywordPaperMapping) error
 
-	// GetPapersForKeyword retrieves papers associated with a specific keyword.
+	// GetPapersForKeyword retrieves papers associated with a specific keyword
+	// within a specific review. The reviewID ensures tenant isolation by joining
+	// through request_keyword_mappings to verify the keyword belongs to the given review.
 	// Papers are returned in order of association creation time (most recent first).
 	// Returns the matching papers and total count for pagination.
-	GetPapersForKeyword(ctx context.Context, keywordID uuid.UUID, limit, offset int) ([]*domain.Paper, int64, error)
+	GetPapersForKeyword(ctx context.Context, reviewID uuid.UUID, keywordID uuid.UUID, limit, offset int) ([]*domain.Paper, int64, error)
 
 	// GetPapersForKeywordAndSource retrieves papers associated with a specific keyword
-	// and discovered via a specific source type. This prevents cross-source paper leakage
+	// and discovered via a specific source type, scoped to a specific review.
+	// The reviewID ensures tenant isolation by joining through request_keyword_mappings.
+	// This prevents cross-source and cross-review paper leakage
 	// when checking search deduplication for a single source.
 	// Papers are returned in order of association creation time (most recent first).
-	GetPapersForKeywordAndSource(ctx context.Context, keywordID uuid.UUID, source domain.SourceType, limit, offset int) ([]*domain.Paper, int64, error)
+	GetPapersForKeywordAndSource(ctx context.Context, reviewID uuid.UUID, keywordID uuid.UUID, source domain.SourceType, limit, offset int) ([]*domain.Paper, int64, error)
 
 	// List retrieves keywords matching the filter criteria.
 	// Returns the matching keywords and total count for pagination.

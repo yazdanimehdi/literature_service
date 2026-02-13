@@ -449,18 +449,23 @@ func (r *PgKeywordRepository) BulkAddPaperMappings(ctx context.Context, mappings
 	return nil
 }
 
-// GetPapersForKeyword retrieves papers associated with a specific keyword.
-func (r *PgKeywordRepository) GetPapersForKeyword(ctx context.Context, keywordID uuid.UUID, limit, offset int) ([]*domain.Paper, int64, error) {
+// GetPapersForKeyword retrieves papers associated with a specific keyword,
+// scoped to a specific review for tenant isolation.
+func (r *PgKeywordRepository) GetPapersForKeyword(ctx context.Context, reviewID uuid.UUID, keywordID uuid.UUID, limit, offset int) ([]*domain.Paper, int64, error) {
 	applyPaginationDefaults(&limit, &offset)
 
-	// Count total matching records
-	countQuery := `SELECT COUNT(*) FROM keyword_paper_mappings WHERE keyword_id = $1`
+	// Count total matching records, scoped to the review via request_keyword_mappings.
+	countQuery := `
+		SELECT COUNT(*)
+		FROM keyword_paper_mappings kpm
+		INNER JOIN request_keyword_mappings rkm ON rkm.keyword_id = kpm.keyword_id
+		WHERE kpm.keyword_id = $1 AND rkm.request_id = $2`
 	var totalCount int64
-	if err := r.db.QueryRow(ctx, countQuery, keywordID).Scan(&totalCount); err != nil {
+	if err := r.db.QueryRow(ctx, countQuery, keywordID, reviewID).Scan(&totalCount); err != nil {
 		return nil, 0, fmt.Errorf("failed to count papers: %w", err)
 	}
 
-	// Query with pagination
+	// Query with pagination, scoped to the review via request_keyword_mappings.
 	selectQuery := `
 		SELECT p.id, p.canonical_id, p.title, p.abstract, p.authors,
 			p.publication_date, p.publication_year, p.venue, p.journal,
@@ -470,11 +475,12 @@ func (r *PgKeywordRepository) GetPapersForKeyword(ctx context.Context, keywordID
 			p.raw_metadata, p.created_at, p.updated_at
 		FROM papers p
 		INNER JOIN keyword_paper_mappings kpm ON p.id = kpm.paper_id
-		WHERE kpm.keyword_id = $1
+		INNER JOIN request_keyword_mappings rkm ON rkm.keyword_id = kpm.keyword_id
+		WHERE kpm.keyword_id = $1 AND rkm.request_id = $2
 		ORDER BY kpm.created_at DESC
-		LIMIT $2 OFFSET $3`
+		LIMIT $3 OFFSET $4`
 
-	rows, err := r.db.Query(ctx, selectQuery, keywordID, limit, offset)
+	rows, err := r.db.Query(ctx, selectQuery, keywordID, reviewID, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get papers for keyword: %w", err)
 	}
@@ -497,18 +503,22 @@ func (r *PgKeywordRepository) GetPapersForKeyword(ctx context.Context, keywordID
 }
 
 // GetPapersForKeywordAndSource retrieves papers associated with a specific keyword
-// and discovered via a specific source type.
-func (r *PgKeywordRepository) GetPapersForKeywordAndSource(ctx context.Context, keywordID uuid.UUID, source domain.SourceType, limit, offset int) ([]*domain.Paper, int64, error) {
+// and discovered via a specific source type, scoped to a specific review for tenant isolation.
+func (r *PgKeywordRepository) GetPapersForKeywordAndSource(ctx context.Context, reviewID uuid.UUID, keywordID uuid.UUID, source domain.SourceType, limit, offset int) ([]*domain.Paper, int64, error) {
 	applyPaginationDefaults(&limit, &offset)
 
-	// Count total matching records
-	countQuery := `SELECT COUNT(*) FROM keyword_paper_mappings WHERE keyword_id = $1 AND source_type = $2`
+	// Count total matching records, scoped to the review via request_keyword_mappings.
+	countQuery := `
+		SELECT COUNT(*)
+		FROM keyword_paper_mappings kpm
+		INNER JOIN request_keyword_mappings rkm ON rkm.keyword_id = kpm.keyword_id
+		WHERE kpm.keyword_id = $1 AND kpm.source_type = $2 AND rkm.request_id = $3`
 	var totalCount int64
-	if err := r.db.QueryRow(ctx, countQuery, keywordID, source).Scan(&totalCount); err != nil {
+	if err := r.db.QueryRow(ctx, countQuery, keywordID, source, reviewID).Scan(&totalCount); err != nil {
 		return nil, 0, fmt.Errorf("failed to count papers: %w", err)
 	}
 
-	// Query with pagination, filtered by source_type
+	// Query with pagination, filtered by source_type, scoped to the review via request_keyword_mappings.
 	selectQuery := `
 		SELECT p.id, p.canonical_id, p.title, p.abstract, p.authors,
 			p.publication_date, p.publication_year, p.venue, p.journal,
@@ -518,11 +528,12 @@ func (r *PgKeywordRepository) GetPapersForKeywordAndSource(ctx context.Context, 
 			p.raw_metadata, p.created_at, p.updated_at
 		FROM papers p
 		INNER JOIN keyword_paper_mappings kpm ON p.id = kpm.paper_id
-		WHERE kpm.keyword_id = $1 AND kpm.source_type = $2
+		INNER JOIN request_keyword_mappings rkm ON rkm.keyword_id = kpm.keyword_id
+		WHERE kpm.keyword_id = $1 AND kpm.source_type = $2 AND rkm.request_id = $3
 		ORDER BY kpm.created_at DESC
-		LIMIT $3 OFFSET $4`
+		LIMIT $4 OFFSET $5`
 
-	rows, err := r.db.Query(ctx, selectQuery, keywordID, source, limit, offset)
+	rows, err := r.db.Query(ctx, selectQuery, keywordID, source, reviewID, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to get papers for keyword and source: %w", err)
 	}
@@ -554,6 +565,29 @@ func (r *PgKeywordRepository) List(ctx context.Context, filter KeywordFilter) ([
 	var conditions []string
 	var args []interface{}
 	argIndex := 1
+	needsRKMJoin := false
+
+	// ReviewID filter: scope keywords to a specific review via request_keyword_mappings.
+	if filter.ReviewID != nil {
+		needsRKMJoin = true
+		conditions = append(conditions, fmt.Sprintf("rkm.request_id = $%d", argIndex))
+		args = append(args, *filter.ReviewID)
+		argIndex++
+	}
+
+	// ExtractionRound filter: only applies when ReviewID is also set.
+	if filter.ExtractionRound != nil && filter.ReviewID != nil {
+		conditions = append(conditions, fmt.Sprintf("rkm.extraction_round = $%d", argIndex))
+		args = append(args, *filter.ExtractionRound)
+		argIndex++
+	}
+
+	// SourceType filter on request_keyword_mappings: only applies when ReviewID is also set.
+	if filter.SourceType != nil && filter.ReviewID != nil {
+		conditions = append(conditions, fmt.Sprintf("rkm.source_type = $%d", argIndex))
+		args = append(args, *filter.SourceType)
+		argIndex++
+	}
 
 	if filter.NormalizedContains != "" {
 		conditions = append(conditions, fmt.Sprintf("normalized_keyword ILIKE $%d", argIndex))
@@ -609,8 +643,14 @@ func (r *PgKeywordRepository) List(ctx context.Context, filter KeywordFilter) ([
 		whereClause = "WHERE " + strings.Join(conditions, " AND ")
 	}
 
+	// Build optional JOIN clause for review-scoped queries.
+	joinClause := ""
+	if needsRKMJoin {
+		joinClause = "INNER JOIN request_keyword_mappings rkm ON rkm.keyword_id = k.id"
+	}
+
 	// Count total matching records
-	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM keywords k %s", whereClause)
+	countQuery := fmt.Sprintf("SELECT COUNT(DISTINCT k.id) FROM keywords k %s %s", joinClause, whereClause)
 	var totalCount int64
 	if err := r.db.QueryRow(ctx, countQuery, args...).Scan(&totalCount); err != nil {
 		return nil, 0, fmt.Errorf("failed to count keywords: %w", err)
@@ -618,12 +658,13 @@ func (r *PgKeywordRepository) List(ctx context.Context, filter KeywordFilter) ([
 
 	// Query with pagination
 	selectQuery := fmt.Sprintf(`
-		SELECT k.id, k.keyword, k.normalized_keyword, k.created_at
+		SELECT DISTINCT k.id, k.keyword, k.normalized_keyword, k.created_at
 		FROM keywords k
+		%s
 		%s
 		ORDER BY k.created_at DESC
 		LIMIT $%d OFFSET $%d`,
-		whereClause, argIndex, argIndex+1)
+		joinClause, whereClause, argIndex, argIndex+1)
 
 	args = append(args, filter.Limit, filter.Offset)
 

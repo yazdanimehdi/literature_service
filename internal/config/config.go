@@ -107,6 +107,9 @@ type DatabaseConfig struct {
 	MigrationAutoRun bool `mapstructure:"migration_auto_run"`
 	// StatementCacheCapacity is the size of the prepared statement cache.
 	StatementCacheCapacity int `mapstructure:"statement_cache_capacity"`
+	// StatementTimeout is the maximum execution time for a single SQL statement.
+	// Queries exceeding this timeout are cancelled by PostgreSQL. Default: 30s.
+	StatementTimeout time.Duration `mapstructure:"statement_timeout"`
 }
 
 // TemporalConfig holds Temporal workflow configuration.
@@ -603,6 +606,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("database.migration_path", "migrations")
 	v.SetDefault("database.migration_auto_run", false)
 	v.SetDefault("database.statement_cache_capacity", 512)
+	v.SetDefault("database.statement_timeout", "30s")
 
 	// Temporal defaults
 	v.SetDefault("temporal.host_port", "localhost:7233")

@@ -131,3 +131,24 @@ func TestNewKeywordExtractor_WithoutResilience(t *testing.T) {
 	require.NotNil(t, extractor)
 	assert.Equal(t, "anthropic", extractor.Provider())
 }
+
+func TestNewKeywordExtractor_Ollama(t *testing.T) {
+	t.Parallel()
+
+	cfg := FactoryConfig{
+		Provider:   "ollama",
+		Timeout:    30 * time.Second,
+		MaxRetries: 3,
+		Ollama: OllamaConfig{
+			BaseURL: "http://localhost:11434/v1",
+			Model:   "gpt-oss:20b",
+		},
+	}
+
+	extractor, err := NewKeywordExtractor(context.Background(), cfg)
+
+	require.NoError(t, err)
+	require.NotNil(t, extractor)
+	assert.Equal(t, "ollama", extractor.Provider())
+	assert.Equal(t, "gpt-oss:20b", extractor.Model())
+}

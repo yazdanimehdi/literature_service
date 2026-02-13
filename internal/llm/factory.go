@@ -10,6 +10,7 @@ import (
 	"github.com/helixir/llm/azure"
 	"github.com/helixir/llm/bedrock"
 	"github.com/helixir/llm/gemini"
+	"github.com/helixir/llm/ollama"
 	"github.com/helixir/llm/openai"
 )
 
@@ -17,7 +18,7 @@ import (
 // This is defined in the llm package to avoid importing the config package,
 // keeping the llm package free of infrastructure dependencies.
 type FactoryConfig struct {
-	// Provider is the LLM provider name ("openai", "anthropic", "azure", "bedrock", "gemini", "vertex").
+	// Provider is the LLM provider name ("openai", "anthropic", "azure", "bedrock", "gemini", "vertex", "ollama").
 	Provider string
 	// Temperature is the LLM temperature setting.
 	Temperature float64
@@ -37,6 +38,8 @@ type FactoryConfig struct {
 	Bedrock BedrockConfig
 	// Gemini contains Google Gemini/Vertex AI-specific settings.
 	Gemini GeminiConfig
+	// Ollama contains Ollama-specific settings.
+	Ollama OllamaConfig
 	// Resilience holds optional rate limiter + circuit breaker configuration.
 	// If nil or disabled, no resilience wrapper is applied.
 	Resilience *ResilienceConfig
@@ -117,6 +120,13 @@ type GeminiConfig struct {
 	Model    string
 }
 
+// OllamaConfig holds Ollama-specific settings.
+type OllamaConfig struct {
+	BaseURL string
+	Model   string
+	APIKey  string
+}
+
 // NewKeywordExtractor creates a KeywordExtractor based on the configuration.
 // All providers use the shared llm package. If Resilience config is provided,
 // the client is wrapped with rate limiting and circuit breaking.
@@ -183,6 +193,12 @@ func createClient(ctx context.Context, cfg FactoryConfig) (sharedllm.Client, err
 		return createGeminiClient(ctx, cfg, false)
 	case "vertex":
 		return createGeminiClient(ctx, cfg, true)
+	case "ollama":
+		return ollama.New(ollama.Config{
+			BaseURL: cfg.Ollama.BaseURL,
+			Model:   cfg.Ollama.Model,
+			APIKey:  cfg.Ollama.APIKey,
+		}, cc)
 	default:
 		return nil, fmt.Errorf("unsupported LLM provider: %q", cfg.Provider)
 	}

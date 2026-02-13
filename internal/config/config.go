@@ -249,7 +249,7 @@ type TracingConfig struct {
 
 // LLMConfig holds LLM client configuration.
 type LLMConfig struct {
-	// Provider is the LLM provider (openai, anthropic, azure, bedrock, gemini, vertex).
+	// Provider is the LLM provider (openai, anthropic, azure, bedrock, gemini, vertex, ollama).
 	Provider string `mapstructure:"provider"`
 	// MaxKeywords is the maximum number of keywords to extract.
 	MaxKeywords int `mapstructure:"max_keywords"`
@@ -279,6 +279,8 @@ type LLMConfig struct {
 	Bedrock BedrockConfig `mapstructure:"bedrock"`
 	// Gemini contains Google Gemini/Vertex AI-specific settings.
 	Gemini GeminiConfig `mapstructure:"gemini"`
+	// Ollama contains Ollama-specific settings.
+	Ollama OllamaConfig `mapstructure:"ollama"`
 	// Resilience contains rate limiter and circuit breaker settings.
 	Resilience LLMResilienceConfig `mapstructure:"resilience"`
 }
@@ -368,6 +370,16 @@ type GeminiConfig struct {
 	Location string `mapstructure:"location"`
 	// Model is the Gemini model name.
 	Model string `mapstructure:"model"`
+}
+
+// OllamaConfig holds Ollama-specific settings for local inference.
+type OllamaConfig struct {
+	// BaseURL is the Ollama OpenAI-compat endpoint (default: http://localhost:11434/v1).
+	BaseURL string `mapstructure:"base_url"`
+	// Model is the Ollama model name.
+	Model string `mapstructure:"model"`
+	// APIKey is an optional API key (for Ollama behind a reverse proxy).
+	APIKey string `mapstructure:"-"`
 }
 
 // KafkaConfig holds Kafka publisher settings for the outbox pattern.
@@ -551,6 +563,7 @@ func loadSecrets(cfg *Config) {
 	cfg.LLM.Anthropic.APIKey = os.Getenv("LITREVIEW_LLM_ANTHROPIC_API_KEY")
 	cfg.LLM.Azure.APIKey = os.Getenv("LITREVIEW_LLM_AZURE_API_KEY")
 	cfg.LLM.Gemini.APIKey = os.Getenv("LITREVIEW_LLM_GEMINI_API_KEY")
+	cfg.LLM.Ollama.APIKey = os.Getenv("LITREVIEW_LLM_OLLAMA_API_KEY")
 
 	// Paper source API keys.
 	cfg.PaperSources.SemanticScholar.APIKey = os.Getenv("LITREVIEW_PAPER_SOURCES_SEMANTIC_SCHOLAR_API_KEY")
@@ -640,6 +653,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("llm.gemini.project", "")
 	v.SetDefault("llm.gemini.location", "us-central1")
 	v.SetDefault("llm.gemini.model", "gemini-2.0-flash")
+	v.SetDefault("llm.ollama.base_url", "http://localhost:11434/v1")
+	v.SetDefault("llm.ollama.model", "")
 
 	// LLM resilience defaults
 	v.SetDefault("llm.resilience.enabled", false)
@@ -853,6 +868,8 @@ func (c *Config) Validate() error {
 		}
 	case "bedrock", "vertex":
 		// These providers use cloud credential chains; no API key required.
+	case "ollama":
+		// Ollama runs locally; API key is optional (only needed behind a reverse proxy).
 	}
 
 	return nil

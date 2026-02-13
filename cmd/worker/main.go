@@ -162,6 +162,11 @@ func run() error {
 			Location: cfg.LLM.Gemini.Location,
 			Model:    cfg.LLM.Gemini.Model,
 		},
+		Ollama: llm.OllamaConfig{
+			BaseURL: cfg.LLM.Ollama.BaseURL,
+			Model:   cfg.LLM.Ollama.Model,
+			APIKey:  cfg.LLM.Ollama.APIKey,
+		},
 		Resilience: resilienceCfg,
 	})
 	if err != nil {
